@@ -75,7 +75,24 @@ function seedFromString(s) {
   return h >>> 0;
 }
 
+// 默认脚本的预编译等价实现（托管环境 CSP 禁 eval 时的降级路径，语义与 DEFAULT_SCRIPT 逐行一致）
+function defaultDecide(api) {
+  const me = api.me();
+  const star = api.nearestStar();
+  if (api.enemyVisible() && api.canFire()) return api.fireAt(api.enemy());
+  if (me.hp < 30 && api.ready('teleport')) return api.teleport(api.safestCorner());
+  return star ? api.moveTo(star) : api.patrol();
+}
+
+// 探测宿主是否允许 eval（run.ceo artifact 的 CSP 为 script-src 'unsafe-inline'，无 'unsafe-eval'）
+const EVAL_OK = (() => { try { new Function(''); return true; } catch { return false; } })();
+
 function compileScript(src) {
+  if (!EVAL_OK) {
+    if (String(src).replace(/\s+/g, '') === DEFAULT_SCRIPT.replace(/\s+/g, ''))
+      return defaultDecide;
+    throw new Error('线上托管版受 CSP 限制（禁 eval），暂不支持编译改动后的脚本；默认脚本可直接开战。要自定义脚本，请把本页另存为 .html 在本地打开。');
+  }
   const m = src.match(/export\s+default\s+function\s+([A-Za-z_$][\w$]*)/);
   const entry = m ? m[1] : 'decide';
   const code = String(src).replace(/export\s+default\s+/g, '');
@@ -646,6 +663,12 @@ trackEl.addEventListener('pointerup', () => { dragging = false; });
 // ---------- 启动 ----------
 loadStore();
 if (!editorEl.value.trim()) editorEl.value = DEFAULT_SCRIPT;
+if (!EVAL_OK) {
+  const note = document.createElement('div');
+  note.style.cssText = 'margin:6px 12px 0;padding:6px 8px;font-size:11px;line-height:1.5;color:#8b949e;border:1px solid #30363d;border-radius:6px;';
+  note.textContent = '线上托管版：宿主 CSP 禁 eval，默认脚本以内置等价策略运行；编辑自定义脚本请把本页另存为 .html 在本地打开。';
+  errEl.parentNode.insertBefore(note, errEl);
+}
 updateVersionUi();
 const qp = new URLSearchParams(location.search);
 if (qp.get('seed')) seedInput.value = qp.get('seed');
