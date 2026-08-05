@@ -1,0 +1,189 @@
+{
+  "total": 100,
+  "sections": [
+    {
+      "name": "机制覆盖",
+      "max": 40,
+      "score": 40,
+      "checks": [
+        {
+          "name": "墙挡子弹（bullet_end.cause=wall，无 hit）",
+          "pass": true,
+          "detail": "bullet_end@(4,1) cause=wall"
+        },
+        {
+          "name": "墙挡坦克（moveTo 墙格不产生 move，位置不变）",
+          "pass": true,
+          "detail": "4 拍尝试走墙格均被拒，位置保持 (1,1)"
+        },
+        {
+          "name": "土堆挡子弹（bullet_end.cause=dirt，无 hit）",
+          "pass": true,
+          "detail": "bullet_end cause=dirt，无命中"
+        },
+        {
+          "name": "土堆不挡坦克（可走上土堆格）",
+          "pass": true,
+          "detail": "成功走上土堆格 (2,1)"
+        },
+        {
+          "name": "草丛远距隐身（距离>1 不可见）",
+          "pass": true,
+          "detail": "5 拍全部不可见"
+        },
+        {
+          "name": "草丛贴脸可见（距离≤1 现形）+ 无草丛对照可见",
+          "pass": true,
+          "detail": "贴脸草丛可见 + 空地对照可见"
+        },
+        {
+          "name": "星星拾取并计数（star 事件 + stars 统计）",
+          "pass": true,
+          "detail": "star 事件 who=0 total=1，r.stars=[1,0]"
+        },
+        {
+          "name": "隐身技能 + 冷却（生效期不可见、到期恢复、开火打破）",
+          "pass": true,
+          "detail": "隐身生效/到期恢复/冷却/开火打破 全通过"
+        },
+        {
+          "name": "传送技能 + 冷却（立即生效、冷却锁定、非法目标不消耗）",
+          "pass": true,
+          "detail": "传送立即生效 + 冷却 + 非法目标不消耗"
+        },
+        {
+          "name": "眩晕技能 + 冷却（stun_hit、目标 8 拍不能动、冷却锁定）",
+          "pass": true,
+          "detail": "stun_hit 命中，目标至 t=8 才恢复移动，冷却锁定"
+        },
+        {
+          "name": "开火冷却（射后 5 拍 canFire=false）",
+          "pass": true,
+          "detail": "canFire: t0=true → t1..t4=false → t5=true"
+        },
+        {
+          "name": "击杀即胜（winner + reason=kill + death 事件，早于超时）",
+          "pass": true,
+          "detail": "kill 胜于 tick 21"
+        },
+        {
+          "name": "超时比星（无击杀星多者胜 reason=stars）",
+          "pass": true,
+          "detail": "超时后星多者胜，end.reason=stars"
+        },
+        {
+          "name": "平局（无击杀且星数相同 winner=null reason=draw）",
+          "pass": true,
+          "detail": "winner=null reason=draw"
+        }
+      ]
+    },
+    {
+      "name": "确定性重放",
+      "max": 15,
+      "score": 15,
+      "checks": [
+        {
+          "name": "同 seed=42 两次重放逐字节相等（抢星流 vs 贴脸流）",
+          "pass": true,
+          "detail": "events 143 条，序列化 7500 字节，逐字节相等"
+        },
+        {
+          "name": "同 seed=7 两次重放逐字节相等（蹲草流 vs 隐身偷袭流）",
+          "pass": true,
+          "detail": "events 286 条，序列化 14803 字节，逐字节相等"
+        },
+        {
+          "name": "同 seed=101 两次重放逐字节相等（隐身偷袭流 vs 基线）",
+          "pass": true,
+          "detail": "events 144 条，序列化 7279 字节，逐字节相等"
+        },
+        {
+          "name": "同 seed=20260805 两次重放逐字节相等（贴脸流 vs 蹲草流）",
+          "pass": true,
+          "detail": "events 84 条，序列化 4587 字节，逐字节相等"
+        },
+        {
+          "name": "异 seed（42 vs 43）事件流必不同",
+          "pass": true,
+          "detail": "两个 seed 的事件流不同"
+        }
+      ]
+    },
+    {
+      "name": "流派区分度",
+      "max": 15,
+      "score": 15,
+      "checks": [
+        {
+          "name": "蹲草流 vs 随机基线胜率 ≥6.5/10",
+          "pass": true,
+          "detail": "固定 seeds [11,22,33,44,55] 双边共 10 局，得分 10/10"
+        },
+        {
+          "name": "抢星流 vs 随机基线胜率 ≥6.5/10",
+          "pass": true,
+          "detail": "固定 seeds [11,22,33,44,55] 双边共 10 局，得分 10/10"
+        },
+        {
+          "name": "贴脸流 vs 随机基线胜率 ≥6.5/10",
+          "pass": true,
+          "detail": "固定 seeds [11,22,33,44,55] 双边共 10 局，得分 10/10"
+        },
+        {
+          "name": "隐身偷袭流 vs 随机基线胜率 ≥6.5/10",
+          "pass": true,
+          "detail": "固定 seeds [11,22,33,44,55] 双边共 10 局，得分 10/10"
+        },
+        {
+          "name": "流派间存在明显非 50% 对局（|得分-5|≥1.5）",
+          "pass": true,
+          "detail": "循环赛 蹲草流 vs 抢星流=9/10；蹲草流 vs 贴脸流=7/10；蹲草流 vs 隐身偷袭流=8/10；抢星流 vs 贴脸流=7/10；抢星流 vs 隐身偷袭流=6/10；贴脸流 vs 隐身偷袭流=9/10；偏离对局数=5"
+        }
+      ]
+    },
+    {
+      "name": "回放正确",
+      "max": 10,
+      "score": 10,
+      "checks": [
+        {
+          "name": "存在网页回放器产物（web/index.html 或 src/ui/ 等）并能消费事件数组",
+          "pass": true,
+          "detail": "发现产物：web/index.html"
+        }
+      ]
+    },
+    {
+      "name": "性能",
+      "max": 10,
+      "score": 10,
+      "checks": [
+        {
+          "name": "100 局（随机 seeds、四组对阵轮换、默认地图）平均单局 <50ms",
+          "pass": true,
+          "detail": "总耗时 166.23ms，平均 1.66ms/局，共 5684 ticks"
+        }
+      ]
+    },
+    {
+      "name": "UI 可用",
+      "max": 10,
+      "score": 10,
+      "checks": [
+        {
+          "name": "网页 UI 可用（与回放器同口径检查真实产物）",
+          "pass": true,
+          "detail": "发现产物：web/index.html"
+        }
+      ]
+    }
+  ],
+  "generatedAt": "2026-08-05T13:49:45.480Z",
+  "engineTestSummary": {
+    "pass": 21,
+    "fail": 0,
+    "tests": 21,
+    "ok": true
+  }
+}

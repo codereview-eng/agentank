@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgenTank — AI 脚本坦克对战 · 界面效果稿</title>
+<style>
+:root{
+  --bg:#10151D; --panel:#1A212C; --panel-2:#151B25; --line:#2A3442;
+  --text:#E6ECF3; --muted:#8B9AAD; --dim:#5C6B7E;
+  --p1:#A3E635; --p2:#F472B6; --star:#FBBF24;
+  --ok:#4ADE80; --warn:#FBBF24; --bad:#F87171; --accent:#38BDF8;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--text);
+  font:14px/1.6 -apple-system,"PingFang SC","Noto Sans CJK SC",sans-serif;
+  height:100vh; display:flex; flex-direction:column; overflow:hidden;
+}
+code,pre,.mono{font-family:ui-monospace,"SF Mono",Menlo,monospace}
+
+/* ── 顶栏 ── */
+header{
+  display:flex; align-items:center; gap:16px; padding:10px 20px;
+  background:var(--panel-2); border-bottom:1px solid var(--line);
+}
+.logo{font-weight:800; font-size:18px; letter-spacing:1px}
+.logo b{color:var(--p1)}
+.logo span{color:var(--muted); font-weight:400; font-size:12px; margin-left:10px}
+.badge{
+  margin-left:auto; display:flex; gap:10px; align-items:center; font-size:12px;
+}
+.chip{border:1px solid var(--line); border-radius:999px; padding:2px 12px; color:var(--muted)}
+.chip.rank{color:var(--star); border-color:#54431C}
+/* ── 三栏 ── */
+main{flex:1; display:grid; grid-template-columns:340px 1fr 300px; gap:12px; padding:12px 16px; min-height:0}
+.panel{background:var(--panel); border:1px solid var(--line); border-radius:10px; display:flex; flex-direction:column; min-height:0}
+.panel h2{
+  font-size:12px; color:var(--muted); font-weight:600; letter-spacing:2px;
+  padding:10px 14px; border-bottom:1px solid var(--line);
+  display:flex; align-items:center; gap:8px;
+}
+.panel h2 .dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+
+/* 左：脚本 */
+.editor{flex:1; padding:12px 14px; overflow:auto}
+.editor pre{font-size:12.5px; line-height:1.7; color:#C9D6E4}
+.kw{color:#7DD3FC}.fn{color:#A3E635}.str{color:#FBBF24}.cm{color:#5C6B7E}
+.ctrl{padding:12px 14px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:10px}
+.row{display:flex; gap:8px; align-items:center}
+select,input{
+  background:var(--panel-2); border:1px solid var(--line); color:var(--text);
+  border-radius:6px; padding:6px 10px; font-size:13px; flex:1;
+}
+label{font-size:12px; color:var(--muted); width:64px}
+.btn{
+  border:none; border-radius:8px; padding:10px 0; font-size:15px; font-weight:700;
+  background:var(--p1); color:#1A2408; cursor:pointer; letter-spacing:4px;
+}
+.btn.ghost{background:transparent; border:1px solid var(--line); color:var(--muted); font-weight:400; letter-spacing:1px; font-size:12px; padding:6px 0}
+
+/* 中：竞技场 */
+.arena-wrap{align-items:center; justify-content:flex-start}
+.verdict{
+  width:100%; padding:8px 14px; font-size:13px; display:flex; gap:14px; align-items:center;
+  border-bottom:1px solid var(--line);
+}
+.verdict .win{color:var(--p1); font-weight:700}
+.verdict .vs{color:var(--muted)}
+canvas{margin:14px auto 6px; border:1px solid var(--line); border-radius:6px; background:#0C1118}
+.playbar{display:flex; gap:10px; align-items:center; padding:8px 18px 14px; width:100%}
+.pb-btn{
+  width:34px;height:30px; border:1px solid var(--line); border-radius:6px;
+  background:var(--panel-2); color:var(--text); font-size:13px; cursor:pointer;
+}
+.pb-btn.play{background:var(--accent); color:#062033; border:none; font-weight:700}
+.track{flex:1; height:6px; border-radius:3px; background:var(--panel-2); position:relative}
+.track i{position:absolute; left:0; top:0; height:100%; width:46%; background:var(--accent); border-radius:3px}
+.track b{position:absolute; left:46%; top:-4px; width:14px; height:14px; border-radius:50%; background:var(--text)}
+.tick{font-size:12px; color:var(--muted); white-space:nowrap}
+.speed{display:flex; gap:4px}
+.speed span{font-size:11px; padding:2px 8px; border:1px solid var(--line); border-radius:4px; color:var(--muted)}
+.speed .on{background:var(--panel-2); color:var(--text); border-color:var(--accent)}
+
+/* 右：战报+天梯 */
+.log{flex:1.2; overflow:auto; padding:10px 14px; font-size:12px; line-height:1.9}
+.log .t{color:var(--dim); margin-right:6px}
+.log .p1{color:var(--p1)} .log .p2{color:var(--p2)}
+.log .sk{color:var(--accent)} .log .st{color:var(--star)} .log .dmg{color:var(--bad)}
+table{width:100%; border-collapse:collapse; font-size:12px}
+th{color:var(--muted); font-weight:500; text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums}
+td{padding:6px 8px; border-bottom:1px solid #1F2733; font-variant-numeric:tabular-nums}
+td.r1{color:var(--star)} .elo{color:var(--accent)}
+.me td{background:#1E2A1A}
+footer{
+  padding:6px 20px; border-top:1px solid var(--line); background:var(--panel-2);
+  font-size:11px; color:var(--dim); display:flex; gap:24px;
+}
+footer .mono{color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo"><b>AGEN</b>TANK <span>AI 脚本坦克对战 · 你当教练，AI 开炮</span></div>
+  <div class="badge">
+    <span class="chip rank">★ 白银 II · ELO 1284</span>
+    <span class="chip">赛季 S1</span>
+    <span class="chip">v0.1.0</span>
+  </div>
+</header>
+<main>
+  <!-- 左：策略脚本 -->
+  <section class="panel">
+    <h2><span class="dot"></span>策略脚本 · 抢星流 v3</h2>
+    <div class="editor"><pre><span class="cm">// 你的战术：优先吃星，残血传送跑路</span>
+<span class="kw">export default function</span> <span class="fn">decide</span>(api) {
+  <span class="kw">const</span> me = api.<span class="fn">me</span>();
+  <span class="kw">const</span> star = api.<span class="fn">nearestStar</span>();
+
+  <span class="cm">// 看得见敌人就开炮</span>
+  <span class="kw">if</span> (api.<span class="fn">enemyVisible</span>() &amp;&amp; api.<span class="fn">canFire</span>())
+    <span class="kw">return</span> api.<span class="fn">fireAt</span>(api.<span class="fn">enemy</span>());
+
+  <span class="cm">// 残血：传送去安全角落</span>
+  <span class="kw">if</span> (me.hp &lt; <span class="str">30</span> &amp;&amp; api.<span class="fn">ready</span>(<span class="str">'teleport'</span>))
+    <span class="kw">return</span> api.<span class="fn">teleport</span>(api.<span class="fn">safestCorner</span>());
+
+  <span class="cm">// 默认：抢最近的星</span>
+  <span class="kw">return</span> star ? api.<span class="fn">moveTo</span>(star)
+              : api.<span class="fn">patrol</span>();
+}</pre></div>
+    <div class="ctrl">
+      <div class="row"><label>对手</label><select><option>隐身偷袭流 (内置 · ELO 1330)</option></select></div>
+      <div class="row"><label>种子</label><input class="mono" value="20260805-42"></div>
+      <button class="btn">开 战</button>
+      <button class="btn ghost">保存为新版本（当前 v3 · 共 17 版）</button>
+    </div>
+  </section>
+
+  <!-- 中：竞技场回放 -->
+  <section class="panel arena-wrap">
+    <div class="verdict">
+      <span class="win">● 抢星流 WIN</span>
+      <span class="vs">击杀 @ t=847 · 星 5:3 · 用时 42.4s</span>
+      <span style="margin-left:auto;color:var(--muted)">回放 · 战报 #20481</span>
+    </div>
+    <canvas id="arena" width="768" height="480"></canvas>
+    <div class="playbar">
+      <button class="pb-btn">⏮</button>
+      <button class="pb-btn play">▶</button>
+      <button class="pb-btn">⏭</button>
+      <div class="track"><i></i><b></b></div>
+      <span class="tick mono">t=412 / 900</span>
+      <div class="speed"><span>1x</span><span class="on">2x</span><span>4x</span></div>
+    </div>
+  </section>
+
+  <!-- 右：战报 + 天梯 -->
+  <section class="panel">
+    <h2><span class="dot"></span>实时战报</h2>
+    <div class="log">
+      <div><span class="t mono">t=012</span><span class="p1">抢星流</span> 直奔星星 (18,4)</div>
+      <div><span class="t mono">t=038</span><span class="p2">隐身偷袭流</span> 进入草丛，<span class="sk">隐身</span></div>
+      <div><span class="t mono">t=101</span><span class="p1">抢星流</span> <span class="st">吃星 ★ 1:0</span></div>
+      <div><span class="t mono">t=189</span><span class="p2">隐身偷袭流</span> 现身开炮 <span class="dmg">-24</span></div>
+      <div><span class="t mono">t=214</span><span class="p1">抢星流</span> 借土堆挡下 2 发炮弹</div>
+      <div><span class="t mono">t=266</span><span class="p2">隐身偷袭流</span> <span class="sk">眩晕</span> 命中 (1.2s)</div>
+      <div><span class="t mono">t=310</span><span class="p1">抢星流</span> 残血 28，<span class="sk">传送</span> 撤离</div>
+      <div><span class="t mono">t=395</span><span class="p1">抢星流</span> <span class="st">吃星 ★ 3:1</span></div>
+      <div><span class="t mono">t=412</span> 双方绕墙周旋中…</div>
+    </div>
+    <h2><span class="dot"></span>天梯 · 内置流派</h2>
+    <table>
+      <tr><th>#</th><th>坦克</th><th>流派</th><th>ELO</th><th>胜率</th></tr>
+      <tr><td class="r1">1</td><td>幽灵-7</td><td>隐身偷袭</td><td class="elo">1330</td><td>64%</td></tr>
+      <tr class="me"><td>2</td><td>我的坦克 v3</td><td>抢星</td><td class="elo">1284</td><td>57%</td></tr>
+      <tr><td>3</td><td>草垛王</td><td>蹲草</td><td class="elo">1201</td><td>49%</td></tr>
+      <tr><td>4</td><td>铁头娃</td><td>贴脸</td><td class="elo">1116</td><td>38%</td></tr>
+    </table>
+  </section>
+</main>
+<footer>
+  <span>引擎 <span class="mono">deterministic · seed=20260805-42</span></span>
+  <span>战报仅文字记录 <span class="mono">battle.log 3.1KB</span>，回放由前端渲染</span>
+  <span>沙箱 <span class="mono">Worker · 受限 API · 5ms/tick</span></span>
+</footer>
+
+<script>
+const c = document.getElementById('arena').getContext('2d');
+const T = 32; // tile
+const W = 24, H = 15;
+// 地形: 0空 1墙 2草 3土堆
+const walls = [[5,3],[5,4],[5,5],[6,5],[11,7],[12,7],[13,7],[12,6],[18,10],[18,11],[17,11],[8,11],[9,11],[3,9],[20,3],[20,4]];
+const grass = [[2,2],[3,2],[2,3],[3,3],[15,2],[16,2],[15,3],[16,3],[16,12],[17,12],[16,13],[17,13],[6,9],[7,9],[6,10],[7,10],[21,8],[22,8]];
+const mounds = [[9,5],[14,10],[4,12],[19,6]];
+const stars = [[18,4],[7,13],[22,1]];
+// 背景网格
+c.fillStyle = '#0C1118'; c.fillRect(0,0,W*T,H*T);
+c.strokeStyle = '#151C26'; c.lineWidth = 1;
+for(let x=0;x<=W;x++){c.beginPath();c.moveTo(x*T,0);c.lineTo(x*T,H*T);c.stroke();}
+for(let y=0;y<=H;y++){c.beginPath();c.moveTo(0,y*T);c.lineTo(W*T,y*T);c.stroke();}
+// 草丛
+for(const [x,y] of grass){
+  c.fillStyle = 'rgba(74,222,128,0.13)'; c.fillRect(x*T,y*T,T,T);
+  c.fillStyle = 'rgba(74,222,128,0.45)';
+  for(let i=0;i<5;i++){
+    const gx=x*T+5+(i*11)%(T-8), gy=y*T+6+(i*7)%(T-10);
+    c.fillRect(gx,gy,2,7);
+  }
+}
+// 墙
+for(const [x,y] of walls){
+  c.fillStyle = '#3B4757'; c.fillRect(x*T+1,y*T+1,T-2,T-2);
+  c.fillStyle = '#2A3442'; c.fillRect(x*T+1,y*T+1,T-2,4);
+  c.fillRect(x*T+1,y*T+T/2,T-2,3);
+}
+// 土堆
+for(const [x,y] of mounds){
+  c.fillStyle = '#7C5A34';
+  c.beginPath(); c.arc(x*T+T/2,y*T+T/2,T/2-4,0,7); c.fill();
+  c.fillStyle = '#96713F';
+  c.beginPath(); c.arc(x*T+T/2-3,y*T+T/2-4,T/4,0,7); c.fill();
+}
+// 星星
+function star(cx,cy,r,col){
+  c.fillStyle = col; c.beginPath();
+  for(let i=0;i<10;i++){
+    const a = -Math.PI/2 + i*Math.PI/5, rr = i%2? r*0.45 : r;
+    c[i?'lineTo':'moveTo'](cx+rr*Math.cos(a), cy+rr*Math.sin(a));
+  }
+  c.closePath(); c.fill();
+}
+for(const [x,y] of stars) star(x*T+T/2, y*T+T/2, 11, '#FBBF24');
+// 炮弹轨迹
+c.strokeStyle = 'rgba(244,114,182,0.7)'; c.setLineDash([6,6]); c.lineWidth = 2;
+c.beginPath(); c.moveTo(16.5*T,12.2*T); c.lineTo(10.2*T,6.2*T); c.stroke();
+c.setLineDash([]);
+// 坦克
+function tank(x,y,ang,col,dark,alpha){
+  c.save(); c.globalAlpha = alpha; c.translate(x,y); c.rotate(ang);
+  c.fillStyle = dark; c.fillRect(-15,-12,30,24);            // 履带
+  c.fillStyle = col;  c.fillRect(-11,-9,22,18);             // 车身
+  c.beginPath(); c.arc(0,0,7,0,7); c.fill();                // 炮塔
+  c.fillRect(0,-2.5,20,5);                                  // 炮管
+  c.restore();
+}
+// P1 亮绿
+tank(9.5*T, 6*T, -0.6, '#A3E635', '#4D7C0F', 1);
+// P2 粉色·草丛中半隐身
+tank(16.8*T, 12.6*T, -2.4, '#F472B6', '#9D2463', 0.45);
+// 血条
+function hp(x,y,pct,col){
+  c.fillStyle='#0C1118'; c.fillRect(x-18,y-28,36,6);
+  c.strokeStyle='#2A3442'; c.strokeRect(x-18,y-28,36,6);
+  c.fillStyle=col; c.fillRect(x-17,y-27,34*pct,4);
+}
+hp(9.5*T, 6*T, 0.28, '#F87171');
+hp(16.8*T, 12.6*T, 0.66, '#4ADE80');
+// 击中火花
+c.fillStyle='rgba(251,191,36,0.9)';
+c.beginPath(); c.arc(10.2*T,6.2*T,5,0,7); c.fill();
+c.strokeStyle='rgba(251,191,36,0.6)'; c.lineWidth=2;
+for(let i=0;i<6;i++){
+  const a=i*Math.PI/3;
+  c.beginPath(); c.moveTo(10.2*T+7*Math.cos(a),6.2*T+7*Math.sin(a));
+  c.lineTo(10.2*T+13*Math.cos(a),6.2*T+13*Math.sin(a)); c.stroke();
+}
+// 标签
+c.font='11px Menlo'; c.fillStyle='#A3E635'; c.fillText('P1 抢星流 ★3', 9.5*T-24, 6*T+34);
+c.fillStyle='#F472B6'; c.fillText('P2 隐身中…', 16.8*T-20, 12.6*T+34);
+</script>
+</body>
+</html>

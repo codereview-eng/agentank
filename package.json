@@ -1,0 +1,11 @@
+{
+  "name": "agentank",
+  "version": "0.1.0",
+  "description": "AgenTank 确定性坦克对战引擎（纯 ESM、零依赖、Node/浏览器同构）",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test",
+    "demo": "node scripts/demo.js"
+  }
+}
