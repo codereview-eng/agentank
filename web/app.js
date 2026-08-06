@@ -27,9 +27,9 @@ const editorTitle = $id('editorTitle');
 const saveBtn = $id('saveBtn');
 
 const COLOR = {
-  p1: '#A3E635', p1d: '#4D7C0F',
-  p2: '#F472B6', p2d: '#9D2463',
-  star: '#FBBF24', accent: '#38BDF8',
+  p1: '#78A83F', p1d: '#3C5A1E',
+  p2: '#E0679B', p2d: '#7E2A4E',
+  star: '#FFC93C', accent: '#38BDF8',
 };
 const TSZ = 28;
 const SPEEDS = [1, 2, 4];
@@ -277,15 +277,44 @@ function setupCanvas(map) {
   canvasEl.height = map.height * TSZ;
 }
 
-function drawStarShape(cx, cy, r, col) {
-  ctx.fillStyle = col;
+// 每格确定性伪随机（纹理抖动用，与引擎 RNG 无关）
+function tileHash(x, y, s) {
+  let h = (x * 374761393 + y * 668265263 + s * 1274126177) >>> 0;
+  h = ((h ^ (h >>> 13)) * 1103515245) >>> 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+function rrect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function starPath(cx, cy, r) {
   ctx.beginPath();
   for (let i = 0; i < 10; i++) {
     const a = -Math.PI / 2 + (i * Math.PI) / 5;
-    const rr = i % 2 ? r * 0.45 : r;
-    ctx[i ? 'lineTo' : 'moveTo'](cx + rr * Math.cos(a), cy + rr * Math.sin(a));
+    const k = i % 2 ? r * 0.48 : r;
+    ctx[i ? 'lineTo' : 'moveTo'](cx + k * Math.cos(a), cy + k * Math.sin(a));
   }
   ctx.closePath();
+}
+
+function drawStarShape(cx, cy, r, col) {
+  // 参照原作素材：描边金星 + 内部高光
+  starPath(cx, cy, r);
+  ctx.fillStyle = col || '#FFC93C';
+  ctx.fill();
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = Math.max(2, r * 0.22);
+  ctx.strokeStyle = '#7A4E12';
+  ctx.stroke();
+  starPath(cx, cy - r * 0.08, r * 0.52);
+  ctx.fillStyle = '#FFE38F';
   ctx.fill();
 }
 
@@ -295,59 +324,177 @@ function drawTank(px, py, ang, col, dark, alpha) {
   ctx.globalAlpha = alpha;
   ctx.translate(px, py);
   ctx.rotate(ang);
+  ctx.lineJoin = 'round';
+  const ink = 'rgba(24,20,12,0.75)'; // 卡通描边
+  // 履带（上下两条 + 纹路）
   ctx.fillStyle = dark;
-  ctx.fillRect(-15 * k, -12 * k, 30 * k, 24 * k); // 履带
+  rrect(-14 * k, -13 * k, 28 * k, 8 * k, 3 * k); ctx.fill();
+  rrect(-14 * k, 5 * k, 28 * k, 8 * k, 3 * k); ctx.fill();
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = 1.6 * k;
+  rrect(-14 * k, -13 * k, 28 * k, 8 * k, 3 * k); ctx.stroke();
+  rrect(-14 * k, 5 * k, 28 * k, 8 * k, 3 * k); ctx.stroke();
+  ctx.lineWidth = 1.1 * k;
+  ctx.strokeStyle = 'rgba(0,0,0,0.30)';
+  for (let i = -10; i <= 10; i += 5) {
+    ctx.beginPath(); ctx.moveTo(i * k, -12 * k); ctx.lineTo(i * k, -6 * k); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(i * k, 6 * k); ctx.lineTo(i * k, 12 * k); ctx.stroke();
+  }
+  // 车身
   ctx.fillStyle = col;
-  ctx.fillRect(-11 * k, -9 * k, 22 * k, 18 * k); // 车身
-  ctx.beginPath(); ctx.arc(0, 0, 7 * k, 0, 7); ctx.fill(); // 炮塔
-  ctx.fillRect(0, -2.5 * k, 20 * k, 5 * k); // 炮管
+  rrect(-11 * k, -8 * k, 22 * k, 16 * k, 3 * k); ctx.fill();
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = 1.8 * k;
+  rrect(-11 * k, -8 * k, 22 * k, 16 * k, 3 * k); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.18)'; // 车身高光
+  rrect(-9 * k, -6.5 * k, 18 * k, 4 * k, 2 * k); ctx.fill();
+  // 炮管 + 炮口
+  ctx.fillStyle = dark;
+  ctx.fillRect(4 * k, -2.2 * k, 15 * k, 4.4 * k);
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = 1.4 * k;
+  ctx.strokeRect(4 * k, -2.2 * k, 15 * k, 4.4 * k);
+  ctx.fillRect(18 * k, -3.4 * k, 3.6 * k, 6.8 * k);
+  ctx.strokeRect(18 * k, -3.4 * k, 3.6 * k, 6.8 * k);
+  // 炮塔
+  ctx.fillStyle = col;
+  ctx.beginPath(); ctx.arc(0, 0, 6.4 * k, 0, 7); ctx.fill();
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = 1.8 * k;
+  ctx.beginPath(); ctx.arc(0, 0, 6.4 * k, 0, 7); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.25)';
+  ctx.beginPath(); ctx.arc(-1.8 * k, -1.8 * k, 2.4 * k, 0, 7); ctx.fill();
   ctx.restore();
 }
 
 function drawHpBar(px, py, pct, col) {
   const k = TSZ / 32;
-  ctx.fillStyle = '#0C1118';
+  ctx.fillStyle = 'rgba(40,30,14,0.55)';
   ctx.fillRect(px - 18 * k, py - 28 * k, 36 * k, 6 * k);
-  ctx.strokeStyle = '#2A3442';
+  ctx.strokeStyle = 'rgba(24,20,12,0.75)';
   ctx.strokeRect(px - 18 * k, py - 28 * k, 36 * k, 6 * k);
   ctx.fillStyle = col;
   ctx.fillRect(px - 17 * k, py - 27 * k, 34 * k * Math.max(0, pct), 4 * k);
 }
 
+function drawWallTile(x, y) {
+  // 鹅卵石砖（参照原作深蓝灰石墙）
+  const px = x * TSZ;
+  const py = y * TSZ;
+  ctx.fillStyle = '#242C39'; // 石缝
+  ctx.fillRect(px, py, TSZ, TSZ);
+  for (let i = 0; i < 4; i++) {
+    const sx = px + (i % 2) * (TSZ / 2);
+    const sy = py + ((i / 2) | 0) * (TSZ / 2);
+    const v = tileHash(x * 4 + i, y * 4 + i * 3, 7);
+    const g = 58 + Math.floor(v * 20);
+    const j = v * 2.2; // 石块大小抖动
+    ctx.fillStyle = `rgb(${g},${g + 9},${g + 22})`;
+    rrect(sx + 1.5 + j * 0.4, sy + 1.5 + j * 0.3, TSZ / 2 - 3 - j * 0.7, TSZ / 2 - 3 - j * 0.5, TSZ * 0.13);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.10)'; // 石面高光
+    rrect(sx + 3.5, sy + 3, TSZ / 2 - 9, TSZ * 0.1, TSZ * 0.05);
+    ctx.fill();
+  }
+  ctx.strokeStyle = '#161C25';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(px + 0.75, py + 0.75, TSZ - 1.5, TSZ - 1.5);
+}
+
+function drawDirtTile(x, y) {
+  // 棕色土堆（圆润山包 + 深描边 + 受光面）
+  const cx = x * TSZ + TSZ / 2;
+  const cy = y * TSZ + TSZ / 2;
+  const r = TSZ * 0.44;
+  ctx.fillStyle = 'rgba(60,40,15,0.20)'; // 投影
+  ctx.beginPath(); ctx.ellipse(cx, cy + r * 0.62, r * 0.95, r * 0.34, 0, 0, 7); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(cx - r * 0.98, cy + r * 0.62);
+  ctx.quadraticCurveTo(cx - r * 0.92, cy - r * 0.32, cx - r * 0.34, cy - r * 0.72);
+  ctx.quadraticCurveTo(cx + r * 0.02, cy - r * 1.02, cx + r * 0.42, cy - r * 0.66);
+  ctx.quadraticCurveTo(cx + r * 0.96, cy - r * 0.26, cx + r * 0.98, cy + r * 0.62);
+  ctx.closePath();
+  ctx.fillStyle = '#9A6B33';
+  ctx.fill();
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = Math.max(2, TSZ * 0.08);
+  ctx.strokeStyle = '#432B12';
+  ctx.stroke();
+  ctx.beginPath(); // 受光亮面
+  ctx.moveTo(cx - r * 0.52, cy + r * 0.4);
+  ctx.quadraticCurveTo(cx - r * 0.5, cy - r * 0.34, cx - r * 0.08, cy - r * 0.6);
+  ctx.quadraticCurveTo(cx + r * 0.12, cy - r * 0.24, cx - r * 0.04, cy + r * 0.4);
+  ctx.closePath();
+  ctx.fillStyle = '#B8894B';
+  ctx.fill();
+  ctx.fillStyle = 'rgba(67,43,18,0.55)'; // 碎石点
+  for (let i = 0; i < 3; i++) {
+    const v = tileHash(x * 8 + i, y * 8 + i, 11);
+    ctx.beginPath();
+    ctx.arc(cx - r * 0.4 + v * r * 0.9, cy + r * (0.05 + 0.3 * v), TSZ * 0.045, 0, 7);
+    ctx.fill();
+  }
+}
+
+function drawGrassTile(x, y) {
+  // 卡通草丛（扇形叶片、双色，长在沙地上）
+  const cx = x * TSZ + TSZ / 2;
+  const base = y * TSZ + TSZ * 0.78;
+  const r = TSZ * 0.42;
+  ctx.fillStyle = 'rgba(74,110,45,0.22)'; // 根部阴影
+  ctx.beginPath(); ctx.ellipse(cx, base, r * 0.82, r * 0.24, 0, 0, 7); ctx.fill();
+  const blades = 9;
+  for (let i = 0; i < blades; i++) {
+    const v = tileHash(x * 16 + i, y * 16 + i, 13);
+    const spread = i - (blades - 1) / 2;
+    const a = -Math.PI / 2 + spread * 0.26 + (v - 0.5) * 0.18;
+    const len = r * (0.95 + v * 0.6);
+    const bx = cx + spread * TSZ * 0.065;
+    const mx = bx + Math.cos(a) * len * 0.55;
+    const my = base + Math.sin(a) * len * 0.62;
+    ctx.beginPath();
+    ctx.moveTo(bx - TSZ * 0.085, base);
+    ctx.quadraticCurveTo(mx - TSZ * 0.04, my, bx + Math.cos(a) * len, base + Math.sin(a) * len);
+    ctx.quadraticCurveTo(mx + TSZ * 0.04, my, bx + TSZ * 0.085, base);
+    ctx.closePath();
+    ctx.fillStyle = i % 2 ? '#3C9440' : '#74C868';
+    ctx.fill();
+  }
+}
+
 function drawArena(map, f, names, shots, sparks, curT) {
   const W = map.width;
   const H = map.height;
-  ctx.fillStyle = '#0C1118';
+  // 沙地底（参照原作：土黄地面 + 淡纹理 + 木板横线）
+  ctx.fillStyle = '#C9B274';
   ctx.fillRect(0, 0, W * TSZ, H * TSZ);
-  ctx.strokeStyle = '#151C26';
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const v = tileHash(x, y, 1);
+      if (v > 0.5) {
+        ctx.fillStyle = `rgba(120,90,40,${(v - 0.5) * 0.14})`;
+        ctx.fillRect(x * TSZ, y * TSZ, TSZ, TSZ);
+      }
+      if (v < 0.18) { // 沙面杂点
+        ctx.fillStyle = 'rgba(100,75,30,0.18)';
+        ctx.fillRect(x * TSZ + (v * 90) % TSZ, y * TSZ + (v * 53) % TSZ, 2, 2);
+      }
+    }
+  }
   ctx.lineWidth = 1;
+  for (let y = 0; y <= H; y++) {
+    ctx.strokeStyle = y % 2 ? 'rgba(110,82,35,0.20)' : 'rgba(110,82,35,0.10)';
+    ctx.beginPath(); ctx.moveTo(0, y * TSZ); ctx.lineTo(W * TSZ, y * TSZ); ctx.stroke();
+  }
+  ctx.strokeStyle = 'rgba(110,82,35,0.08)';
   for (let x = 0; x <= W; x++) { ctx.beginPath(); ctx.moveTo(x * TSZ, 0); ctx.lineTo(x * TSZ, H * TSZ); ctx.stroke(); }
-  for (let y = 0; y <= H; y++) { ctx.beginPath(); ctx.moveTo(0, y * TSZ); ctx.lineTo(W * TSZ, y * TSZ); ctx.stroke(); }
   // 地形
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const tile = map.tiles[y][x];
-      if (tile === TILE.GRASS) {
-        ctx.fillStyle = 'rgba(74,222,128,0.13)';
-        ctx.fillRect(x * TSZ, y * TSZ, TSZ, TSZ);
-        ctx.fillStyle = 'rgba(74,222,128,0.45)';
-        for (let i = 0; i < 5; i++) {
-          const gx = x * TSZ + 4 + (i * 11) % (TSZ - 7);
-          const gy = y * TSZ + 5 + (i * 7) % (TSZ - 10);
-          ctx.fillRect(gx, gy, 2, 6);
-        }
-      } else if (tile === TILE.WALL) {
-        ctx.fillStyle = '#3B4757';
-        ctx.fillRect(x * TSZ + 1, y * TSZ + 1, TSZ - 2, TSZ - 2);
-        ctx.fillStyle = '#2A3442';
-        ctx.fillRect(x * TSZ + 1, y * TSZ + 1, TSZ - 2, 4);
-        ctx.fillRect(x * TSZ + 1, y * TSZ + TSZ / 2, TSZ - 2, 3);
-      } else if (tile === TILE.DIRT) {
-        ctx.fillStyle = '#7C5A34';
-        ctx.beginPath(); ctx.arc(x * TSZ + TSZ / 2, y * TSZ + TSZ / 2, TSZ / 2 - 4, 0, 7); ctx.fill();
-        ctx.fillStyle = '#96713F';
-        ctx.beginPath(); ctx.arc(x * TSZ + TSZ / 2 - 3, y * TSZ + TSZ / 2 - 4, TSZ / 4, 0, 7); ctx.fill();
-      }
+      if (tile === TILE.GRASS) drawGrassTile(x, y);
+      else if (tile === TILE.WALL) drawWallTile(x, y);
+      else if (tile === TILE.DIRT) drawDirtTile(x, y);
     }
   }
   // 星星
@@ -357,15 +504,17 @@ function drawArena(map, f, names, shots, sparks, curT) {
     for (const s of shots) {
       const age = curT - s.t;
       if (age < 0 || age > 3) continue;
-      const a = 0.75 * (1 - age / 4);
-      ctx.strokeStyle = s.who === 0 ? `rgba(163,230,53,${a})` : `rgba(244,114,182,${a})`;
-      ctx.setLineDash([6, 6]);
+      const a = 0.7 * (1 - age / 4);
+      ctx.strokeStyle = s.who === 0 ? `rgba(63,98,30,${a})` : `rgba(140,42,85,${a})`;
+      ctx.setLineDash([5, 5]);
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(s.x0 * TSZ + TSZ / 2, s.y0 * TSZ + TSZ / 2);
       ctx.lineTo(s.x1 * TSZ + TSZ / 2, s.y1 * TSZ + TSZ / 2);
       ctx.stroke();
       ctx.setLineDash([]);
+      ctx.fillStyle = `rgba(40,30,14,${Math.min(1, a + 0.2)})`; // 弹丸
+      ctx.beginPath(); ctx.arc(s.x1 * TSZ + TSZ / 2, s.y1 * TSZ + TSZ / 2, 3, 0, 7); ctx.fill();
     }
   }
   // 坦克
@@ -403,11 +552,18 @@ function drawArena(map, f, names, shots, sparks, curT) {
       ctx.beginPath(); ctx.arc(px, py, TSZ * 0.68, 0, 7); ctx.stroke();
       ctx.setLineDash([]);
     }
-    drawHpBar(px, py, f.hp[i] / RULES.hp, f.hp[i] <= 30 ? '#F87171' : '#4ADE80');
-    ctx.font = '10px Menlo';
-    ctx.fillStyle = col;
+    drawHpBar(px, py, f.hp[i] / RULES.hp, f.hp[i] <= 30 ? '#E05252' : '#3FA34D');
+    // 名牌药丸（参照原作红/蓝名牌徽章）
+    ctx.font = 'bold 10px "PingFang SC", Menlo, sans-serif';
     const tag = `P${i + 1} ${names[i]}${cloaked ? ' 隐身中…' : ''} ★${f.held[i]}`;
-    ctx.fillText(tag, px - Math.min(ctx.measureText(tag).width / 2, px - 2), py + TSZ * 0.95);
+    const tw = ctx.measureText(tag).width + 12;
+    const bx = Math.min(Math.max(px - tw / 2, 2), map.width * TSZ - tw - 2);
+    const by = py + TSZ * 0.68;
+    ctx.fillStyle = i === 0 ? 'rgba(61,94,30,0.92)' : 'rgba(140,42,85,0.92)';
+    rrect(bx, by, tw, 14, 7);
+    ctx.fill();
+    ctx.fillStyle = '#FFF8E7';
+    ctx.fillText(tag, bx + 6, by + 10.5);
   }
   // 火花（命中/传送）
   if (sparks) {
