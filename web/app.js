@@ -1,6 +1,6 @@
 // AgenTank 网页端 UI：本地跑引擎对战 + canvas 逐 tick 回放 + 实时战报 + 天梯。
 // 开发版经 <script type="module"> 加载；发布版由 scripts/build-web.mjs 去 import/export 内联进单文件。
-import { runMatch, generateMap, mulberry32, renderText, RULES, TILE } from '../src/engine/index.js';
+import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS, presetMap } from '../src/engine/index.js';
 import { bots } from '../bots/index.js';
 
 const $id = (s) => document.getElementById(s);
@@ -40,6 +40,27 @@ const SKILL_CN = {
 };
 const skillSel = $id('skillSel');
 const userSkill = () => (skillSel ? skillSel.value : 'teleport');
+
+// ---------- 地图选择（10 张预置图 + 默认随机图） ----------
+const mapSel = $id('mapSel');
+if (mapSel) {
+  for (const m of PRESET_MAPS) {
+    const o = document.createElement('option');
+    o.value = m.id;
+    o.textContent = `${m.name}（${m.desc}）`;
+    mapSel.appendChild(o);
+  }
+}
+const userMapKey = () => (mapSel ? mapSel.value : 'random');
+// 取当前对局用图：预置图按 id 取（每次全新对象），默认走种子随机生成
+function makeMap(seed) {
+  const key = userMapKey();
+  if (key !== 'random') {
+    const m = presetMap(key);
+    if (m) return m;
+  }
+  return generateMap(mulberry32(seed));
+}
 
 // ---------- 默认脚本（效果稿同款） ----------
 const DEFAULT_SCRIPT = `// 你的战术：优先吃星，残血传送跑路
@@ -849,8 +870,8 @@ function startBattle() {
   const seed = seedFromString(seedStr);
   const oppKey = oppSelect.value;
   const opp = ROSTER.find((r) => r.key === oppKey) || ROSTER[0];
-  // 地图与对局同源同 seed：先生成地图再喂给 runMatch，保证渲染的就是对局用图
-  const map = generateMap(mulberry32(seed));
+  // 地图与对局同源：预置图按选择取，随机图与 seed 同源；先取图再喂给 runMatch，保证渲染的就是对局用图
+  const map = makeMap(seed);
   const names = [`我的坦克 v${curVersion}`, `${opp.style}流`];
   const result = runMatch({ seed, botA: guarded, botB: opp.fn, map });
   const tl = buildTimeline(map, result);
@@ -936,6 +957,15 @@ function scheduleLadder() {
 $id('battleBtn').addEventListener('click', startBattle);
 saveBtn.addEventListener('click', saveVersion);
 if (skillSel) skillSel.addEventListener('change', scheduleLadder);
+if (mapSel) mapSel.addEventListener('change', () => {
+  // 切图立即生效：回到预览态，下一局按新图开战
+  match = null;
+  setPlaying(false);
+  cur = 0;
+  acc = 0;
+  previewMap = makeMap(seedFromString(seedInput.value.trim() || '1'));
+  setupCanvas(previewMap);
+});
 playBtn.addEventListener('click', () => { if (match) setPlaying(!playing); });
 $id('firstBtn').addEventListener('click', () => { if (match) { cur = 0; acc = 0; } });
 $id('lastBtn').addEventListener('click', () => { if (match) { cur = match.result.ticks - 1; setPlaying(false); } });
@@ -968,8 +998,11 @@ if (!EVAL_OK) {
 updateVersionUi();
 const qp = new URLSearchParams(location.search);
 if (qp.get('seed')) seedInput.value = qp.get('seed');
+if (qp.get('map') && mapSel && [...mapSel.options].some((o) => o.value === qp.get('map'))) {
+  mapSel.value = qp.get('map'); // ?map=id 直达预置图（可分享/截图复现）
+}
 footSeed.textContent = `deterministic · seed=${seedInput.value.trim()}`;
-previewMap = generateMap(mulberry32(seedFromString(seedInput.value)));
+previewMap = makeMap(seedFromString(seedInput.value));
 setupCanvas(previewMap);
 requestAnimationFrame(loop);
 scheduleLadder();

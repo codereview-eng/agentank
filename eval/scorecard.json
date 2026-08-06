@@ -197,7 +197,7 @@
         {
           "name": "100 局（随机 seeds、四组对阵轮换、默认地图）平均单局 <50ms",
           "pass": true,
-          "detail": "总耗时 297.44ms，平均 2.97ms/局，共 10181 ticks"
+          "detail": "总耗时 524.05ms，平均 5.24ms/局，共 10063 ticks"
         }
       ]
     },
@@ -214,11 +214,11 @@
       ]
     }
   ],
-  "generatedAt": "2026-08-06T11:46:41.043Z",
+  "generatedAt": "2026-08-06T21:00:56.532Z",
   "engineTestSummary": {
-    "pass": 53,
+    "pass": 58,
     "fail": 0,
-    "tests": 53,
+    "tests": 58,
     "ok": true
   }
 }
