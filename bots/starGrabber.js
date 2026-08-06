@@ -1,14 +1,18 @@
-// 抢星流：以吃星为主，顺手开枪，残血传送保命（与示例脚本同构）。
+// 抢星流（技能：疾驰）：以吃星为主，远星开疾驰冲刺，顺手开枪；躲炸弹。
+import { bombEvade } from './util.js';
+
 export default function starGrabber(api) {
+  const evade = bombEvade(api);
+  if (evade) return evade;
   const me = api.me();
+  const foe = api.enemy();
   const R = api.rules();
-  if (api.enemyVisible() && api.canFire() && api.distTo(api.enemy()) <= R.fireRange) {
-    return api.fireAt(api.enemy());
-  }
-  if (me.hp < 30 && api.ready('teleport')) {
-    const c = api.safestCorner();
-    if (c) return api.teleport(c);
+  if (api.enemyVisible() && api.canFire() && api.distTo(foe) <= R.fireRange
+    && (foe.x === me.x || foe.y === me.y)) {
+    return api.fireAt(foe);
   }
   const star = api.nearestStar();
+  if (star && !me.boosted && api.ready() && api.distTo(star) >= 4) return api.useSkill(); // 疾驰抢星
   return star ? api.moveTo(star) : api.patrol();
 }
+starGrabber.skill = 'boost';

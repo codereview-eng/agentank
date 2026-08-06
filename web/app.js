@@ -34,7 +34,12 @@ const COLOR = {
 const TSZ = 28;
 const SPEEDS = [1, 2, 4];
 const BASE_TPS = 20; // 1x = 每秒 20 tick，用时口径 = ticks/20 秒
-const SKILL_CN = { cloak: '隐身', teleport: '传送', stun: '眩晕' };
+const SKILL_CN = {
+  shield: '护盾', freeze: '冰冻', stun: '眩晕', overload: '超载',
+  cloak: '隐身', poison: '剧毒', teleport: '传送', boost: '疾驰',
+};
+const skillSel = $id('skillSel');
+const userSkill = () => (skillSel ? skillSel.value : 'teleport');
 
 // ---------- 默认脚本（效果稿同款） ----------
 const DEFAULT_SCRIPT = `// 你的战术：优先吃星，残血传送跑路
@@ -158,9 +163,16 @@ function buildTimeline(map, result) {
   const held = [0, 0];
   const cloakLeft = [0, 0];
   const stunLeft = [0, 0];
+  const frozenLeft = [0, 0];
+  const poisonLeft = [0, 0];
+  const shieldOn = [false, false];
   const facing = [0, Math.PI];
   const dead = [false, false];
-  let field = map.stars.map((s) => ({ x: s.x, y: s.y }));
+  // 单星规则：引擎只保留地图声明的第一颗星，渲染同口径截断
+  let field = map.stars.slice(0, RULES.maxFieldStars ?? map.stars.length).map((s) => ({ x: s.x, y: s.y }));
+  let bombs = [];              // 在场炸弹 [{x,y,t0}]
+  let gone = new Set();        // 已摧毁土堆 "x,y"
+  let cracked = new Set();     // 打裂土堆 "x,y"
   const frames = [];
   const shots = [];
   const sparks = [];
@@ -169,6 +181,8 @@ function buildTimeline(map, result) {
     for (const i of [0, 1]) {
       if (cloakLeft[i] > 0) cloakLeft[i]--;
       if (stunLeft[i] > 0) stunLeft[i]--;
+      if (frozenLeft[i] > 0) frozenLeft[i]--;
+      if (poisonLeft[i] > 0) poisonLeft[i]--;
     }
     for (const e of byTick[t]) {
       switch (e.type) {
@@ -192,17 +206,32 @@ function buildTimeline(map, result) {
         case 'fire':
           facing[e.who] = Math.atan2(e.dy, e.dx);
           if (cloakLeft[e.who] > 0) cloakLeft[e.who] = 0; // 开火破隐
-          pending[e.who] = { t, who: e.who, x0: e.x, y0: e.y };
+          pending[e.who] = { who: e.who, t0: t, x0: e.x, y0: e.y };
           break;
         case 'bullet_end':
           if (pending[e.who]) {
-            shots.push({ ...pending[e.who], x1: e.x, y1: e.y, hit: e.cause === 'hit' });
+            shots.push({ ...pending[e.who], t1: t, x1: e.x, y1: e.y, hit: e.reason === 'hit' });
             pending[e.who] = null;
           }
           break;
         case 'hit':
           hp[e.target] = e.hp;
           sparks.push({ t, x: e.x, y: e.y, kind: 'hit' });
+          break;
+        case 'mound_hit':
+          cracked = new Set(cracked).add(`${e.x},${e.y}`);
+          break;
+        case 'mound_destroyed':
+          gone = new Set(gone).add(`${e.x},${e.y}`);
+          sparks.push({ t, x: e.x, y: e.y, kind: 'hit' });
+          break;
+        case 'bomb_place':
+          bombs = bombs.concat([{ x: e.x, y: e.y, t0: t }]);
+          break;
+        case 'bomb_explode':
+          bombs = bombs.filter((b) => !(b.x === e.x && b.y === e.y));
+          for (const c of e.cells || []) sparks.push({ t, x: c.x, y: c.y, kind: 'boom' });
+          for (const h of e.hits || []) hp[h.who] = Math.max(0, hp[h.who] - h.dmg);
           break;
         case 'skill':
           if (e.name === 'teleport') {
@@ -211,10 +240,25 @@ function buildTimeline(map, result) {
             sparks.push({ t, x: e.x, y: e.y, kind: 'tp' });
           } else if (e.name === 'cloak') {
             cloakLeft[e.who] = e.duration;
+          } else if (e.name === 'shield') {
+            shieldOn[e.who] = true;
           }
+          break;
+        case 'shield_block':
+          shieldOn[e.who] = false;
+          sparks.push({ t, x: pos[e.who].x, y: pos[e.who].y, kind: 'shield' });
+          break;
+        case 'freeze_hit':
+          frozenLeft[e.target] = e.duration;
           break;
         case 'stun_hit':
           stunLeft[e.target] = e.duration;
+          break;
+        case 'poison_hit':
+          poisonLeft[e.target] = e.duration;
+          break;
+        case 'poison_tick':
+          hp[e.target] = e.hp;
           break;
         case 'death':
           dead[e.who] = true;
@@ -227,8 +271,9 @@ function buildTimeline(map, result) {
       pos: pos.map((p) => ({ ...p })),
       hp: [...hp], held: [...held],
       cloak: [...cloakLeft], stun: [...stunLeft],
+      frozen: [...frozenLeft], poison: [...poisonLeft], shield: [...shieldOn],
       facing: [...facing], dead: [...dead],
-      field, // filter/concat 均产生新数组，此引用即本 tick 快照
+      field, bombs, gone, cracked, // 均为 copy-on-write 新引用，即本 tick 快照
     });
   }
   return { frames, shots, sparks };
@@ -242,7 +287,10 @@ function buildLog(result, names) {
   for (const e of result.events) {
     let html = null;
     switch (e.type) {
-      case 'start': html = `对战开始 · 地图 ${e.width}×${e.height}`; break;
+      case 'start':
+        html = `对战开始 · 地图 ${e.width}×${e.height}`;
+        if (e.skills) html += ` · 技能 ${nm(0)}=<span class="sk">${SKILL_CN[e.skills[0]] ?? e.skills[0]}</span> ${nm(1)}=<span class="sk">${SKILL_CN[e.skills[1]] ?? e.skills[1]}</span>`;
+        break;
       case 'goal':
         html = e.tag === 'star' ? `${nm(e.who)} 直奔星星 (${e.x},${e.y})`
           : e.tag === 'enemy' ? `${nm(e.who)} 扑向敌人 (${e.x},${e.y})`
@@ -252,9 +300,23 @@ function buildLog(result, names) {
       case 'fire': html = `${nm(e.who)} 开火`; break;
       case 'hit': html = `${nm(e.who)} 命中 ${nm(e.target)} <span class="dmg">-${e.dmg}</span>（剩 ${e.hp}）`; break;
       case 'bullet_end':
-        if (e.cause === 'wall') html = `${nm(e.who)} 的子弹被墙挡下`;
-        else if (e.cause === 'dirt') html = `${nm(e.who)} 的子弹被土堆挡下`;
+        if (e.reason === 'wall') html = `${nm(e.who)} 的子弹被墙挡下`;
+        else if (e.reason === 'mound') html = `${nm(e.who)} 的子弹打在土堆上`;
+        else if (e.reason === 'out') html = `${nm(e.who)} 的子弹飞出场外`;
         break;
+      case 'mound_hit':
+        if (e.hp > 0) html = `(${e.x},${e.y}) 的土堆被打出裂缝`;
+        break;
+      case 'mound_destroyed': html = `(${e.x},${e.y}) 的土堆<span class="dmg">被摧毁</span>`; break;
+      case 'bomb_place': html = `${nm(e.who)} 在 (${e.x},${e.y}) 放下<span class="sk">炸弹</span>`; break;
+      case 'bomb_explode': {
+        const hits = (e.hits || []).map((h) => `${nm(h.who)} <span class="dmg">-${h.dmg}</span>`).join('、');
+        html = `(${e.x},${e.y}) <span class="dmg">炸弹爆炸</span>（波及 ${e.cells.length} 格${hits ? '，' + hits : ''}）`;
+        break;
+      }
+      case 'shield_block': html = `${nm(e.who)} 的<span class="sk">护盾</span>挡下了${e.source === 'bomb' ? '炸弹' : '子弹'}`; break;
+      case 'freeze_hit': html = `${nm(e.target)} 被<span class="sk">冰冻</span> ${e.duration} 拍`; break;
+      case 'poison_hit': html = `${nm(e.target)} <span class="sk">中毒</span>，${e.duration} 拍内持续掉血`; break;
       case 'star':
         held[e.who] = e.total;
         html = `${nm(e.who)} <span class="st">吃星 ★ ${held[0]}:${held[1]}</span>`;
@@ -498,27 +560,67 @@ function drawArena(map, f, names, shots, sparks, curT) {
       const tile = map.tiles[y][x];
       if (tile === TILE.GRASS) drawGrassTile(x, y);
       else if (tile === TILE.WALL) drawWallTile(x, y);
-      else if (tile === TILE.DIRT) drawDirtTile(x, y);
+      else if (tile === TILE.DIRT) {
+        if (f.gone && f.gone.has(`${x},${y}`)) continue; // 已被摧毁：露出地面
+        drawDirtTile(x, y);
+        if (f.cracked && f.cracked.has(`${x},${y}`)) { // 打裂：加裂缝
+          const cx = x * TSZ + TSZ / 2;
+          const cy = y * TSZ + TSZ / 2;
+          ctx.strokeStyle = 'rgba(30,18,6,0.85)';
+          ctx.lineWidth = 1.6;
+          ctx.beginPath();
+          ctx.moveTo(cx - TSZ * 0.18, cy - TSZ * 0.24);
+          ctx.lineTo(cx - TSZ * 0.02, cy - TSZ * 0.02);
+          ctx.lineTo(cx - TSZ * 0.12, cy + TSZ * 0.2);
+          ctx.moveTo(cx - TSZ * 0.02, cy - TSZ * 0.02);
+          ctx.lineTo(cx + TSZ * 0.2, cy + TSZ * 0.06);
+          ctx.stroke();
+        }
+      }
+    }
+  }
+  // 炸弹（黑色圆雷 + 引信倒数，对双方可见）
+  if (f.bombs) {
+    for (const b of f.bombs) {
+      const px = b.x * TSZ + TSZ / 2;
+      const py = b.y * TSZ + TSZ / 2;
+      ctx.fillStyle = '#1F2937';
+      ctx.beginPath(); ctx.arc(px, py + 1.5, TSZ * 0.27, 0, 7); ctx.fill();
+      ctx.strokeStyle = 'rgba(24,20,12,0.8)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(px, py + 1.5, TSZ * 0.27, 0, 7); ctx.stroke();
+      ctx.strokeStyle = '#8B5A2B';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(px + 2, py - TSZ * 0.2); ctx.quadraticCurveTo(px + 6, py - TSZ * 0.42, px + 10, py - TSZ * 0.34); ctx.stroke();
+      const left = Math.max(0, RULES.bombFuse - (curT - b.t0));
+      ctx.fillStyle = '#FFE38F';
+      ctx.font = `bold ${Math.round(TSZ * 0.34)}px Menlo, monospace`;
+      ctx.fillText(String(left), px - TSZ * 0.1, py + TSZ * 0.14);
     }
   }
   // 星星
   for (const s of f.field) drawStarShape(s.x * TSZ + TSZ / 2, s.y * TSZ + TSZ / 2, TSZ * 0.34, COLOR.star);
-  // 弹道（当前 tick 起保留 3 拍并渐隐）
+  // 弹道（逐 tick 插值飞行：出膛→终点按 2 格/tick 推进，终结后拖尾渐隐 2 拍）
   if (shots) {
     for (const s of shots) {
-      const age = curT - s.t;
-      if (age < 0 || age > 3) continue;
-      const a = 0.7 * (1 - age / 4);
+      if (curT < s.t0 || curT > s.t1 + 2) continue;
+      const dur = Math.max(1, s.t1 - s.t0);
+      const prog = Math.min(1, (curT - s.t0) / dur);
+      const bx = s.x0 + (s.x1 - s.x0) * prog;
+      const by = s.y0 + (s.y1 - s.y0) * prog;
+      const a = curT <= s.t1 ? 0.7 : 0.7 * (1 - (curT - s.t1) / 3);
       ctx.strokeStyle = s.who === 0 ? `rgba(63,98,30,${a})` : `rgba(140,42,85,${a})`;
       ctx.setLineDash([5, 5]);
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(s.x0 * TSZ + TSZ / 2, s.y0 * TSZ + TSZ / 2);
-      ctx.lineTo(s.x1 * TSZ + TSZ / 2, s.y1 * TSZ + TSZ / 2);
+      ctx.lineTo(bx * TSZ + TSZ / 2, by * TSZ + TSZ / 2);
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = `rgba(40,30,14,${Math.min(1, a + 0.2)})`; // 弹丸
-      ctx.beginPath(); ctx.arc(s.x1 * TSZ + TSZ / 2, s.y1 * TSZ + TSZ / 2, 3, 0, 7); ctx.fill();
+      if (curT <= s.t1) { // 在飞弹丸本体
+        ctx.fillStyle = 'rgba(40,30,14,0.95)';
+        ctx.beginPath(); ctx.arc(bx * TSZ + TSZ / 2, by * TSZ + TSZ / 2, 3.2, 0, 7); ctx.fill();
+      }
     }
   }
   // 坦克
@@ -556,6 +658,21 @@ function drawArena(map, f, names, shots, sparks, curT) {
       ctx.beginPath(); ctx.arc(px, py, TSZ * 0.68, 0, 7); ctx.stroke();
       ctx.setLineDash([]);
     }
+    if (f.frozen && f.frozen[i] > 0) { // 冰冻蓝圈
+      ctx.strokeStyle = 'rgba(96,165,250,0.9)';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(px, py, TSZ * 0.62, 0, 7); ctx.stroke();
+    }
+    if (f.shield && f.shield[i]) { // 护盾金圈
+      ctx.strokeStyle = 'rgba(255,201,60,0.9)';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(px, py, TSZ * 0.74, 0, 7); ctx.stroke();
+    }
+    if (f.poison && f.poison[i] > 0) { // 中毒绿泡
+      ctx.fillStyle = 'rgba(74,222,128,0.9)';
+      ctx.beginPath(); ctx.arc(px + TSZ * 0.34, py - TSZ * 0.42, 3.5, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(px + TSZ * 0.18, py - TSZ * 0.55, 2.2, 0, 7); ctx.fill();
+    }
     drawHpBar(px, py, f.hp[i] / RULES.hp, f.hp[i] <= 30 ? '#E05252' : '#3FA34D');
     // 名牌药丸（参照原作红/蓝名牌徽章）
     ctx.font = 'bold 10px "PingFang SC", Menlo, sans-serif';
@@ -589,6 +706,18 @@ function drawArena(map, f, names, shots, sparks, curT) {
           ctx.lineTo(px + 13 * Math.cos(ang), py + 13 * Math.sin(ang));
           ctx.stroke();
         }
+      } else if (sp.kind === 'boom') { // 炸弹爆炸格闪光
+        ctx.fillStyle = `rgba(249,115,22,${a * 0.75})`;
+        rrect(sp.x * TSZ + 2.5, sp.y * TSZ + 2.5, TSZ - 5, TSZ - 5, 6);
+        ctx.fill();
+        ctx.strokeStyle = `rgba(255,201,60,${a})`;
+        ctx.lineWidth = 2;
+        rrect(sp.x * TSZ + 2.5, sp.y * TSZ + 2.5, TSZ - 5, TSZ - 5, 6);
+        ctx.stroke();
+      } else if (sp.kind === 'shield') { // 护盾格挡闪光
+        ctx.strokeStyle = `rgba(255,201,60,${a})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(px, py, TSZ * 0.7 + age * 3, 0, 7); ctx.stroke();
       } else { // teleport 闪光
         ctx.strokeStyle = `rgba(56,189,248,${a})`;
         ctx.lineWidth = 2;
@@ -656,7 +785,10 @@ function render() {
     drawArena(previewMap, {
       pos: previewMap.spawns.map((s) => ({ ...s })),
       hp: [RULES.hp, RULES.hp], held: [0, 0], cloak: [0, 0], stun: [0, 0],
-      facing: [0, Math.PI], dead: [false, false], field: previewMap.stars,
+      frozen: [0, 0], poison: [0, 0], shield: [false, false],
+      facing: [0, Math.PI], dead: [false, false],
+      field: previewMap.stars.slice(0, RULES.maxFieldStars ?? previewMap.stars.length),
+      bombs: [], gone: new Set(), cracked: new Set(),
     }, ['我的坦克 v' + curVersion, '对手'], null, null, 0);
   }
 }
@@ -712,6 +844,7 @@ function startBattle() {
   }
   const box = { count: 0, last: '' };
   const guarded = guardWrap(fn, box);
+  guarded.skill = userSkill(); // 8 选 1：显式挂到脚本函数上（runMatch 按 .skill 取装备）
   const seedStr = seedInput.value.trim() || '1';
   const seed = seedFromString(seedStr);
   const oppKey = oppSelect.value;
@@ -739,7 +872,9 @@ function computeLadder() {
   try {
     const fn = compileScript(editorEl.value);
     const box = { count: 0, last: '' };
-    parts.push({ key: '__user__', tank: `我的坦克 v${curVersion}`, style: '自定义', fn: guardWrap(fn, box), me: true, elo: 1200, w: 0, d: 0, g: 0 });
+    const gfn = guardWrap(fn, box);
+    gfn.skill = userSkill();
+    parts.push({ key: '__user__', tank: `我的坦克 v${curVersion}`, style: '自定义', fn: gfn, me: true, elo: 1200, w: 0, d: 0, g: 0 });
   } catch { /* 用户脚本编译失败：天梯只算内置四家 */ }
   const jobs = [];
   for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) jobs.push([i, j]);
@@ -800,6 +935,7 @@ function scheduleLadder() {
 // ---------- 事件绑定 ----------
 $id('battleBtn').addEventListener('click', startBattle);
 saveBtn.addEventListener('click', saveVersion);
+if (skillSel) skillSel.addEventListener('change', scheduleLadder);
 playBtn.addEventListener('click', () => { if (match) setPlaying(!playing); });
 $id('firstBtn').addEventListener('click', () => { if (match) { cur = 0; acc = 0; } });
 $id('lastBtn').addEventListener('click', () => { if (match) { cur = match.result.ticks - 1; setPlaying(false); } });

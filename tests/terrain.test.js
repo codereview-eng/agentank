@@ -17,12 +17,12 @@ test('墙挡子弹：弹道被墙截断，无命中', () => {
   const hits = r.events.filter((e) => e.type === 'hit');
   assert.ok(fires.length >= 1, '应有开火事件');
   assert.ok(ends.length >= 1);
-  assert.equal(ends[0].cause, 'wall');
+  assert.equal(ends[0].reason, 'wall');
   assert.deepEqual({ x: ends[0].x, y: ends[0].y }, { x: 4, y: 1 });
   assert.equal(hits.length, 0, '子弹被墙挡下，不应命中');
 });
 
-test('土堆挡子弹：弹道被土堆截断，无命中', () => {
+test('土堆挡子弹：弹道被土堆截断（reason=mound）并产生 mound_hit，无命中', () => {
   const map = mapFromAscii([
     '##########',
     '#A..D...B#',
@@ -32,7 +32,8 @@ test('土堆挡子弹：弹道被土堆截断，无命中', () => {
   const r = runMatch({ seed: 1, map, botA: A, botB: idle, maxTicks: 3 });
   const ends = r.events.filter((e) => e.type === 'bullet_end');
   assert.ok(ends.length >= 1);
-  assert.equal(ends[0].cause, 'dirt');
+  assert.equal(ends[0].reason, 'mound');
+  assert.ok(r.events.some((e) => e.type === 'mound_hit' && e.x === 4 && e.y === 1 && e.hp === 1));
   assert.equal(r.events.filter((e) => e.type === 'hit').length, 0);
 });
 

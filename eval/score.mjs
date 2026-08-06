@@ -29,14 +29,14 @@ function sectionMechanics() {
   };
   const assert = (cond, msg) => { if (!cond) throw new Error(msg); };
 
-  add('墙挡子弹（bullet_end.cause=wall，无 hit）', () => {
+  add('墙挡子弹（bullet_end.reason=wall，无 hit）', () => {
     const map = mapFromAscii(['##########', '#A..#...B#', '##########']);
     const A = (api) => (api.canFire() ? api.fireAt(api.enemy()) : null);
-    const r = runMatch({ seed: 1, map, botA: A, botB: idle, maxTicks: 3 });
+    const r = runMatch({ seed: 1, map, botA: A, botB: idle, maxTicks: 5 });
     const ends = r.events.filter((e) => e.type === 'bullet_end');
-    assert(ends.length >= 1 && ends[0].cause === 'wall', `cause=${ends[0]?.cause}`);
+    assert(ends.length >= 1 && ends[0].reason === 'wall', `reason=${ends[0]?.reason}`);
     assert(r.events.filter((e) => e.type === 'hit').length === 0, '不应命中');
-    return `bullet_end@(${ends[0].x},${ends[0].y}) cause=wall`;
+    return `bullet_end@(${ends[0].x},${ends[0].y}) reason=wall`;
   });
 
   add('墙挡坦克（moveTo 墙格不产生 move，位置不变）', () => {
@@ -50,14 +50,25 @@ function sectionMechanics() {
     return '4 拍尝试走墙格均被拒，位置保持 (1,1)';
   });
 
-  add('土堆挡子弹（bullet_end.cause=dirt，无 hit）', () => {
+  add('土堆挡子弹（bullet_end.reason=mound + mound_hit，无 hit）', () => {
     const map = mapFromAscii(['##########', '#A..D...B#', '##########']);
     const A = (api) => (api.canFire() ? api.fireAt(api.enemy()) : null);
-    const r = runMatch({ seed: 1, map, botA: A, botB: idle, maxTicks: 3 });
+    const r = runMatch({ seed: 1, map, botA: A, botB: idle, maxTicks: 4 });
     const ends = r.events.filter((e) => e.type === 'bullet_end');
-    assert(ends.length >= 1 && ends[0].cause === 'dirt', `cause=${ends[0]?.cause}`);
+    assert(ends.length >= 1 && ends[0].reason === 'mound', `reason=${ends[0]?.reason}`);
+    assert(r.events.some((e) => e.type === 'mound_hit'), '应有 mound_hit 事件');
     assert(r.events.filter((e) => e.type === 'hit').length === 0, '不应命中');
-    return 'bullet_end cause=dirt，无命中';
+    return 'bullet_end reason=mound + mound_hit，无命中';
+  });
+
+  add('土堆两发摧毁（mound_hit → mound_destroyed 后弹道打通）', () => {
+    const map = mapFromAscii(['##########', '#A..D...B#', '##########']);
+    const A = (api) => (api.canFire() ? api.fireAt(api.enemy()) : null);
+    const r = runMatch({ seed: 1, map, botA: A, botB: idle, maxTicks: 60 });
+    const destroyed = r.events.find((e) => e.type === 'mound_destroyed');
+    assert(destroyed, '应有 mound_destroyed 事件');
+    assert(r.events.some((e) => e.type === 'hit' && e.t > destroyed.t), '摧毁后子弹应能命中敌人');
+    return `t=${destroyed.t} 土堆摧毁，之后子弹直达命中`;
   });
 
   add('土堆不挡坦克（可走上土堆格）', () => {
@@ -110,22 +121,22 @@ function sectionMechanics() {
       return null;
     };
     const B = (api) => { vis.push(api.enemyVisible()); return null; };
-    runMatch({ seed: 1, map, botA: A, botB: B, maxTicks: 40 });
+    runMatch({ seed: 1, map, botA: A, botB: B, skillA: 'cloak', maxTicks: 40 });
     assert(vis[0] === true && vis[10] === false && vis[30] === true, `vis[0,10,30]=${vis[0]},${vis[10]},${vis[30]}`);
     assert(readyLog[0] === true && readyLog[1] === false, '使用后应进入冷却');
     // 开火打破隐身
     const vis2 = []; let st = 0;
     const A2 = (api) => {
       if (st === 0) { st = 1; return api.cloak(); }
-      if (st === 1) { st = 2; return api.fireAt(api.enemy()); }
+      if (st === 1 && api.canFire()) { st = 2; return api.fireAt(api.enemy()); }
       return null;
     };
-    runMatch({ seed: 1, map: mapFromAscii(['#######', '#A...B#', '#.....#', '#######']), botA: A2, botB: (api) => { vis2.push(api.enemyVisible()); return null; }, maxTicks: 6 });
-    assert(vis2[1] === false && vis2[2] === true, '开火应打破隐身');
+    runMatch({ seed: 1, map: mapFromAscii(['#######', '#A...B#', '#.....#', '#######']), botA: A2, botB: (api) => { vis2.push(api.enemyVisible()); return null; }, skillA: 'cloak', maxTicks: 8 });
+    assert(vis2.includes(false) && vis2.at(-1) === true, `开火应打破隐身 vis2=${JSON.stringify(vis2)}`);
     return '隐身生效/到期恢复/冷却/开火打破 全通过';
   });
 
-  add('传送技能 + 冷却（立即生效、冷却锁定、非法目标不消耗）', () => {
+  add('传送技能 + 冷却（立即生效、冷却锁定、非法目标重定向、当拍暴露）', () => {
     const map = () => mapFromAscii(['#######', '#A...B#', '#.....#', '#######']);
     const readyLog = []; const meLog = []; let used = false;
     const A = (api) => {
@@ -133,29 +144,47 @@ function sectionMechanics() {
       if (!used && api.ready('teleport')) { used = true; return api.teleport({ x: 1, y: 2 }); }
       return null;
     };
-    const r = runMatch({ seed: 1, map: map(), botA: A, botB: idle, maxTicks: 5 });
+    const r = runMatch({ seed: 1, map: map(), botA: A, botB: idle, skillA: 'teleport', maxTicks: 5 });
     assert(readyLog[0] === true && readyLog[1] === false, '传送后应进入冷却');
     assert(meLog[1].x === 1 && meLog[1].y === 2, '传送应立即生效');
     assert(r.events.some((e) => e.type === 'skill' && e.name === 'teleport' && e.who === 0), '应有 skill 事件');
-    const readyLog2 = [];
-    const A2 = (api) => { readyLog2.push(api.ready('teleport')); return api.teleport({ x: 0, y: 0 }); };
-    const r2 = runMatch({ seed: 1, map: map(), botA: A2, botB: idle, maxTicks: 3 });
-    assert(readyLog2.every((v) => v === true), '非法目标不应消耗冷却');
-    assert(r2.events.filter((e) => e.type === 'skill' && e.name === 'teleport').length === 0, '非法传送不应产生事件');
-    return '传送立即生效 + 冷却 + 非法目标不消耗';
+    assert(r.events.some((e) => e.type === 'teleport_reveal' && e.who === 0), '传送当拍应有 teleport_reveal 暴露事件');
+    // 非法目标（墙格）→ 重定向到最近合法格，照常消耗冷却
+    const readyLog2 = []; const meLog2 = [];
+    const A2 = (api) => { readyLog2.push(api.ready('teleport')); meLog2.push(api.me()); return api.teleport({ x: 0, y: 0 }); };
+    const r2 = runMatch({ seed: 1, map: map(), botA: A2, botB: idle, skillA: 'teleport', maxTicks: 4 });
+    assert(readyLog2[0] === true && readyLog2[1] === false, '非法目标重定向后应照常消耗冷却');
+    assert(r2.events.some((e) => e.type === 'skill' && e.name === 'teleport'), '重定向传送应产生事件');
+    const dest = meLog2.at(-1);
+    assert(dest.x >= 1 && dest.y >= 1, `重定向落点应为合法格，实际 (${dest.x},${dest.y})`);
+    return '传送立即生效 + 冷却 + teleport_reveal + 非法目标重定向消耗冷却';
   });
 
-  add('眩晕技能 + 冷却（stun_hit、目标 8 拍不能动、冷却锁定）', () => {
+  add('冻结技能（freeze_hit、目标 8 拍不能动、冷却锁定）', () => {
     const map = mapFromAscii(['######', '#A.B.#', '######']);
     const readyLog = [];
-    const A = (api) => { readyLog.push(api.ready('stun')); return api.ready('stun') ? api.stun() : null; };
+    const A = (api) => { readyLog.push(api.ready()); return api.ready() ? api.useSkill() : null; };
     const B = (api) => api.moveTo({ x: 4, y: 1 });
-    const r = runMatch({ seed: 1, map, botA: A, botB: B, maxTicks: 12 });
-    assert(r.events.some((e) => e.type === 'stun_hit' && e.target === 1), '应有 stun_hit 事件');
-    assert(readyLog[0] === true && readyLog[1] === false, '眩晕应进入冷却');
+    const r = runMatch({ seed: 1, map, botA: A, botB: B, skillA: 'freeze', maxTicks: 14 });
+    const fh = r.events.find((e) => e.type === 'freeze_hit' && e.target === 1);
+    assert(fh, '应有 freeze_hit 事件');
+    assert(readyLog[0] === true && readyLog[1] === false, '冻结应进入冷却');
     const movesB = r.events.filter((e) => e.type === 'move' && e.who === 1);
-    assert(movesB.length >= 1 && movesB[0].t === 8, `首次移动 t=${movesB[0]?.t}，应为 8`);
-    return 'stun_hit 命中，目标至 t=8 才恢复移动，冷却锁定';
+    assert(movesB.length >= 1 && movesB[0].t >= fh.t + 8, `首次移动 t=${movesB[0]?.t}，应 ≥ ${fh.t + 8}`);
+    return `freeze_hit@t${fh.t}，目标至 t=${movesB[0].t} 才恢复移动，冷却锁定`;
+  });
+
+  add('眩晕技能（stun_hit duration=6、操作随机化而非禁止行动）', () => {
+    const map = mapFromAscii(['########', '#A....B#', '#......#', '########']);
+    const A = (api) => (api.ready() ? api.useSkill() : null);
+    const B = (api) => api.moveTo({ x: 1, y: 2 });
+    const r = runMatch({ seed: 3, map, botA: A, botB: B, skillA: 'stun', maxTicks: 12 });
+    const sh = r.events.find((e) => e.type === 'stun_hit' && e.target === 1);
+    assert(sh, '应有 stun_hit 事件');
+    assert(sh.duration === 6, `duration=${sh.duration}，应为 6`);
+    const acts = r.events.filter((e) => (e.type === 'move' || e.type === 'turn') && e.who === 1 && e.t > sh.t && e.t <= sh.t + 6);
+    assert(acts.length >= 1, '眩晕期间仍应有动作（随机化，非冻结）');
+    return `stun_hit@t${sh.t}，眩晕期间动作 ${acts.length} 条（随机化生效，非禁止行动）`;
   });
 
   add('开火冷却（射后 5 拍 canFire=false）', () => {
@@ -193,6 +222,70 @@ function sectionMechanics() {
     const r = runMatch({ seed: 1, map, botA: idle, botB: idle, maxTicks: 10 });
     assert(r.winner === null && r.reason === 'draw', `winner=${r.winner} reason=${r.reason}`);
     return 'winner=null reason=draw';
+  });
+
+  add('单发在飞（在飞期间 canFire=false、me().bulletInFlight=true）', () => {
+    const map = mapFromAscii(['############', '#A........B#', '############']);
+    const log = [];
+    const A = (api) => {
+      log.push({ can: api.canFire(), inFlight: api.me().bulletInFlight });
+      return api.canFire() ? api.fireAt(api.enemy()) : null;
+    };
+    runMatch({ seed: 1, map, botA: A, botB: idle, maxTicks: 4 });
+    assert(log[0].can === true && log[0].inFlight === false, 't0 应可开火且无在飞');
+    const inFlightTick = log.findIndex((x) => x.inFlight === true);
+    assert(inFlightTick >= 1, '开火后应出现在飞状态');
+    assert(log[inFlightTick].can === false, '在飞期间 canFire 应为 false');
+    return `t${inFlightTick} 在飞（bulletInFlight=true、canFire=false）`;
+  });
+
+  add('子弹查询（myBullet 在飞可查；enemyBullet 视锥内可见）', () => {
+    const map = mapFromAscii(['############', '#A........B#', '############']);
+    const myLog = []; const enemyLog = [];
+    const A = (api) => { myLog.push(api.myBullet()); return api.canFire() ? api.fireAt(api.enemy()) : null; };
+    const B = (api) => { enemyLog.push(api.enemyBullet()); return api.canFire() ? api.fireAt(api.enemy()) : null; };
+    runMatch({ seed: 1, map, botA: A, botB: B, maxTicks: 6 });
+    assert(myLog[0] === null, 't0 应无在飞子弹');
+    assert(myLog.some((b) => b && typeof b.x === 'number' && typeof b.dx === 'number'), 'myBullet 在飞应可查 {x,y,dx,dy}');
+    assert(enemyLog.some((b) => b !== null), '面向来弹方向应能看见敌方子弹（90° 视锥）');
+    return 'myBullet 在飞可查；enemyBullet 视锥内可见';
+  });
+
+  add('炸弹（bomb_place → 10 拍引信 bomb_explode，十字爆区）', () => {
+    const map = mapFromAscii(['#######', '#A...B#', '#.....#', '#######']);
+    let thrown = false;
+    const A = (api) => { if (!thrown && api.ready('bomb')) { thrown = true; return api.throwBomb(); } return null; };
+    const r = runMatch({ seed: 1, map, botA: A, botB: idle, maxTicks: 20 });
+    const place = r.events.find((e) => e.type === 'bomb_place' && e.who === 0);
+    const boom = r.events.find((e) => e.type === 'bomb_explode');
+    assert(place, '应有 bomb_place 事件');
+    assert(boom, '应有 bomb_explode 事件');
+    assert(boom.t - place.t === 10, `引信应 10 拍，实际 ${boom.t - place.t}`);
+    assert(Array.isArray(boom.cells) && boom.cells.length >= 1, '爆炸应有 cells 爆区');
+    assert(Array.isArray(boom.hits) && boom.hits.some((h) => h.who === 0), '原地不动应被自己炸到（自伤保留）');
+    return `bomb_place@t${place.t} → bomb_explode@t${boom.t}，爆区 ${boom.cells.length} 格，自伤命中`;
+  });
+
+  add('单星（吃星后 15 拍 star_spawn 重生）', () => {
+    const r = runMatch({ seed: 5, botA: bots.starGrabber, botB: idle, maxTicks: 200 });
+    const eat = r.events.find((e) => e.type === 'star');
+    assert(eat, '应有吃星事件');
+    const spawn = r.events.find((e) => e.type === 'star_spawn' && e.t > eat.t);
+    assert(spawn, '吃星后应有 star_spawn 重生');
+    assert(spawn.t - eat.t === 15, `重生间隔应 15 拍，实际 ${spawn.t - eat.t}`);
+    return `t${eat.t} 吃星 → t${spawn.t} 重生（间隔 15）`;
+  });
+
+  add('技能 8 选 1（runMatch skillA 生效、未装备旧入口安全 no-op）', () => {
+    const map = mapFromAscii(['#######', '#A...B#', '#.....#', '#######']);
+    let used = false;
+    const A = (api) => { if (!used && api.ready()) { used = true; return api.useSkill(); } return null; };
+    const r = runMatch({ seed: 1, map, botA: A, botB: idle, skillA: 'shield', maxTicks: 5 });
+    assert(Array.isArray(r.skills) && r.skills[0] === 'shield', `skills=${JSON.stringify(r.skills)}`);
+    assert(r.events.some((e) => e.type === 'skill' && e.name === 'shield' && e.who === 0), '应有 shield skill 事件');
+    const r2 = runMatch({ seed: 1, map, botA: (api) => api.cloak(), botB: idle, skillA: 'shield', maxTicks: 3 });
+    assert(!r2.events.some((e) => e.type === 'skill'), '未装备 cloak 的旧入口调用应为安全 no-op');
+    return 'shield 装备生效；未装备旧入口 no-op 不炸';
   });
 
   const max = 40;

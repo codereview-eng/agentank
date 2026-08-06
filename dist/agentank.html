@@ -133,6 +133,18 @@ footer .mono{color:var(--muted)}
           <option value="brawler">贴脸流 (内置)</option>
         </select>
       </div>
+      <div class="row"><label>技能</label>
+        <select id="skillSel">
+          <option value="teleport" selected>传送（8 选 1）</option>
+          <option value="shield">护盾</option>
+          <option value="freeze">冰冻</option>
+          <option value="stun">眩晕</option>
+          <option value="overload">超载</option>
+          <option value="cloak">隐身</option>
+          <option value="poison">剧毒</option>
+          <option value="boost">疾驰</option>
+        </select>
+      </div>
       <div class="row"><label>种子</label><input class="mono" id="seed" value="20260805-42"></div>
       <button class="btn" id="battleBtn">开 战</button>
       <button class="btn ghost" id="saveBtn">保存为新版本（当前 v1 · 共 1 版）</button>
@@ -347,26 +359,40 @@ function generateMap(rng, { width = 17, height = 17, starCount = 6 } = {}) {
 
 // ===== src/engine/engine.js =====
 // AgenTank 核心：tick 制确定性模拟。
-// 每 tick：计时器递减 → 星星补刷 → 视野更新 → 双方基于同一快照 decide → 按 0、1 顺序裁决动作。
-// 击杀即胜；到达 maxTicks 比吃星数；再平则平局。
+// 每 tick 结算顺序（测试锁死）：
+//   1 计时器递减 → 2 星星重生 → 3 推进已有子弹 → 4 超载自动补射 → 5 视野更新
+//   → 6 双方基于同一快照 decide → 7 按 0、1 顺序裁决动作 → 8 持续效果（炸弹引信/中毒）
+// 击杀即胜；到达 maxTicks 比吃星数；再平则平局；同拍双亡 = 平局。
 
 
 
+// ===== RULES 常量表（全部数值集中于此） =====
 const RULES = {
   maxTicks: 900,
   hp: 100,
-  damage: 20,
-  fireRange: 7,
-  fireCd: 5,
-  cloakDur: 25,
-  cloakCd: 90,
-  teleportCd: 100,
-  stunRange: 3,
-  stunDur: 8,
-  stunCd: 60,
-  starRespawn: 60,
-  maxFieldStars: 3,
+  damage: 20,          // 子弹伤害
+  bulletSpeed: 2,      // 子弹飞行速度（格/tick）
+  fireRange: 7,        // bot 交火参考距离（子弹实际飞行不受此限制）
+  fireCd: 5,           // 开火冷却
+  bombFuse: 10,        // 炸弹引信（放置后多少 tick 爆炸）
+  bombRange: 2,        // 十字冲击波半径
+  bombDamage: 45,      // 炸弹伤害（含自伤）
+  bombCd: 30,          // 炸弹冷却
+  moundHp: 2,          // 土堆被子弹摧毁所需命中数（炸弹一击摧毁）
+  starRespawn: 15,     // 星星被吃后重生间隔
+  maxFieldStars: 1,    // 场上同时最多星星数
+  skills: {
+    shield:   { cd: 60 },                    // 挡下一次子弹/炸弹伤害，消耗即失效
+    freeze:   { cd: 90, dur: 8 },            // 冻结：完全不能动/转/开火
+    stun:     { cd: 80, dur: 6 },            // 眩晕：移动/转向方向被种子 RNG 随机反转
+    overload: { cd: 70 },                    // 下一次开火 2 连发（间隔 1 tick 同向补射）
+    cloak:    { cd: 90, dur: 25 },           // 隐身
+    poison:   { cd: 80, dur: 10, dmg: 2 },   // 中毒：每 tick -2 HP
+    teleport: { cd: 100 },                   // 传送：非法落点重定向到最近合法格
+    boost:    { cd: 90, dur: 10 },           // 疾驰：移动动作每拍走 2 格
+  },
 };
+const SKILLS = Object.keys(RULES.skills);
 
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
@@ -443,24 +469,70 @@ function nearestOf(T, cells) {
   return best ? { x: best.x, y: best.y } : null;
 }
 
+function bulletsOf(state, i) {
+  return state.bullets.filter((b) => b.owner === i);
+}
+
 function makeApi(state, i) {
   const R = state.R;
   const T = state.tanks[i];
   const E = state.tanks[1 - i];
   const visible = visibleTo(state, i);
+  const inFlight = () => bulletsOf(state, i).length > 0 || !!T.pendingShot;
   return {
     // 状态查询
-    me: () => ({ x: T.x, y: T.y, hp: T.hp, stars: T.stars, cloaked: T.cloak > 0, stunned: T.stun > 0, facing: { dx: T.facing[0], dy: T.facing[1] } }),
+    me: () => ({
+      x: T.x, y: T.y, hp: T.hp, stars: T.stars,
+      skill: T.skill,
+      cloaked: T.cloak > 0,
+      stunned: T.stun > 0,
+      frozen: T.freeze > 0,
+      poisoned: T.poison > 0,
+      boosted: T.boost > 0,
+      shielded: T.shield > 0,
+      bulletInFlight: inFlight(),
+      facing: { dx: T.facing[0], dy: T.facing[1] },
+    }),
     enemy: () => ({ x: T.lastSeen.x, y: T.lastSeen.y, visible }),
     enemyVisible: () => visible,
-    canFire: () => T.cd.fire <= 0,
-    ready: (name) => (T.cd[name] ?? Infinity) <= 0,
+    canFire: () => T.cd.fire <= 0 && !inFlight(),
+    // ready()：无参 = 所装备技能；'bomb' = 炸弹；'fire' = 开火；技能名需与装备一致
+    ready: (name) => {
+      if (name == null || name === T.skill) return T.cd.skill <= 0;
+      if (name === 'bomb') return T.cd.bomb <= 0;
+      if (name === 'fire') return T.cd.fire <= 0;
+      return false;
+    },
+    skill: () => T.skill,
     tick: () => state.t,
-    rules: () => ({ ...R }),
+    rules: () => JSON.parse(JSON.stringify(R)),
     mapSize: () => ({ width: state.map.width, height: state.map.height }),
     inGrass: () => tileAt(state.map, T.x, T.y) === TILE.GRASS,
+    walkable: (p) => !!p && isWalkable(state.map, p.x | 0, p.y | 0),
     distTo: (p) => (p ? Math.abs(T.x - p.x) + Math.abs(T.y - p.y) : Infinity),
     rand: () => T.rng(),
+    // 子弹查询：自己的子弹始终可查；敌方子弹仅当处于我方炮口 90° 视锥内可见
+    myBullet: () => {
+      const b = bulletsOf(state, i)[0];
+      return b ? { x: b.x, y: b.y, dx: b.dx, dy: b.dy } : null;
+    },
+    enemyBullet: () => {
+      for (const b of state.bullets) {
+        if (b.owner === i) continue;
+        const rx = b.x - T.x;
+        const ry = b.y - T.y;
+        const along = rx * T.facing[0] + ry * T.facing[1];
+        const perp = Math.abs(rx * T.facing[1] - ry * T.facing[0]);
+        if (along > 0 && along >= perp) return { x: b.x, y: b.y, dx: b.dx, dy: b.dy };
+      }
+      return null;
+    },
+    // 炸弹查询：场上所有炸弹对双方可见（含草丛中的）
+    bombs: () => state.bombs.map((b) => ({
+      x: b.x, y: b.y,
+      fuse: Math.max(0, b.placedAt + R.bombFuse - state.t),
+      mine: b.owner === i,
+    })),
     // 寻路目标查询
     nearestStar: () => nearestOf(T, state.stars),
     nearestGrass: () => {
@@ -490,6 +562,9 @@ function makeApi(state, i) {
     fireAt: (p) => (p ? { type: 'fire', x: p.x | 0, y: p.y | 0 } : null),
     moveTo: (p) => (p ? { type: 'move', x: p.x | 0, y: p.y | 0 } : null),
     patrol: () => ({ type: 'patrol' }),
+    useSkill: (p) => (p && typeof p.x === 'number' ? { type: 'skill', x: p.x | 0, y: p.y | 0 } : { type: 'skill' }),
+    throwBomb: () => ({ type: 'bomb' }),
+    // 旧入口：映射到所装备技能，未装备 = 非法动作 no-op
     teleport: (p) => (p ? { type: 'teleport', x: p.x | 0, y: p.y | 0 } : null),
     cloak: () => ({ type: 'cloak' }),
     stun: () => ({ type: 'stun' }),
@@ -503,6 +578,7 @@ function pickupStar(state, i, ev) {
   const s = state.stars.splice(idx, 1)[0];
   T.stars += 1;
   ev({ t: state.t, type: 'star', who: i, x: s.x, y: s.y, total: T.stars });
+  if (state.stars.length === 0) state.starRespawnAt = state.t + state.R.starRespawn;
 }
 
 function maybeGoal(state, i, tx, ty, ev) {
@@ -516,30 +592,242 @@ function maybeGoal(state, i, tx, ty, ev) {
   ev({ t: state.t, type: 'goal', who: i, x: tx, y: ty, tag });
 }
 
-function fireBullet(state, i, dx, dy, ev) {
+// 眩晕：移动/转向方向有 50% 概率被反转（走受害者自己的种子 RNG）
+function maybeInvertDir(T, dir) {
+  if (T.stun > 0 && T.rng() < 0.5) return [-dir[0], -dir[1]];
+  return dir;
+}
+
+// 出膛：生成飞行子弹实体 + fire 事件；开火打破隐身并暴露位置
+function spawnBullet(state, i, dx, dy, ev) {
+  const T = state.tanks[i];
+  const E = state.tanks[1 - i];
+  if (T.cloak > 0) T.cloak = 0;
+  state.bullets.push({ owner: i, x: T.x, y: T.y, dx, dy });
+  ev({ t: state.t, type: 'fire', who: i, x: T.x, y: T.y, dx, dy });
+  E.lastSeen = { x: T.x, y: T.y };
+}
+
+// 子弹伤害入口（护盾优先消耗）
+function damageByBullet(state, owner, K, ev) {
+  const R = state.R;
+  if (K.shield > 0) {
+    K.shield = 0;
+    ev({ t: state.t, type: 'shield_block', who: K.i, source: 'bullet' });
+    return;
+  }
+  K.hp -= R.damage;
+  ev({ t: state.t, type: 'hit', who: owner, target: K.i, dmg: R.damage, hp: K.hp, x: K.x, y: K.y });
+}
+
+// 子弹进入某格的结算；返回 true 表示子弹终结
+function resolveBulletCell(state, b, ev) {
+  const t = state.t;
+  const m = state.map;
+  if (!inBounds(m, b.x, b.y)) {
+    ev({ t, type: 'bullet_end', who: b.owner, x: b.x, y: b.y, reason: 'out' });
+    return true;
+  }
+  const tile = tileAt(m, b.x, b.y);
+  if (tile === TILE.WALL) {
+    ev({ t, type: 'bullet_end', who: b.owner, x: b.x, y: b.y, reason: 'wall' });
+    return true;
+  }
+  if (tile === TILE.DIRT) {
+    const key = b.x + ',' + b.y;
+    const hp = (state.moundHp.get(key) ?? state.R.moundHp) - 1;
+    ev({ t, type: 'mound_hit', x: b.x, y: b.y, hp: Math.max(0, hp) });
+    if (hp <= 0) {
+      state.moundHp.delete(key);
+      m.tiles[b.y][b.x] = TILE.EMPTY;
+      ev({ t, type: 'mound_destroyed', x: b.x, y: b.y });
+    } else {
+      state.moundHp.set(key, hp);
+    }
+    ev({ t, type: 'bullet_end', who: b.owner, x: b.x, y: b.y, reason: 'mound' });
+    return true;
+  }
+  // 子弹不伤及发射者本人（穿过自身）：避免“超载补射 + 同向前进”走进自己弹道的退化自伤
+  const K = state.tanks.find((T) => T.i !== b.owner && T.hp > 0 && T.x === b.x && T.y === b.y);
+  if (K) {
+    damageByBullet(state, b.owner, K, ev);
+    ev({ t, type: 'bullet_end', who: b.owner, x: b.x, y: b.y, reason: 'hit' });
+    return true;
+  }
+  return false;
+}
+
+// 每 tick 推进所有在飞子弹（先于双方动作）
+function advanceBullets(state, ev) {
+  const R = state.R;
+  const remaining = [];
+  for (const b of state.bullets) {
+    let ended = false;
+    for (let s = 0; s < R.bulletSpeed && !ended; s++) {
+      b.x += b.dx;
+      b.y += b.dy;
+      ended = resolveBulletCell(state, b, ev);
+    }
+    if (!ended) remaining.push(b);
+  }
+  state.bullets = remaining;
+}
+
+// 十字冲击波：墙截断传播；土堆被一击摧毁且截断其后传播
+function explodeBomb(state, bomb, ev) {
+  const R = state.R;
+  const m = state.map;
+  const t = state.t;
+  const cells = [{ x: bomb.x, y: bomb.y }];
+  for (const [dx, dy] of DIRS) {
+    for (let r = 1; r <= R.bombRange; r++) {
+      const x = bomb.x + dx * r;
+      const y = bomb.y + dy * r;
+      if (!inBounds(m, x, y)) break;
+      const tile = tileAt(m, x, y);
+      if (tile === TILE.WALL) break;
+      cells.push({ x, y });
+      if (tile === TILE.DIRT) {
+        state.moundHp.delete(x + ',' + y);
+        m.tiles[y][x] = TILE.EMPTY;
+        ev({ t, type: 'mound_destroyed', x, y });
+        break;
+      }
+    }
+  }
+  const hits = [];
+  for (const K of state.tanks) {
+    if (K.hp <= 0) continue;
+    if (!cells.some((c) => c.x === K.x && c.y === K.y)) continue;
+    if (K.shield > 0) {
+      K.shield = 0;
+      ev({ t, type: 'shield_block', who: K.i, source: 'bomb' });
+      continue;
+    }
+    K.hp -= R.bombDamage;
+    hits.push({ who: K.i, dmg: R.bombDamage });
+  }
+  ev({ t, type: 'bomb_explode', who: bomb.owner, x: bomb.x, y: bomb.y, cells, hits });
+}
+
+// 传送落点合法性：非墙/土堆/星星格/敌人所在格；非法则重定向到（曼哈顿）最近合法格，确定性扫描
+function teleportDest(state, i, tx, ty) {
+  const m = state.map;
+  tx = Math.max(0, Math.min(m.width - 1, tx));
+  ty = Math.max(0, Math.min(m.height - 1, ty));
+  const E = state.tanks[1 - i];
+  const legal = (x, y) => inBounds(m, x, y)
+    && tileAt(m, x, y) !== TILE.WALL && tileAt(m, x, y) !== TILE.DIRT
+    && !state.stars.some((s) => s.x === x && s.y === y)
+    && !(E.x === x && E.y === y);
+  if (legal(tx, ty)) return { x: tx, y: ty };
+  const maxD = m.width + m.height;
+  for (let d = 1; d <= maxD; d++) {
+    for (let dy = -d; dy <= d; dy++) {
+      const rem = d - Math.abs(dy);
+      for (const dx of rem === 0 ? [0] : [-rem, rem]) {
+        const x = tx + dx;
+        const y = ty + dy;
+        if (legal(x, y)) return { x, y };
+      }
+    }
+  }
+  return null;
+}
+
+// 统一技能施放（useSkill 与旧入口都汇到这里）
+function castSkill(state, i, arg, ev) {
   const R = state.R;
   const T = state.tanks[i];
   const E = state.tanks[1 - i];
   const t = state.t;
-  // 炮弹只沿炮口方向直线飞行（水平/垂直），至射程上限
-  let x = T.x;
-  let y = T.y;
-  let traveled = 0;
-  while (traveled < R.fireRange) {
-    x += dx;
-    y += dy;
-    traveled++;
-    if (!inBounds(state.map, x, y)) { ev({ t, type: 'bullet_end', who: i, x, y, cause: 'range' }); return; }
-    const tile = tileAt(state.map, x, y);
-    if (blocksBullet(tile)) { ev({ t, type: 'bullet_end', who: i, x, y, cause: tile }); return; }
-    if (E.hp > 0 && E.x === x && E.y === y) {
-      E.hp -= R.damage;
-      ev({ t, type: 'hit', who: i, target: 1 - i, dmg: R.damage, hp: E.hp, x, y });
-      ev({ t, type: 'bullet_end', who: i, x, y, cause: 'hit' });
-      return;
+  const name = T.skill;
+  const S = R.skills[name];
+  if (T.cd.skill > 0) return;
+  switch (name) {
+    case 'shield': {
+      if (T.shield > 0) return;
+      T.cd.skill = S.cd;
+      T.shield = 1;
+      ev({ t, type: 'skill', who: i, name });
+      break;
     }
+    case 'freeze': {
+      if (!visibleTo(state, i)) return;
+      T.cd.skill = S.cd;
+      E.freeze = S.dur;
+      ev({ t, type: 'skill', who: i, name });
+      ev({ t, type: 'freeze_hit', who: i, target: 1 - i, duration: S.dur });
+      break;
+    }
+    case 'stun': {
+      if (!visibleTo(state, i)) return;
+      T.cd.skill = S.cd;
+      E.stun = S.dur;
+      ev({ t, type: 'skill', who: i, name });
+      ev({ t, type: 'stun_hit', who: i, target: 1 - i, duration: S.dur });
+      break;
+    }
+    case 'overload': {
+      if (T.overloadArmed) return;
+      T.cd.skill = S.cd;
+      T.overloadArmed = true;
+      ev({ t, type: 'skill', who: i, name });
+      break;
+    }
+    case 'cloak': {
+      T.cd.skill = S.cd;
+      T.cloak = S.dur;
+      ev({ t, type: 'skill', who: i, name, duration: S.dur });
+      break;
+    }
+    case 'poison': {
+      if (!visibleTo(state, i)) return;
+      T.cd.skill = S.cd;
+      E.poison = S.dur;
+      ev({ t, type: 'skill', who: i, name });
+      ev({ t, type: 'poison_hit', who: i, target: 1 - i, duration: S.dur });
+      break;
+    }
+    case 'teleport': {
+      if (!arg) return;
+      const dest = teleportDest(state, i, arg.x | 0, arg.y | 0);
+      if (!dest) return;
+      T.cd.skill = S.cd;
+      T.x = dest.x;
+      T.y = dest.y; // 炮口朝向不变
+      ev({ t, type: 'skill', who: i, name, x: dest.x, y: dest.y });
+      ev({ t, type: 'teleport_reveal', who: i, x: dest.x, y: dest.y });
+      E.lastSeen = { x: dest.x, y: dest.y };
+      break;
+    }
+    case 'boost': {
+      T.cd.skill = S.cd;
+      T.boost = S.dur;
+      ev({ t, type: 'skill', who: i, name, duration: S.dur });
+      break;
+    }
+    default:
+      break;
   }
-  ev({ t, type: 'bullet_end', who: i, x, y, cause: 'range' });
+}
+
+// 单步移动（含眩晕反转与吃星）；返回是否真的移动了
+function moveStep(state, i, tx, ty, ev) {
+  const T = state.tanks[i];
+  const E = state.tanks[1 - i];
+  const step = nextStep(state, T, E, tx, ty);
+  if (!step) return false;
+  const dir = maybeInvertDir(T, [step.x - T.x, step.y - T.y]);
+  T.facing = dir;
+  const nx = T.x + dir[0];
+  const ny = T.y + dir[1];
+  if (!isWalkable(state.map, nx, ny) || (nx === E.x && ny === E.y)) return false; // 反转后撞墙/撞敌：只转向不动
+  T.x = nx;
+  T.y = ny;
+  ev({ t: state.t, type: 'move', who: i, x: T.x, y: T.y });
+  pickupStar(state, i, ev);
+  return true;
 }
 
 function applyAction(state, i, a, ev) {
@@ -548,37 +836,39 @@ function applyAction(state, i, a, ev) {
   const E = state.tanks[1 - i];
   const t = state.t;
   if (T.hp <= 0) return;
-  if (T.stun > 0) return; // 眩晕中：动作作废
+  if (T.freeze > 0) return; // 冻结中：动作作废（眩晕仍可行动，只是方向被随机反转）
   if (!a || typeof a !== 'object' || typeof a.type !== 'string') return; // 空/非法动作 = 待机
   switch (a.type) {
     case 'move': {
       const tx = a.x | 0;
       const ty = a.y | 0;
       maybeGoal(state, i, tx, ty, ev);
-      const step = nextStep(state, T, E, tx, ty);
-      if (step) {
-        T.facing = [step.x - T.x, step.y - T.y]; // 车体带动炮口转向行进方向
-        T.x = step.x;
-        T.y = step.y;
-        ev({ t, type: 'move', who: i, x: T.x, y: T.y });
-        pickupStar(state, i, ev);
+      const steps = T.boost > 0 ? 2 : 1; // 疾驰：每拍 2 格
+      for (let s = 0; s < steps; s++) {
+        if (!moveStep(state, i, tx, ty, ev)) break;
       }
       break;
     }
     case 'patrol': {
-      const opts = [];
-      for (const [dx, dy] of DIRS) {
-        const nx = T.x + dx;
-        const ny = T.y + dy;
-        if (!isWalkable(state.map, nx, ny)) continue;
-        if (nx === E.x && ny === E.y) continue;
-        opts.push({ x: nx, y: ny });
-      }
-      if (opts.length) {
+      const steps = T.boost > 0 ? 2 : 1;
+      for (let s = 0; s < steps; s++) {
+        const opts = [];
+        for (const [dx, dy] of DIRS) {
+          const nx = T.x + dx;
+          const ny = T.y + dy;
+          if (!isWalkable(state.map, nx, ny)) continue;
+          if (nx === E.x && ny === E.y) continue;
+          opts.push({ x: nx, y: ny });
+        }
+        if (!opts.length) break;
         const p = opts[randInt(T.rng, opts.length)];
-        T.facing = [p.x - T.x, p.y - T.y];
-        T.x = p.x;
-        T.y = p.y;
+        const dir = maybeInvertDir(T, [p.x - T.x, p.y - T.y]);
+        T.facing = dir;
+        const nx = T.x + dir[0];
+        const ny = T.y + dir[1];
+        if (!isWalkable(state.map, nx, ny) || (nx === E.x && ny === E.y)) break;
+        T.x = nx;
+        T.y = ny;
         ev({ t, type: 'move', who: i, x: T.x, y: T.y });
         pickupStar(state, i, ev);
       }
@@ -586,53 +876,45 @@ function applyAction(state, i, a, ev) {
     }
     case 'fire': {
       if (T.cd.fire > 0) break;
-      const tx = a.x | 0;
-      const ty = a.y | 0;
-      const dir = cardinalTo(T, tx, ty);
+      if (bulletsOf(state, i).length > 0 || T.pendingShot) break; // 单发在飞：再 fire = 非法动作 no-op
+      const dir = cardinalTo(T, a.x | 0, a.y | 0);
       if (!dir) break; // 朝自己开火视为非法
       // 炮口硬规则：只能沿水平/垂直方向开炮；炮口未对准时本拍先转向，下一拍才能射击
       if (T.facing[0] !== dir[0] || T.facing[1] !== dir[1]) {
-        T.facing = dir;
-        ev({ t, type: 'turn', who: i, dx: dir[0], dy: dir[1] });
+        const d2 = maybeInvertDir(T, dir);
+        T.facing = d2;
+        ev({ t, type: 'turn', who: i, dx: d2[0], dy: d2[1] });
         break;
       }
       T.cd.fire = R.fireCd;
-      if (T.cloak > 0) T.cloak = 0; // 开火打破隐身
-      ev({ t, type: 'fire', who: i, x: T.x, y: T.y, dx: dir[0], dy: dir[1] });
-      E.lastSeen = { x: T.x, y: T.y }; // 开火暴露自身位置
-      fireBullet(state, i, dir[0], dir[1], ev);
+      spawnBullet(state, i, dir[0], dir[1], ev);
+      if (T.overloadArmed) { // 超载：登记 1 拍后的同向自动补射
+        T.overloadArmed = false;
+        T.pendingShot = { dx: dir[0], dy: dir[1], delay: 1 };
+      }
       break;
     }
-    case 'teleport': {
-      if (T.cd.teleport > 0) break;
-      const tx = a.x | 0;
-      const ty = a.y | 0;
-      if (!isWalkable(state.map, tx, ty)) break;
-      if (E.x === tx && E.y === ty) break;
-      T.cd.teleport = R.teleportCd;
-      T.x = tx;
-      T.y = ty;
-      ev({ t, type: 'skill', who: i, name: 'teleport', x: tx, y: ty });
-      pickupStar(state, i, ev);
+    case 'bomb': {
+      if (T.cd.bomb > 0) break;
+      if (state.bombs.some((b) => b.owner === i)) break; // 同时最多 1 枚自己的炸弹
+      T.cd.bomb = R.bombCd;
+      state.bombs.push({ owner: i, x: T.x, y: T.y, placedAt: t });
+      ev({ t, type: 'bomb_place', who: i, x: T.x, y: T.y });
       break;
     }
-    case 'cloak': {
-      if (T.cd.cloak > 0) break;
-      T.cd.cloak = R.cloakCd;
-      T.cloak = R.cloakDur;
-      ev({ t, type: 'skill', who: i, name: 'cloak', duration: R.cloakDur });
+    case 'skill':
+      castSkill(state, i, typeof a.x === 'number' ? { x: a.x, y: a.y } : null, ev);
       break;
-    }
-    case 'stun': {
-      if (T.cd.stun > 0) break;
-      const cheb = Math.max(Math.abs(T.x - E.x), Math.abs(T.y - E.y));
-      if (cheb > R.stunRange) break; // 不在范围内：不生效也不进冷却
-      T.cd.stun = R.stunCd;
-      E.stun = R.stunDur;
-      ev({ t, type: 'skill', who: i, name: 'stun' });
-      ev({ t, type: 'stun_hit', who: i, target: 1 - i, duration: R.stunDur });
+    // 旧入口映射：仅当装备对应技能时生效，否则 no-op
+    case 'teleport':
+      if (T.skill === 'teleport') castSkill(state, i, { x: a.x | 0, y: a.y | 0 }, ev);
       break;
-    }
+    case 'cloak':
+      if (T.skill === 'cloak') castSkill(state, i, null, ev);
+      break;
+    case 'stun':
+      if (T.skill === 'stun') castSkill(state, i, null, ev);
+      break;
     default:
       break;
   }
@@ -651,10 +933,34 @@ function randomFreeCell(state) {
   return null;
 }
 
+// 阵亡判定：单亡 = 对方胜；同拍双亡 = 平局
+function checkDeath(state, ev) {
+  for (const T of state.tanks) {
+    if (T.hp <= 0 && !T.deadAnnounced) {
+      T.deadAnnounced = true;
+      ev({ t: state.t, type: 'death', who: T.i });
+    }
+  }
+  const alive = state.tanks.filter((T) => T.hp > 0);
+  if (alive.length === 2) return null;
+  if (alive.length === 1) return { winner: alive[0].i, reason: 'kill' };
+  return { winner: null, reason: 'draw' };
+}
+
 function runMatch(opts = {}) {
   const { seed = 1, botA, botB, map = null } = opts;
-  const R = { ...RULES, ...(opts.rules || {}) };
+  const R = {
+    ...RULES,
+    ...(opts.rules || {}),
+    skills: { ...RULES.skills, ...((opts.rules || {}).skills || {}) },
+  };
   if (opts.maxTicks != null) R.maxTicks = opts.maxTicks;
+  // 技能 8 选 1：显式参数 > bot 自带偏好（bot.skill）> 默认 A=teleport、B=cloak
+  const skillA = opts.skillA ?? botA?.skill ?? 'teleport';
+  const skillB = opts.skillB ?? botB?.skill ?? 'cloak';
+  for (const s of [skillA, skillB]) {
+    if (!R.skills[s]) throw new Error(`未知技能: ${s}（可选：${SKILLS.join('/')}）`);
+  }
   const rng = mulberry32(seed >>> 0);
   const m = map ? cloneMap(map) : generateMap(rng);
   const state = {
@@ -662,7 +968,11 @@ function runMatch(opts = {}) {
     rng,
     map: m,
     t: 0,
-    stars: m.stars.map((s) => ({ x: s.x, y: s.y })),
+    stars: m.stars.slice(0, R.maxFieldStars).map((s) => ({ x: s.x, y: s.y })), // 单星：初始截断
+    starRespawnAt: null,
+    bullets: [],
+    bombs: [],
+    moundHp: new Map(),
     events: [],
     bots: [botA, botB],
     tanks: m.spawns.map((s, i) => ({
@@ -671,17 +981,25 @@ function runMatch(opts = {}) {
       y: s.y,
       hp: R.hp,
       stars: 0,
+      skill: i === 0 ? skillA : skillB,
       facing: i === 0 ? [1, 0] : [-1, 0], // 炮口四向朝向：P1 朝右、P2 朝左
-      cd: { fire: 0, teleport: 0, cloak: 0, stun: 0 },
+      cd: { fire: 0, skill: 0, bomb: 0 },
       cloak: 0,
+      freeze: 0,
       stun: 0,
+      poison: 0,
+      boost: 0,
+      shield: 0,
+      overloadArmed: false,
+      pendingShot: null,
+      deadAnnounced: false,
       lastSeen: { x: m.spawns[1 - i].x, y: m.spawns[1 - i].y },
       goalKey: null,
       rng: mulberry32((seed + 0x9e3779b9 * (i + 1)) >>> 0),
     })),
   };
   const ev = (e) => state.events.push(e);
-  ev({ t: 0, type: 'start', seed, width: m.width, height: m.height });
+  ev({ t: 0, type: 'start', seed, width: m.width, height: m.height, skills: [skillA, skillB] });
 
   let ended = null;
   for (let t = 0; t < R.maxTicks && !ended; t++) {
@@ -690,21 +1008,40 @@ function runMatch(opts = {}) {
     for (const T of state.tanks) {
       for (const k of Object.keys(T.cd)) if (T.cd[k] > 0) T.cd[k]--;
       if (T.cloak > 0) T.cloak--;
+      if (T.freeze > 0) T.freeze--;
       if (T.stun > 0) T.stun--;
+      if (T.boost > 0) T.boost--;
     }
-    // 2. 星星补刷
-    if (t > 0 && t % R.starRespawn === 0 && state.stars.length < R.maxFieldStars) {
-      const p = randomFreeCell(state);
-      if (p) { state.stars.push(p); ev({ t, type: 'star_spawn', x: p.x, y: p.y }); }
+    // 2. 星星重生（单星：被吃后 starRespawn tick 在种子 RNG 合法格重生）
+    if (state.starRespawnAt != null && t >= state.starRespawnAt) {
+      if (state.stars.length < R.maxFieldStars) {
+        const p = randomFreeCell(state);
+        if (p) { state.stars.push(p); ev({ t, type: 'star_spawn', x: p.x, y: p.y }); }
+      }
+      state.starRespawnAt = null;
     }
-    // 3. 视野与最后目击位置
+    // 3. 推进已有子弹（先于双方动作）
+    advanceBullets(state, ev);
+    ended = checkDeath(state, ev);
+    if (ended) break;
+    // 4. 超载自动补射（不占本人手动动作）
+    for (const T of state.tanks) {
+      if (T.hp <= 0 || !T.pendingShot) continue;
+      T.pendingShot.delay--;
+      if (T.pendingShot.delay <= 0) {
+        const { dx, dy } = T.pendingShot;
+        T.pendingShot = null;
+        spawnBullet(state, T.i, dx, dy, ev);
+      }
+    }
+    // 5. 视野与最后目击位置
     for (const i of [0, 1]) {
       if (visibleTo(state, i)) {
         const E = state.tanks[1 - i];
         state.tanks[i].lastSeen = { x: E.x, y: E.y };
       }
     }
-    // 4. 双方基于同一快照决策（决策阶段不改状态）
+    // 6. 双方基于同一快照决策（决策阶段不改状态）
     const actions = [0, 1].map((i) => {
       try {
         return state.bots[i](makeApi(state, i));
@@ -712,16 +1049,27 @@ function runMatch(opts = {}) {
         return null; // 策略脚本抛错 = 本拍待机
       }
     });
-    // 5. 按固定顺序裁决
+    // 7. 按固定顺序裁决
     for (const i of [0, 1]) {
       if (ended) break;
       applyAction(state, i, actions[i], ev);
-      const dead = state.tanks.find((T) => T.hp <= 0);
-      if (dead) {
-        ev({ t, type: 'death', who: dead.i });
-        ended = { winner: 1 - dead.i, reason: 'kill' };
-      }
+      ended = checkDeath(state, ev);
     }
+    if (ended) break;
+    // 8. 持续效果：炸弹引信 → 爆炸；中毒掉血
+    const keep = [];
+    for (const b of state.bombs) {
+      if (t - b.placedAt >= R.bombFuse) explodeBomb(state, b, ev);
+      else keep.push(b);
+    }
+    state.bombs = keep;
+    for (const T of state.tanks) {
+      if (T.hp <= 0 || T.poison <= 0) continue;
+      T.poison--;
+      T.hp -= R.skills.poison.dmg;
+      ev({ t, type: 'poison_tick', target: T.i, dmg: R.skills.poison.dmg, hp: T.hp });
+    }
+    ended = checkDeath(state, ev);
   }
 
   const [a, b] = state.tanks;
@@ -743,6 +1091,7 @@ function runMatch(opts = {}) {
     winner: ended.winner,
     reason: ended.reason,
     stars: [a.stars, b.stars],
+    skills: [skillA, skillB],
     ticks: state.t + 1,
     seed,
   };
@@ -751,7 +1100,10 @@ function runMatch(opts = {}) {
 // ===== src/engine/report.js =====
 // 战报文本渲染：把结构化事件数组渲染成可读文字行（供前端回放/展示）。
 
-const SKILL_NAMES = { cloak: '隐身', teleport: '传送', stun: '眩晕' };
+const SKILL_NAMES = {
+  shield: '护盾', freeze: '冰冻', stun: '眩晕', overload: '超载',
+  cloak: '隐身', poison: '剧毒', teleport: '传送', boost: '疾驰',
+};
 
 function renderText(result, names = ['甲', '乙']) {
   const nm = (i) => names[i] ?? `P${i}`;
@@ -759,9 +1111,11 @@ function renderText(result, names = ['甲', '乙']) {
   for (const e of result.events) {
     const t = `t=${String(e.t).padStart(3, '0')}`;
     switch (e.type) {
-      case 'start':
-        lines.push(`${t} 对战开始 seed=${e.seed} 地图${e.width}x${e.height}`);
+      case 'start': {
+        const sk = e.skills ? ` 技能 ${nm(0)}=${SKILL_NAMES[e.skills[0]] ?? e.skills[0]} ${nm(1)}=${SKILL_NAMES[e.skills[1]] ?? e.skills[1]}` : '';
+        lines.push(`${t} 对战开始 seed=${e.seed} 地图${e.width}x${e.height}${sk}`);
         break;
+      }
       case 'goal':
         if (e.tag === 'star') lines.push(`${t} ${nm(e.who)} 直奔星星`);
         else if (e.tag === 'enemy') lines.push(`${t} ${nm(e.who)} 扑向敌人`);
@@ -779,8 +1133,26 @@ function renderText(result, names = ['甲', '乙']) {
         lines.push(`${t} ${nm(e.who)} 命中 ${nm(e.target)}（-${e.dmg}，剩${e.hp}）`);
         break;
       case 'bullet_end':
-        if (e.cause === 'wall') lines.push(`${t} ${nm(e.who)} 的子弹被墙挡下`);
-        else if (e.cause === 'dirt') lines.push(`${t} ${nm(e.who)} 的子弹被土堆挡下`);
+        if (e.reason === 'wall') lines.push(`${t} ${nm(e.who)} 的子弹被墙挡下`);
+        else if (e.reason === 'mound') lines.push(`${t} ${nm(e.who)} 的子弹打在土堆上`);
+        else if (e.reason === 'out') lines.push(`${t} ${nm(e.who)} 的子弹飞出场外`);
+        break;
+      case 'mound_hit':
+        if (e.hp > 0) lines.push(`${t} (${e.x},${e.y}) 的土堆被打出裂缝`);
+        break;
+      case 'mound_destroyed':
+        lines.push(`${t} (${e.x},${e.y}) 的土堆被摧毁`);
+        break;
+      case 'bomb_place':
+        lines.push(`${t} ${nm(e.who)} 在(${e.x},${e.y})放下炸弹`);
+        break;
+      case 'bomb_explode': {
+        const dmg = e.hits.map((h) => `${nm(h.who)}-${h.dmg}`).join(' ');
+        lines.push(`${t} 炸弹在(${e.x},${e.y})爆炸${dmg ? `，${dmg}` : '，无人受伤'}`);
+        break;
+      }
+      case 'shield_block':
+        lines.push(`${t} ${nm(e.who)} 的护盾挡下了${e.source === 'bomb' ? '炸弹' : '子弹'}`);
         break;
       case 'star':
         lines.push(`${t} ${nm(e.who)} 吃星（${e.total}）`);
@@ -788,11 +1160,24 @@ function renderText(result, names = ['甲', '乙']) {
       case 'star_spawn':
         lines.push(`${t} 新星星出现在(${e.x},${e.y})`);
         break;
-      case 'skill':
-        lines.push(`${t} ${nm(e.who)} 施放${SKILL_NAMES[e.name] ?? e.name}`);
+      case 'skill': {
+        const n = SKILL_NAMES[e.name] ?? e.name;
+        if (e.name === 'teleport') lines.push(`${t} ${nm(e.who)} 传送到(${e.x},${e.y})`);
+        else if (e.name === 'overload') lines.push(`${t} ${nm(e.who)} 超载压弹，下次开火 2 连发`);
+        else lines.push(`${t} ${nm(e.who)} 施放${n}`);
+        break;
+      }
+      case 'freeze_hit':
+        lines.push(`${t} ${nm(e.target)} 被冰冻${e.duration}拍，动弹不得`);
         break;
       case 'stun_hit':
-        lines.push(`${t} ${nm(e.target)} 被眩晕${e.duration}拍`);
+        lines.push(`${t} ${nm(e.target)} 被眩晕${e.duration}拍，操作错乱`);
+        break;
+      case 'poison_hit':
+        lines.push(`${t} ${nm(e.target)} 中毒，${e.duration}拍内持续掉血`);
+        break;
+      case 'teleport_reveal':
+        lines.push(`${t} ${nm(e.who)} 现身于(${e.x},${e.y})`);
         break;
       case 'death':
         lines.push(`${t} ${nm(e.who)} 被击毁`);
@@ -805,23 +1190,29 @@ function renderText(result, names = ['甲', '乙']) {
         );
         break;
       default:
-        break;
+        break; // poison_tick 等逐拍事件不入文字战报，避免刷屏
     }
   }
   return lines;
 }
 
 // ===== bots/camper.js =====
-// 蹲草流：看得见敌人就交火（近身先眩晕）；看不见就找草丛蹲着装死。
+// 蹲草流（技能：冰冻）：看得见敌人就先冰冻再交火；看不见就找草丛蹲着装死；躲炸弹。
+
+
 function camper(api) {
+  const evade = bombEvade(api);
+  if (evade) return evade;
   const foe = api.enemy();
+  const me = api.me();
   const R = api.rules();
   const d = api.distTo(foe);
   if (api.enemyVisible()) {
-    if (d <= R.stunRange && api.ready('stun')) return api.stun();
-    if (api.canFire() && d <= R.fireRange) return api.fireAt(foe);
+    if (api.ready() && d <= R.fireRange) return api.useSkill(); // 冰冻定身
+    if (api.canFire() && d <= R.fireRange && (foe.x === me.x || foe.y === me.y)) return api.fireAt(foe);
     if (d > R.fireRange) return api.moveTo(foe); // 追到射程内
-    return null; // 射程内装填中：原地不动
+    if (api.canFire()) return api.fireAt(foe); // 未对齐：先借 fireAt 转向压制
+    return null; // 装填/在飞：原地不动
   }
   if (!api.inGrass()) {
     const g = api.nearestGrass();
@@ -831,53 +1222,69 @@ function camper(api) {
   }
   return null; // 已在草丛：蹲住
 }
+camper.skill = 'freeze';
 
 // ===== bots/starGrabber.js =====
-// 抢星流：以吃星为主，顺手开枪，残血传送保命（与示例脚本同构）。
+// 抢星流（技能：疾驰）：以吃星为主，远星开疾驰冲刺，顺手开枪；躲炸弹。
+
+
 function starGrabber(api) {
+  const evade = bombEvade(api);
+  if (evade) return evade;
   const me = api.me();
+  const foe = api.enemy();
   const R = api.rules();
-  if (api.enemyVisible() && api.canFire() && api.distTo(api.enemy()) <= R.fireRange) {
-    return api.fireAt(api.enemy());
-  }
-  if (me.hp < 30 && api.ready('teleport')) {
-    const c = api.safestCorner();
-    if (c) return api.teleport(c);
+  if (api.enemyVisible() && api.canFire() && api.distTo(foe) <= R.fireRange
+    && (foe.x === me.x || foe.y === me.y)) {
+    return api.fireAt(foe);
   }
   const star = api.nearestStar();
+  if (star && !me.boosted && api.ready() && api.distTo(star) >= 4) return api.useSkill(); // 疾驰抢星
   return star ? api.moveTo(star) : api.patrol();
 }
+starGrabber.skill = 'boost';
 
 // ===== bots/brawler.js =====
-// 贴脸流：死咬最后目击位置贴上去，近身眩晕接射击。
+// 贴脸流（技能：超载）：死咬最后目击位置贴上去，先超载压弹再 2 连发，贴身丢炸弹；躲炸弹。
+
+
 function brawler(api) {
+  const evade = bombEvade(api);
+  if (evade) return evade;
   const foe = api.enemy();
   const R = api.rules();
   const d = api.distTo(foe);
   if (api.enemyVisible()) {
-    if (d <= R.stunRange && api.ready('stun')) return api.stun();
+    if (api.ready() && api.canFire() && d <= R.fireRange) return api.useSkill(); // 超载压弹
     if (api.canFire() && d <= R.fireRange) return api.fireAt(foe);
+    if (d <= 2 && api.ready('bomb')) return api.throwBomb(); // 贴身丢雷（随后 bombEvade 自动撤离）
   }
   if (d === 0) return api.patrol(); // 已到最后目击点仍没人：就地搜索
   return api.moveTo(foe);
 }
+brawler.skill = 'overload';
 
 // ===== bots/stealth.js =====
-// 隐身偷袭流：先开隐身摸过去，进射程立刻开火（开火破隐），残血传送跑路。
+// 隐身偷袭流（技能：隐身）：先开隐身摸过去，进射程立刻开火（开火破隐），残血撤向远角；躲炸弹。
+
+
 function stealth(api) {
+  const evade = bombEvade(api);
+  if (evade) return evade;
   const me = api.me();
   const foe = api.enemy();
   const R = api.rules();
   const d = api.distTo(foe);
-  if (me.hp < 30 && api.ready('teleport')) {
+  if (me.hp < 30 && d <= 4) {
     const c = api.safestCorner();
-    if (c) return api.teleport(c);
+    if (c) return api.moveTo(c);
   }
   if (api.enemyVisible() && api.canFire() && d <= R.fireRange) return api.fireAt(foe);
-  if (!me.cloaked && api.ready('cloak') && d > 2) return api.cloak();
+  if (!me.cloaked && api.ready() && d > 2) return api.useSkill();
   if (d === 0) return api.patrol();
   return api.moveTo(foe);
 }
+stealth.skill = 'cloak';
 
 // ===== bots/baseline.js =====
 // 随机乱走基线：只会随机巡逻，从不开火——用于衡量四流派 bot 的强度下限。
@@ -925,7 +1332,12 @@ const COLOR = {
 const TSZ = 28;
 const SPEEDS = [1, 2, 4];
 const BASE_TPS = 20; // 1x = 每秒 20 tick，用时口径 = ticks/20 秒
-const SKILL_CN = { cloak: '隐身', teleport: '传送', stun: '眩晕' };
+const SKILL_CN = {
+  shield: '护盾', freeze: '冰冻', stun: '眩晕', overload: '超载',
+  cloak: '隐身', poison: '剧毒', teleport: '传送', boost: '疾驰',
+};
+const skillSel = $id('skillSel');
+const userSkill = () => (skillSel ? skillSel.value : 'teleport');
 
 // ---------- 默认脚本（效果稿同款） ----------
 const DEFAULT_SCRIPT = `// 你的战术：优先吃星，残血传送跑路
@@ -1049,9 +1461,16 @@ function buildTimeline(map, result) {
   const held = [0, 0];
   const cloakLeft = [0, 0];
   const stunLeft = [0, 0];
+  const frozenLeft = [0, 0];
+  const poisonLeft = [0, 0];
+  const shieldOn = [false, false];
   const facing = [0, Math.PI];
   const dead = [false, false];
-  let field = map.stars.map((s) => ({ x: s.x, y: s.y }));
+  // 单星规则：引擎只保留地图声明的第一颗星，渲染同口径截断
+  let field = map.stars.slice(0, RULES.maxFieldStars ?? map.stars.length).map((s) => ({ x: s.x, y: s.y }));
+  let bombs = [];              // 在场炸弹 [{x,y,t0}]
+  let gone = new Set();        // 已摧毁土堆 "x,y"
+  let cracked = new Set();     // 打裂土堆 "x,y"
   const frames = [];
   const shots = [];
   const sparks = [];
@@ -1060,6 +1479,8 @@ function buildTimeline(map, result) {
     for (const i of [0, 1]) {
       if (cloakLeft[i] > 0) cloakLeft[i]--;
       if (stunLeft[i] > 0) stunLeft[i]--;
+      if (frozenLeft[i] > 0) frozenLeft[i]--;
+      if (poisonLeft[i] > 0) poisonLeft[i]--;
     }
     for (const e of byTick[t]) {
       switch (e.type) {
@@ -1083,17 +1504,32 @@ function buildTimeline(map, result) {
         case 'fire':
           facing[e.who] = Math.atan2(e.dy, e.dx);
           if (cloakLeft[e.who] > 0) cloakLeft[e.who] = 0; // 开火破隐
-          pending[e.who] = { t, who: e.who, x0: e.x, y0: e.y };
+          pending[e.who] = { who: e.who, t0: t, x0: e.x, y0: e.y };
           break;
         case 'bullet_end':
           if (pending[e.who]) {
-            shots.push({ ...pending[e.who], x1: e.x, y1: e.y, hit: e.cause === 'hit' });
+            shots.push({ ...pending[e.who], t1: t, x1: e.x, y1: e.y, hit: e.reason === 'hit' });
             pending[e.who] = null;
           }
           break;
         case 'hit':
           hp[e.target] = e.hp;
           sparks.push({ t, x: e.x, y: e.y, kind: 'hit' });
+          break;
+        case 'mound_hit':
+          cracked = new Set(cracked).add(`${e.x},${e.y}`);
+          break;
+        case 'mound_destroyed':
+          gone = new Set(gone).add(`${e.x},${e.y}`);
+          sparks.push({ t, x: e.x, y: e.y, kind: 'hit' });
+          break;
+        case 'bomb_place':
+          bombs = bombs.concat([{ x: e.x, y: e.y, t0: t }]);
+          break;
+        case 'bomb_explode':
+          bombs = bombs.filter((b) => !(b.x === e.x && b.y === e.y));
+          for (const c of e.cells || []) sparks.push({ t, x: c.x, y: c.y, kind: 'boom' });
+          for (const h of e.hits || []) hp[h.who] = Math.max(0, hp[h.who] - h.dmg);
           break;
         case 'skill':
           if (e.name === 'teleport') {
@@ -1102,10 +1538,25 @@ function buildTimeline(map, result) {
             sparks.push({ t, x: e.x, y: e.y, kind: 'tp' });
           } else if (e.name === 'cloak') {
             cloakLeft[e.who] = e.duration;
+          } else if (e.name === 'shield') {
+            shieldOn[e.who] = true;
           }
+          break;
+        case 'shield_block':
+          shieldOn[e.who] = false;
+          sparks.push({ t, x: pos[e.who].x, y: pos[e.who].y, kind: 'shield' });
+          break;
+        case 'freeze_hit':
+          frozenLeft[e.target] = e.duration;
           break;
         case 'stun_hit':
           stunLeft[e.target] = e.duration;
+          break;
+        case 'poison_hit':
+          poisonLeft[e.target] = e.duration;
+          break;
+        case 'poison_tick':
+          hp[e.target] = e.hp;
           break;
         case 'death':
           dead[e.who] = true;
@@ -1118,8 +1569,9 @@ function buildTimeline(map, result) {
       pos: pos.map((p) => ({ ...p })),
       hp: [...hp], held: [...held],
       cloak: [...cloakLeft], stun: [...stunLeft],
+      frozen: [...frozenLeft], poison: [...poisonLeft], shield: [...shieldOn],
       facing: [...facing], dead: [...dead],
-      field, // filter/concat 均产生新数组，此引用即本 tick 快照
+      field, bombs, gone, cracked, // 均为 copy-on-write 新引用，即本 tick 快照
     });
   }
   return { frames, shots, sparks };
@@ -1133,7 +1585,10 @@ function buildLog(result, names) {
   for (const e of result.events) {
     let html = null;
     switch (e.type) {
-      case 'start': html = `对战开始 · 地图 ${e.width}×${e.height}`; break;
+      case 'start':
+        html = `对战开始 · 地图 ${e.width}×${e.height}`;
+        if (e.skills) html += ` · 技能 ${nm(0)}=<span class="sk">${SKILL_CN[e.skills[0]] ?? e.skills[0]}</span> ${nm(1)}=<span class="sk">${SKILL_CN[e.skills[1]] ?? e.skills[1]}</span>`;
+        break;
       case 'goal':
         html = e.tag === 'star' ? `${nm(e.who)} 直奔星星 (${e.x},${e.y})`
           : e.tag === 'enemy' ? `${nm(e.who)} 扑向敌人 (${e.x},${e.y})`
@@ -1143,9 +1598,23 @@ function buildLog(result, names) {
       case 'fire': html = `${nm(e.who)} 开火`; break;
       case 'hit': html = `${nm(e.who)} 命中 ${nm(e.target)} <span class="dmg">-${e.dmg}</span>（剩 ${e.hp}）`; break;
       case 'bullet_end':
-        if (e.cause === 'wall') html = `${nm(e.who)} 的子弹被墙挡下`;
-        else if (e.cause === 'dirt') html = `${nm(e.who)} 的子弹被土堆挡下`;
+        if (e.reason === 'wall') html = `${nm(e.who)} 的子弹被墙挡下`;
+        else if (e.reason === 'mound') html = `${nm(e.who)} 的子弹打在土堆上`;
+        else if (e.reason === 'out') html = `${nm(e.who)} 的子弹飞出场外`;
         break;
+      case 'mound_hit':
+        if (e.hp > 0) html = `(${e.x},${e.y}) 的土堆被打出裂缝`;
+        break;
+      case 'mound_destroyed': html = `(${e.x},${e.y}) 的土堆<span class="dmg">被摧毁</span>`; break;
+      case 'bomb_place': html = `${nm(e.who)} 在 (${e.x},${e.y}) 放下<span class="sk">炸弹</span>`; break;
+      case 'bomb_explode': {
+        const hits = (e.hits || []).map((h) => `${nm(h.who)} <span class="dmg">-${h.dmg}</span>`).join('、');
+        html = `(${e.x},${e.y}) <span class="dmg">炸弹爆炸</span>（波及 ${e.cells.length} 格${hits ? '，' + hits : ''}）`;
+        break;
+      }
+      case 'shield_block': html = `${nm(e.who)} 的<span class="sk">护盾</span>挡下了${e.source === 'bomb' ? '炸弹' : '子弹'}`; break;
+      case 'freeze_hit': html = `${nm(e.target)} 被<span class="sk">冰冻</span> ${e.duration} 拍`; break;
+      case 'poison_hit': html = `${nm(e.target)} <span class="sk">中毒</span>，${e.duration} 拍内持续掉血`; break;
       case 'star':
         held[e.who] = e.total;
         html = `${nm(e.who)} <span class="st">吃星 ★ ${held[0]}:${held[1]}</span>`;
@@ -1389,27 +1858,67 @@ function drawArena(map, f, names, shots, sparks, curT) {
       const tile = map.tiles[y][x];
       if (tile === TILE.GRASS) drawGrassTile(x, y);
       else if (tile === TILE.WALL) drawWallTile(x, y);
-      else if (tile === TILE.DIRT) drawDirtTile(x, y);
+      else if (tile === TILE.DIRT) {
+        if (f.gone && f.gone.has(`${x},${y}`)) continue; // 已被摧毁：露出地面
+        drawDirtTile(x, y);
+        if (f.cracked && f.cracked.has(`${x},${y}`)) { // 打裂：加裂缝
+          const cx = x * TSZ + TSZ / 2;
+          const cy = y * TSZ + TSZ / 2;
+          ctx.strokeStyle = 'rgba(30,18,6,0.85)';
+          ctx.lineWidth = 1.6;
+          ctx.beginPath();
+          ctx.moveTo(cx - TSZ * 0.18, cy - TSZ * 0.24);
+          ctx.lineTo(cx - TSZ * 0.02, cy - TSZ * 0.02);
+          ctx.lineTo(cx - TSZ * 0.12, cy + TSZ * 0.2);
+          ctx.moveTo(cx - TSZ * 0.02, cy - TSZ * 0.02);
+          ctx.lineTo(cx + TSZ * 0.2, cy + TSZ * 0.06);
+          ctx.stroke();
+        }
+      }
+    }
+  }
+  // 炸弹（黑色圆雷 + 引信倒数，对双方可见）
+  if (f.bombs) {
+    for (const b of f.bombs) {
+      const px = b.x * TSZ + TSZ / 2;
+      const py = b.y * TSZ + TSZ / 2;
+      ctx.fillStyle = '#1F2937';
+      ctx.beginPath(); ctx.arc(px, py + 1.5, TSZ * 0.27, 0, 7); ctx.fill();
+      ctx.strokeStyle = 'rgba(24,20,12,0.8)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(px, py + 1.5, TSZ * 0.27, 0, 7); ctx.stroke();
+      ctx.strokeStyle = '#8B5A2B';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(px + 2, py - TSZ * 0.2); ctx.quadraticCurveTo(px + 6, py - TSZ * 0.42, px + 10, py - TSZ * 0.34); ctx.stroke();
+      const left = Math.max(0, RULES.bombFuse - (curT - b.t0));
+      ctx.fillStyle = '#FFE38F';
+      ctx.font = `bold ${Math.round(TSZ * 0.34)}px Menlo, monospace`;
+      ctx.fillText(String(left), px - TSZ * 0.1, py + TSZ * 0.14);
     }
   }
   // 星星
   for (const s of f.field) drawStarShape(s.x * TSZ + TSZ / 2, s.y * TSZ + TSZ / 2, TSZ * 0.34, COLOR.star);
-  // 弹道（当前 tick 起保留 3 拍并渐隐）
+  // 弹道（逐 tick 插值飞行：出膛→终点按 2 格/tick 推进，终结后拖尾渐隐 2 拍）
   if (shots) {
     for (const s of shots) {
-      const age = curT - s.t;
-      if (age < 0 || age > 3) continue;
-      const a = 0.7 * (1 - age / 4);
+      if (curT < s.t0 || curT > s.t1 + 2) continue;
+      const dur = Math.max(1, s.t1 - s.t0);
+      const prog = Math.min(1, (curT - s.t0) / dur);
+      const bx = s.x0 + (s.x1 - s.x0) * prog;
+      const by = s.y0 + (s.y1 - s.y0) * prog;
+      const a = curT <= s.t1 ? 0.7 : 0.7 * (1 - (curT - s.t1) / 3);
       ctx.strokeStyle = s.who === 0 ? `rgba(63,98,30,${a})` : `rgba(140,42,85,${a})`;
       ctx.setLineDash([5, 5]);
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(s.x0 * TSZ + TSZ / 2, s.y0 * TSZ + TSZ / 2);
-      ctx.lineTo(s.x1 * TSZ + TSZ / 2, s.y1 * TSZ + TSZ / 2);
+      ctx.lineTo(bx * TSZ + TSZ / 2, by * TSZ + TSZ / 2);
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = `rgba(40,30,14,${Math.min(1, a + 0.2)})`; // 弹丸
-      ctx.beginPath(); ctx.arc(s.x1 * TSZ + TSZ / 2, s.y1 * TSZ + TSZ / 2, 3, 0, 7); ctx.fill();
+      if (curT <= s.t1) { // 在飞弹丸本体
+        ctx.fillStyle = 'rgba(40,30,14,0.95)';
+        ctx.beginPath(); ctx.arc(bx * TSZ + TSZ / 2, by * TSZ + TSZ / 2, 3.2, 0, 7); ctx.fill();
+      }
     }
   }
   // 坦克
@@ -1447,6 +1956,21 @@ function drawArena(map, f, names, shots, sparks, curT) {
       ctx.beginPath(); ctx.arc(px, py, TSZ * 0.68, 0, 7); ctx.stroke();
       ctx.setLineDash([]);
     }
+    if (f.frozen && f.frozen[i] > 0) { // 冰冻蓝圈
+      ctx.strokeStyle = 'rgba(96,165,250,0.9)';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(px, py, TSZ * 0.62, 0, 7); ctx.stroke();
+    }
+    if (f.shield && f.shield[i]) { // 护盾金圈
+      ctx.strokeStyle = 'rgba(255,201,60,0.9)';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(px, py, TSZ * 0.74, 0, 7); ctx.stroke();
+    }
+    if (f.poison && f.poison[i] > 0) { // 中毒绿泡
+      ctx.fillStyle = 'rgba(74,222,128,0.9)';
+      ctx.beginPath(); ctx.arc(px + TSZ * 0.34, py - TSZ * 0.42, 3.5, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(px + TSZ * 0.18, py - TSZ * 0.55, 2.2, 0, 7); ctx.fill();
+    }
     drawHpBar(px, py, f.hp[i] / RULES.hp, f.hp[i] <= 30 ? '#E05252' : '#3FA34D');
     // 名牌药丸（参照原作红/蓝名牌徽章）
     ctx.font = 'bold 10px "PingFang SC", Menlo, sans-serif';
@@ -1480,6 +2004,18 @@ function drawArena(map, f, names, shots, sparks, curT) {
           ctx.lineTo(px + 13 * Math.cos(ang), py + 13 * Math.sin(ang));
           ctx.stroke();
         }
+      } else if (sp.kind === 'boom') { // 炸弹爆炸格闪光
+        ctx.fillStyle = `rgba(249,115,22,${a * 0.75})`;
+        rrect(sp.x * TSZ + 2.5, sp.y * TSZ + 2.5, TSZ - 5, TSZ - 5, 6);
+        ctx.fill();
+        ctx.strokeStyle = `rgba(255,201,60,${a})`;
+        ctx.lineWidth = 2;
+        rrect(sp.x * TSZ + 2.5, sp.y * TSZ + 2.5, TSZ - 5, TSZ - 5, 6);
+        ctx.stroke();
+      } else if (sp.kind === 'shield') { // 护盾格挡闪光
+        ctx.strokeStyle = `rgba(255,201,60,${a})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(px, py, TSZ * 0.7 + age * 3, 0, 7); ctx.stroke();
       } else { // teleport 闪光
         ctx.strokeStyle = `rgba(56,189,248,${a})`;
         ctx.lineWidth = 2;
@@ -1547,7 +2083,10 @@ function render() {
     drawArena(previewMap, {
       pos: previewMap.spawns.map((s) => ({ ...s })),
       hp: [RULES.hp, RULES.hp], held: [0, 0], cloak: [0, 0], stun: [0, 0],
-      facing: [0, Math.PI], dead: [false, false], field: previewMap.stars,
+      frozen: [0, 0], poison: [0, 0], shield: [false, false],
+      facing: [0, Math.PI], dead: [false, false],
+      field: previewMap.stars.slice(0, RULES.maxFieldStars ?? previewMap.stars.length),
+      bombs: [], gone: new Set(), cracked: new Set(),
     }, ['我的坦克 v' + curVersion, '对手'], null, null, 0);
   }
 }
@@ -1603,6 +2142,7 @@ function startBattle() {
   }
   const box = { count: 0, last: '' };
   const guarded = guardWrap(fn, box);
+  guarded.skill = userSkill(); // 8 选 1：显式挂到脚本函数上（runMatch 按 .skill 取装备）
   const seedStr = seedInput.value.trim() || '1';
   const seed = seedFromString(seedStr);
   const oppKey = oppSelect.value;
@@ -1630,7 +2170,9 @@ function computeLadder() {
   try {
     const fn = compileScript(editorEl.value);
     const box = { count: 0, last: '' };
-    parts.push({ key: '__user__', tank: `我的坦克 v${curVersion}`, style: '自定义', fn: guardWrap(fn, box), me: true, elo: 1200, w: 0, d: 0, g: 0 });
+    const gfn = guardWrap(fn, box);
+    gfn.skill = userSkill();
+    parts.push({ key: '__user__', tank: `我的坦克 v${curVersion}`, style: '自定义', fn: gfn, me: true, elo: 1200, w: 0, d: 0, g: 0 });
   } catch { /* 用户脚本编译失败：天梯只算内置四家 */ }
   const jobs = [];
   for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) jobs.push([i, j]);
@@ -1691,6 +2233,7 @@ function scheduleLadder() {
 // ---------- 事件绑定 ----------
 $id('battleBtn').addEventListener('click', startBattle);
 saveBtn.addEventListener('click', saveVersion);
+if (skillSel) skillSel.addEventListener('change', scheduleLadder);
 playBtn.addEventListener('click', () => { if (match) setPlaying(!playing); });
 $id('firstBtn').addEventListener('click', () => { if (match) { cur = 0; acc = 0; } });
 $id('lastBtn').addEventListener('click', () => { if (match) { cur = match.result.ticks - 1; setPlaying(false); } });

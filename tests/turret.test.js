@@ -37,15 +37,18 @@ test('弹道只走直线：fire 起点与 bullet_end 终点必共行或共列', 
   const A = (api) => (api.canFire() ? api.fireAt(api.enemy()) : null);
   const B = (api) => (api.canFire() ? api.fireAt(api.enemy()) : null);
   const r = runMatch({ seed: 7, map, botA: A, botB: B, maxTicks: 30 });
-  const fires = r.events.filter((e) => e.type === 'fire');
-  const ends = r.events.filter((e) => e.type === 'bullet_end');
-  assert.ok(fires.length >= 1, '应有开火');
-  assert.equal(fires.length, ends.length, '每次开火恰有一次弹道终结');
-  for (let k = 0; k < fires.length; k++) {
-    const f = fires[k];
-    const b = ends[k];
-    assert.ok(f.x === b.x || f.y === b.y, `弹道必须水平或垂直：fire(${f.x},${f.y}) → end(${b.x},${b.y})`);
-    assert.ok(Math.abs(f.dx) + Math.abs(f.dy) === 1, 'fire 事件必须带四向单位方向');
+  // 子弹逐 tick 飞行后事件不再相邻，按所属坦克分队配对
+  for (const who of [0, 1]) {
+    const fires = r.events.filter((e) => e.type === 'fire' && e.who === who);
+    const ends = r.events.filter((e) => e.type === 'bullet_end' && e.who === who);
+    assert.ok(fires.length >= 1, '应有开火');
+    assert.equal(fires.length, ends.length, '每次开火恰有一次弹道终结');
+    for (let k = 0; k < fires.length; k++) {
+      const f = fires[k];
+      const b = ends[k];
+      assert.ok(f.x === b.x || f.y === b.y, `弹道必须水平或垂直：fire(${f.x},${f.y}) → end(${b.x},${b.y})`);
+      assert.ok(Math.abs(f.dx) + Math.abs(f.dy) === 1, 'fire 事件必须带四向单位方向');
+    }
   }
 });
 

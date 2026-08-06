@@ -7,9 +7,9 @@
       "score": 40,
       "checks": [
         {
-          "name": "墙挡子弹（bullet_end.cause=wall，无 hit）",
+          "name": "墙挡子弹（bullet_end.reason=wall，无 hit）",
           "pass": true,
-          "detail": "bullet_end@(4,1) cause=wall"
+          "detail": "bullet_end@(4,1) reason=wall"
         },
         {
           "name": "墙挡坦克（moveTo 墙格不产生 move，位置不变）",
@@ -17,9 +17,14 @@
           "detail": "4 拍尝试走墙格均被拒，位置保持 (1,1)"
         },
         {
-          "name": "土堆挡子弹（bullet_end.cause=dirt，无 hit）",
+          "name": "土堆挡子弹（bullet_end.reason=mound + mound_hit，无 hit）",
           "pass": true,
-          "detail": "bullet_end cause=dirt，无命中"
+          "detail": "bullet_end reason=mound + mound_hit，无命中"
+        },
+        {
+          "name": "土堆两发摧毁（mound_hit → mound_destroyed 后弹道打通）",
+          "pass": true,
+          "detail": "t=7 土堆摧毁，之后子弹直达命中"
         },
         {
           "name": "土堆不挡坦克（可走上土堆格）",
@@ -47,14 +52,19 @@
           "detail": "隐身生效/到期恢复/冷却/开火打破 全通过"
         },
         {
-          "name": "传送技能 + 冷却（立即生效、冷却锁定、非法目标不消耗）",
+          "name": "传送技能 + 冷却（立即生效、冷却锁定、非法目标重定向、当拍暴露）",
           "pass": true,
-          "detail": "传送立即生效 + 冷却 + 非法目标不消耗"
+          "detail": "传送立即生效 + 冷却 + teleport_reveal + 非法目标重定向消耗冷却"
         },
         {
-          "name": "眩晕技能 + 冷却（stun_hit、目标 8 拍不能动、冷却锁定）",
+          "name": "冻结技能（freeze_hit、目标 8 拍不能动、冷却锁定）",
           "pass": true,
-          "detail": "stun_hit 命中，目标至 t=8 才恢复移动，冷却锁定"
+          "detail": "freeze_hit@t0，目标至 t=8 才恢复移动，冷却锁定"
+        },
+        {
+          "name": "眩晕技能（stun_hit duration=6、操作随机化而非禁止行动）",
+          "pass": true,
+          "detail": "stun_hit@t0，眩晕期间动作 6 条（随机化生效，非禁止行动）"
         },
         {
           "name": "开火冷却（射后 5 拍 canFire=false）",
@@ -64,7 +74,7 @@
         {
           "name": "击杀即胜（winner + reason=kill + death 事件，早于超时）",
           "pass": true,
-          "detail": "kill 胜于 tick 21"
+          "detail": "kill 胜于 tick 24"
         },
         {
           "name": "超时比星（无击杀星多者胜 reason=stars）",
@@ -75,6 +85,31 @@
           "name": "平局（无击杀且星数相同 winner=null reason=draw）",
           "pass": true,
           "detail": "winner=null reason=draw"
+        },
+        {
+          "name": "单发在飞（在飞期间 canFire=false、me().bulletInFlight=true）",
+          "pass": true,
+          "detail": "t1 在飞（bulletInFlight=true、canFire=false）"
+        },
+        {
+          "name": "子弹查询（myBullet 在飞可查；enemyBullet 视锥内可见）",
+          "pass": true,
+          "detail": "myBullet 在飞可查；enemyBullet 视锥内可见"
+        },
+        {
+          "name": "炸弹（bomb_place → 10 拍引信 bomb_explode，十字爆区）",
+          "pass": true,
+          "detail": "bomb_place@t0 → bomb_explode@t10，爆区 4 格，自伤命中"
+        },
+        {
+          "name": "单星（吃星后 15 拍 star_spawn 重生）",
+          "pass": true,
+          "detail": "t8 吃星 → t23 重生（间隔 15）"
+        },
+        {
+          "name": "技能 8 选 1（runMatch skillA 生效、未装备旧入口安全 no-op）",
+          "pass": true,
+          "detail": "shield 装备生效；未装备旧入口 no-op 不炸"
         }
       ]
     },
@@ -86,22 +121,22 @@
         {
           "name": "同 seed=42 两次重放逐字节相等（抢星流 vs 贴脸流）",
           "pass": true,
-          "detail": "events 133 条，序列化 6942 字节，逐字节相等"
+          "detail": "events 92 条，序列化 4833 字节，逐字节相等"
         },
         {
           "name": "同 seed=7 两次重放逐字节相等（蹲草流 vs 隐身偷袭流）",
           "pass": true,
-          "detail": "events 281 条，序列化 14530 字节，逐字节相等"
+          "detail": "events 142 条，序列化 7454 字节，逐字节相等"
         },
         {
           "name": "同 seed=101 两次重放逐字节相等（隐身偷袭流 vs 基线）",
           "pass": true,
-          "detail": "events 208 条，序列化 10389 字节，逐字节相等"
+          "detail": "events 370 条，序列化 18448 字节，逐字节相等"
         },
         {
           "name": "同 seed=20260805 两次重放逐字节相等（贴脸流 vs 蹲草流）",
           "pass": true,
-          "detail": "events 84 条，序列化 4583 字节，逐字节相等"
+          "detail": "events 121 条，序列化 6751 字节，逐字节相等"
         },
         {
           "name": "异 seed（42 vs 43）事件流必不同",
@@ -128,7 +163,7 @@
         {
           "name": "贴脸流 vs 随机基线胜率 ≥6.5/10",
           "pass": true,
-          "detail": "固定 seeds [11,22,33,44,55] 双边共 10 局，得分 9/10"
+          "detail": "固定 seeds [11,22,33,44,55] 双边共 10 局，得分 10/10"
         },
         {
           "name": "隐身偷袭流 vs 随机基线胜率 ≥6.5/10",
@@ -138,7 +173,7 @@
         {
           "name": "流派间存在明显非 50% 对局（|得分-5|≥1.5）",
           "pass": true,
-          "detail": "循环赛 蹲草流 vs 抢星流=7/10；蹲草流 vs 贴脸流=5/10；蹲草流 vs 隐身偷袭流=5/10；抢星流 vs 贴脸流=7/10；抢星流 vs 隐身偷袭流=10/10；贴脸流 vs 隐身偷袭流=9/10；偏离对局数=4"
+          "detail": "循环赛 蹲草流 vs 抢星流=1.5/10；蹲草流 vs 贴脸流=7.5/10；蹲草流 vs 隐身偷袭流=5/10；抢星流 vs 贴脸流=3/10；抢星流 vs 隐身偷袭流=8/10；贴脸流 vs 隐身偷袭流=6/10；偏离对局数=4"
         }
       ]
     },
@@ -162,7 +197,7 @@
         {
           "name": "100 局（随机 seeds、四组对阵轮换、默认地图）平均单局 <50ms",
           "pass": true,
-          "detail": "总耗时 692.65ms，平均 6.93ms/局，共 11918 ticks"
+          "detail": "总耗时 297.44ms，平均 2.97ms/局，共 10181 ticks"
         }
       ]
     },
@@ -179,11 +214,11 @@
       ]
     }
   ],
-  "generatedAt": "2026-08-06T06:20:27.907Z",
+  "generatedAt": "2026-08-06T11:46:41.043Z",
   "engineTestSummary": {
-    "pass": 26,
+    "pass": 53,
     "fail": 0,
-    "tests": 26,
+    "tests": 53,
     "ok": true
   }
 }

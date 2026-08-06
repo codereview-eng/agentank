@@ -1,13 +1,19 @@
-// 蹲草流：看得见敌人就交火（近身先眩晕）；看不见就找草丛蹲着装死。
+// 蹲草流（技能：冰冻）：看得见敌人就先冰冻再交火；看不见就找草丛蹲着装死；躲炸弹。
+import { bombEvade } from './util.js';
+
 export default function camper(api) {
+  const evade = bombEvade(api);
+  if (evade) return evade;
   const foe = api.enemy();
+  const me = api.me();
   const R = api.rules();
   const d = api.distTo(foe);
   if (api.enemyVisible()) {
-    if (d <= R.stunRange && api.ready('stun')) return api.stun();
-    if (api.canFire() && d <= R.fireRange) return api.fireAt(foe);
+    if (api.ready() && d <= R.fireRange) return api.useSkill(); // 冰冻定身
+    if (api.canFire() && d <= R.fireRange && (foe.x === me.x || foe.y === me.y)) return api.fireAt(foe);
     if (d > R.fireRange) return api.moveTo(foe); // 追到射程内
-    return null; // 射程内装填中：原地不动
+    if (api.canFire()) return api.fireAt(foe); // 未对齐：先借 fireAt 转向压制
+    return null; // 装填/在飞：原地不动
   }
   if (!api.inGrass()) {
     const g = api.nearestGrass();
@@ -17,3 +23,4 @@ export default function camper(api) {
   }
   return null; // 已在草丛：蹲住
 }
+camper.skill = 'freeze';
