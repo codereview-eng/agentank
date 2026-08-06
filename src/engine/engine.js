@@ -26,6 +26,15 @@ function manhattan(a, b) {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
 
+// 目标相对坦克的主轴四向（|dx|>=|dy| 取水平，平手时水平优先，保证确定性）
+function cardinalTo(T, tx, ty) {
+  const dx = tx - T.x;
+  const dy = ty - T.y;
+  if (dx === 0 && dy === 0) return null;
+  if (Math.abs(dx) >= Math.abs(dy)) return [dx > 0 ? 1 : -1, 0];
+  return [0, dy > 0 ? 1 : -1];
+}
+
 // 视野规则：敌方隐身技能生效 ⇒ 不可见；敌方在草丛且曼哈顿距离>1 ⇒ 不可见；其余可见。
 function visibleTo(state, viewer) {
   const T = state.tanks[viewer];
@@ -93,7 +102,7 @@ function makeApi(state, i) {
   const visible = visibleTo(state, i);
   return {
     // 状态查询
-    me: () => ({ x: T.x, y: T.y, hp: T.hp, stars: T.stars, cloaked: T.cloak > 0, stunned: T.stun > 0 }),
+    me: () => ({ x: T.x, y: T.y, hp: T.hp, stars: T.stars, cloaked: T.cloak > 0, stunned: T.stun > 0, facing: { dx: T.facing[0], dy: T.facing[1] } }),
     enemy: () => ({ x: T.lastSeen.x, y: T.lastSeen.y, visible }),
     enemyVisible: () => visible,
     canFire: () => T.cd.fire <= 0,
@@ -159,24 +168,18 @@ function maybeGoal(state, i, tx, ty, ev) {
   ev({ t: state.t, type: 'goal', who: i, x: tx, y: ty, tag });
 }
 
-function fireBullet(state, i, tx, ty, ev) {
+function fireBullet(state, i, dx, dy, ev) {
   const R = state.R;
   const T = state.tanks[i];
   const E = state.tanks[1 - i];
   const t = state.t;
-  // 整数 Bresenham，越过目标点后沿同方向延伸至射程上限
-  const dx = Math.abs(tx - T.x);
-  const sx = T.x < tx ? 1 : -1;
-  const dy = -Math.abs(ty - T.y);
-  const sy = T.y < ty ? 1 : -1;
-  let err = dx + dy;
+  // 炮弹只沿炮口方向直线飞行（水平/垂直），至射程上限
   let x = T.x;
   let y = T.y;
   let traveled = 0;
   while (traveled < R.fireRange) {
-    const e2 = 2 * err;
-    if (e2 >= dy) { err += dy; x += sx; }
-    if (e2 <= dx) { err += dx; y += sy; }
+    x += dx;
+    y += dy;
     traveled++;
     if (!inBounds(state.map, x, y)) { ev({ t, type: 'bullet_end', who: i, x, y, cause: 'range' }); return; }
     const tile = tileAt(state.map, x, y);
@@ -206,6 +209,7 @@ function applyAction(state, i, a, ev) {
       maybeGoal(state, i, tx, ty, ev);
       const step = nextStep(state, T, E, tx, ty);
       if (step) {
+        T.facing = [step.x - T.x, step.y - T.y]; // 车体带动炮口转向行进方向
         T.x = step.x;
         T.y = step.y;
         ev({ t, type: 'move', who: i, x: T.x, y: T.y });
@@ -224,6 +228,7 @@ function applyAction(state, i, a, ev) {
       }
       if (opts.length) {
         const p = opts[randInt(T.rng, opts.length)];
+        T.facing = [p.x - T.x, p.y - T.y];
         T.x = p.x;
         T.y = p.y;
         ev({ t, type: 'move', who: i, x: T.x, y: T.y });
@@ -235,12 +240,19 @@ function applyAction(state, i, a, ev) {
       if (T.cd.fire > 0) break;
       const tx = a.x | 0;
       const ty = a.y | 0;
-      if (tx === T.x && ty === T.y) break; // 朝自己开火视为非法
+      const dir = cardinalTo(T, tx, ty);
+      if (!dir) break; // 朝自己开火视为非法
+      // 炮口硬规则：只能沿水平/垂直方向开炮；炮口未对准时本拍先转向，下一拍才能射击
+      if (T.facing[0] !== dir[0] || T.facing[1] !== dir[1]) {
+        T.facing = dir;
+        ev({ t, type: 'turn', who: i, dx: dir[0], dy: dir[1] });
+        break;
+      }
       T.cd.fire = R.fireCd;
       if (T.cloak > 0) T.cloak = 0; // 开火打破隐身
-      ev({ t, type: 'fire', who: i, x: T.x, y: T.y, tx, ty });
+      ev({ t, type: 'fire', who: i, x: T.x, y: T.y, dx: dir[0], dy: dir[1] });
       E.lastSeen = { x: T.x, y: T.y }; // 开火暴露自身位置
-      fireBullet(state, i, tx, ty, ev);
+      fireBullet(state, i, dir[0], dir[1], ev);
       break;
     }
     case 'teleport': {
@@ -311,6 +323,7 @@ export function runMatch(opts = {}) {
       y: s.y,
       hp: R.hp,
       stars: 0,
+      facing: i === 0 ? [1, 0] : [-1, 0], // 炮口四向朝向：P1 朝右、P2 朝左
       cd: { fire: 0, teleport: 0, cloak: 0, stun: 0 },
       cloak: 0,
       stun: 0,

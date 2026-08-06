@@ -16,6 +16,11 @@ export function renderText(result, names = ['甲', '乙']) {
         else if (e.tag === 'enemy') lines.push(`${t} ${nm(e.who)} 扑向敌人`);
         else lines.push(`${t} ${nm(e.who)} 移动到(${e.x},${e.y})`);
         break;
+      case 'turn': {
+        const arrow = { '1,0': '→', '-1,0': '←', '0,1': '↓', '0,-1': '↑' }[e.dx + ',' + e.dy] ?? '';
+        lines.push(`${t} ${nm(e.who)} 转炮口${arrow}`);
+        break;
+      }
       case 'fire':
         lines.push(`${t} ${nm(e.who)} 开火`);
         break;

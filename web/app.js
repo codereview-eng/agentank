@@ -186,8 +186,11 @@ function buildTimeline(map, result) {
         case 'star_spawn':
           field = field.concat([{ x: e.x, y: e.y }]);
           break;
+        case 'turn':
+          facing[e.who] = Math.atan2(e.dy, e.dx);
+          break;
         case 'fire':
-          facing[e.who] = Math.atan2(e.ty - e.y, e.tx - e.x);
+          facing[e.who] = Math.atan2(e.dy, e.dx);
           if (cloakLeft[e.who] > 0) cloakLeft[e.who] = 0; // 开火破隐
           pending[e.who] = { t, who: e.who, x0: e.x, y0: e.y };
           break;
@@ -245,6 +248,7 @@ function buildLog(result, names) {
           : e.tag === 'enemy' ? `${nm(e.who)} 扑向敌人 (${e.x},${e.y})`
             : `${nm(e.who)} 移动到 (${e.x},${e.y})`;
         break;
+      case 'turn': html = `${nm(e.who)} 转炮口${{ '1,0': '→', '-1,0': '←', '0,1': '↓', '0,-1': '↑' }[e.dx + ',' + e.dy] ?? ''}`; break;
       case 'fire': html = `${nm(e.who)} 开火`; break;
       case 'hit': html = `${nm(e.who)} 命中 ${nm(e.target)} <span class="dmg">-${e.dmg}</span>（剩 ${e.hp}）`; break;
       case 'bullet_end':
