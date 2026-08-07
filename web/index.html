@@ -150,7 +150,6 @@ footer .mono{color:var(--muted)}
           <option value="random" selected>随机（按种子生成）</option>
         </select>
       </div>
-      <div class="row"><label>种子</label><input class="mono" id="seed" value="20260805-42"></div>
       <button class="btn" id="battleBtn">开 战</button>
       <button class="btn ghost" id="saveBtn">保存为新版本（当前 v1 · 共 1 版）</button>
     </div>
@@ -187,7 +186,7 @@ footer .mono{color:var(--muted)}
   </section>
 </main>
 <footer>
-  <span>引擎 <span class="mono" id="footSeed">deterministic · seed=20260805-42</span></span>
+  <span>引擎 <span class="mono" id="footSeed">deterministic · seed=每局自动生成</span></span>
   <span>战报仅文字记录 <span class="mono" id="footLog">battle.log —</span>，回放由前端渲染</span>
   <span>沙箱 <span class="mono">new Function 编译 · 受限 API · 脚本报错=本拍待机</span></span>
 </footer>

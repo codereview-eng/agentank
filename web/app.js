@@ -6,7 +6,6 @@ import { bots } from '../bots/index.js';
 const $id = (s) => document.getElementById(s);
 const editorEl = $id('editor');
 const oppSelect = $id('opp');
-const seedInput = $id('seed');
 const errEl = $id('scriptErr');
 const canvasEl = $id('arena');
 const ctx = canvasEl.getContext('2d');
@@ -99,6 +98,16 @@ function seedFromString(s) {
   let h = 2166136261 >>> 0;
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
   return h >>> 0;
+}
+
+// 每局自动生成随机种子（玩家不可选）：记录进战报首行与页脚，?seed= 深链可复现回放。
+// 熵源用 crypto.getRandomValues（引擎内仍全程种子 RNG，禁 Math.random）。
+function genSeed() {
+  const d = new Date();
+  const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return `${ymd}-${String(buf[0] % 100000).padStart(5, '0')}`;
 }
 
 // 默认脚本的预编译等价实现（托管环境 CSP 禁 eval 时的降级路径，语义与 DEFAULT_SCRIPT 逐行一致）
@@ -301,7 +310,7 @@ function buildTimeline(map, result) {
 }
 
 // ---------- 战报时间线（中文行 + 着色） ----------
-function buildLog(result, names) {
+function buildLog(result, names, seedStr) {
   const held = [0, 0];
   const out = [];
   const nm = (i) => `<span class="${i === 0 ? 'p1' : 'p2'}">${names[i]}</span>`;
@@ -310,6 +319,7 @@ function buildLog(result, names) {
     switch (e.type) {
       case 'start':
         html = `对战开始 · 地图 ${e.width}×${e.height}`;
+        if (seedStr) html += ` · 种子 <span class="sk">${seedStr}</span>（自动生成，回放用）`;
         if (e.skills) html += ` · 技能 ${nm(0)}=<span class="sk">${SKILL_CN[e.skills[0]] ?? e.skills[0]}</span> ${nm(1)}=<span class="sk">${SKILL_CN[e.skills[1]] ?? e.skills[1]}</span>`;
         break;
       case 'goal':
@@ -750,6 +760,7 @@ function drawArena(map, f, names, shots, sparks, curT) {
 
 // ---------- 对局状态 & 回放 ----------
 let match = null; // { seedStr, seed, map, result, names, frames, shots, sparks, entries }
+let pendingSeed = null; // ?seed= 回放深链：仅下一局生效，用后即弃（此后恢复每局自动生成）
 let cur = 0;
 let playing = false;
 let speedIdx = 1; // 默认 2x
@@ -866,7 +877,9 @@ function startBattle() {
   const box = { count: 0, last: '' };
   const guarded = guardWrap(fn, box);
   guarded.skill = userSkill(); // 8 选 1：显式挂到脚本函数上（runMatch 按 .skill 取装备）
-  const seedStr = seedInput.value.trim() || '1';
+  // 种子不由玩家选择：每局开战自动生成；?seed= 深链只顶替下一局（回放复现）
+  const seedStr = pendingSeed || genSeed();
+  pendingSeed = null;
   const seed = seedFromString(seedStr);
   const oppKey = oppSelect.value;
   const opp = ROSTER.find((r) => r.key === oppKey) || ROSTER[0];
@@ -875,7 +888,7 @@ function startBattle() {
   const names = [`我的坦克 v${curVersion}`, `${opp.style}流`];
   const result = runMatch({ seed, botA: guarded, botB: opp.fn, map });
   const tl = buildTimeline(map, result);
-  match = { seedStr, seed, map, result, names, frames: tl.frames, shots: tl.shots, sparks: tl.sparks, entries: buildLog(result, names) };
+  match = { seedStr, seed, map, result, names, frames: tl.frames, shots: tl.shots, sparks: tl.sparks, entries: buildLog(result, names, seedStr) };
   setupCanvas(map);
   renderLogList();
   updateVerdict(box);
@@ -963,7 +976,7 @@ if (mapSel) mapSel.addEventListener('change', () => {
   setPlaying(false);
   cur = 0;
   acc = 0;
-  previewMap = makeMap(seedFromString(seedInput.value.trim() || '1'));
+  previewMap = makeMap(seedFromString(pendingSeed || genSeed())); // 预览仅示意；对局用图以开战时自动种子为准
   setupCanvas(previewMap);
 });
 playBtn.addEventListener('click', () => { if (match) setPlaying(!playing); });
@@ -997,12 +1010,12 @@ if (!EVAL_OK) {
 }
 updateVersionUi();
 const qp = new URLSearchParams(location.search);
-if (qp.get('seed')) seedInput.value = qp.get('seed');
+if (qp.get('seed')) pendingSeed = qp.get('seed').trim() || null; // ?seed= 回放深链：下一局按此种子复现
 if (qp.get('map') && mapSel && [...mapSel.options].some((o) => o.value === qp.get('map'))) {
   mapSel.value = qp.get('map'); // ?map=id 直达预置图（可分享/截图复现）
 }
-footSeed.textContent = `deterministic · seed=${seedInput.value.trim()}`;
-previewMap = makeMap(seedFromString(seedInput.value));
+footSeed.textContent = pendingSeed ? `deterministic · seed=${pendingSeed}（回放）` : 'deterministic · seed=每局自动生成';
+previewMap = makeMap(seedFromString(pendingSeed || genSeed()));
 setupCanvas(previewMap);
 requestAnimationFrame(loop);
 scheduleLadder();
