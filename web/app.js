@@ -37,6 +37,11 @@ const SKILL_CN = {
   shield: '护盾', freeze: '冰冻', stun: '眩晕', overload: '超载',
   cloak: '隐身', poison: '剧毒', teleport: '传送', boost: '疾驰',
 };
+// 终局判定链文案（平局已根治：击杀→星数→血量→输出→圈心→掷签）
+const REASON_CN = {
+  kill: '击杀', stars: '星数', hp: '血量判定',
+  damage: '输出判定', center: '圈心判定', coin: '种子掷签',
+};
 const skillSel = $id('skillSel');
 const userSkill = () => (skillSel ? skillSel.value : 'teleport');
 
@@ -201,6 +206,7 @@ function buildTimeline(map, result) {
   // 单星规则：引擎只保留地图声明的第一颗星，渲染同口径截断
   let field = map.stars.slice(0, RULES.maxFieldStars ?? map.stars.length).map((s) => ({ x: s.x, y: s.y }));
   let bombs = [];              // 在场炸弹 [{x,y,t0}]
+  let zone = 0;                // 已收缩圈数（安全区 [1+zone, W-2-zone]）
   let gone = new Set();        // 已摧毁土堆 "x,y"
   let cracked = new Set();     // 打裂土堆 "x,y"
   const frames = [];
@@ -230,6 +236,16 @@ function buildTimeline(map, result) {
           break;
         case 'star_spawn':
           field = field.concat([{ x: e.x, y: e.y }]);
+          break;
+        case 'star_gone':
+          field = field.filter((s) => !(s.x === e.x && s.y === e.y));
+          break;
+        case 'zone_shrink':
+          zone = e.ring;
+          break;
+        case 'zone_hit':
+          hp[e.target] = e.hp;
+          sparks.push({ t, x: pos[e.target].x, y: pos[e.target].y, kind: 'hit' });
           break;
         case 'turn':
           facing[e.who] = Math.atan2(e.dy, e.dx);
@@ -303,7 +319,7 @@ function buildTimeline(map, result) {
       hp: [...hp], held: [...held],
       cloak: [...cloakLeft], stun: [...stunLeft],
       frozen: [...frozenLeft], poison: [...poisonLeft], shield: [...shieldOn],
-      facing: [...facing], dead: [...dead],
+      facing: [...facing], dead: [...dead], zone,
       field, bombs, gone, cracked, // 均为 copy-on-write 新引用，即本 tick 快照
     });
   }
@@ -354,6 +370,9 @@ function buildLog(result, names, seedStr) {
         html = `${nm(e.who)} <span class="st">吃星 ★ ${held[0]}:${held[1]}</span>`;
         break;
       case 'star_spawn': html = `<span class="st">新星星</span>出现在 (${e.x},${e.y})`; break;
+      case 'star_gone': html = `(${e.x},${e.y}) 的星星被<span class="dmg">毒圈</span>吞没`; break;
+      case 'zone_shrink': html = `<span class="dmg">毒圈收缩</span>（第 ${e.ring} 圈），安全区 (${e.x0},${e.y0})~(${e.x1},${e.y1})`; break;
+      case 'zone_hit': html = `${nm(e.target)} 在<span class="dmg">毒圈</span>中 -${e.dmg}（剩 ${e.hp}）`; break;
       case 'slide': html = `${nm(e.who)} 在<span class="sk">冰面</span>滑到 (${e.x},${e.y})`; break;
       case 'skill': html = `${nm(e.who)} 施放<span class="sk">${SKILL_CN[e.name] ?? e.name}</span>`; break;
       case 'stun_hit': html = `${nm(e.target)} 被<span class="sk">眩晕</span> ${e.duration} 拍`; break;
@@ -361,7 +380,7 @@ function buildLog(result, names, seedStr) {
       case 'end':
         html = e.winner == null
           ? `平局（星 ${e.stars[0]}:${e.stars[1]}）`
-          : `${nm(e.winner)} <span class="win2">获胜</span>（${e.reason === 'kill' ? '击杀' : '星数'}，星 ${e.stars[0]}:${e.stars[1]}）`;
+          : `${nm(e.winner)} <span class="win2">获胜</span>（${REASON_CN[e.reason] ?? e.reason}，星 ${e.stars[0]}:${e.stars[1]}）`;
         break;
       default: break;
     }
@@ -665,6 +684,30 @@ function drawArena(map, f, names, shots, sparks, curT) {
     }
   }
   // 炸弹（黑色圆雷 + 引信倒数，对双方可见）
+  // 毒圈：安全区外整格暗紫遮罩 + 电离噪点，安全区描亮边（缩圈规则可视化）
+  if (f.zone > 0) {
+    const r = f.zone;
+    const zx0 = 1 + r;
+    const zy0 = 1 + r;
+    const zx1 = W - 2 - r;
+    const zy1 = H - 2 - r;
+    ctx.fillStyle = 'rgba(88,28,135,0.42)';
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (x >= zx0 && x <= zx1 && y >= zy0 && y <= zy1) continue;
+        ctx.fillRect(x * TSZ, y * TSZ, TSZ, TSZ);
+        const v = tileHash(x, y, 7);
+        if (v > 0.6) {
+          ctx.fillStyle = 'rgba(216,180,254,0.5)';
+          ctx.fillRect(x * TSZ + (v * 83) % (TSZ - 2), y * TSZ + (v * 47) % (TSZ - 2), 2, 2);
+          ctx.fillStyle = 'rgba(88,28,135,0.42)';
+        }
+      }
+    }
+    ctx.strokeStyle = 'rgba(216,180,254,0.85)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(zx0 * TSZ + 1, zy0 * TSZ + 1, (zx1 - zx0 + 1) * TSZ - 2, (zy1 - zy0 + 1) * TSZ - 2);
+  }
   if (f.bombs) {
     for (const b of f.bombs) {
       const px = b.x * TSZ + TSZ / 2;
@@ -907,7 +950,7 @@ function updateVerdict(box) {
     verdictMain.textContent = `● ${names[r.winner]} WIN`;
     verdictMain.style.color = r.winner === 0 ? 'var(--p1)' : 'var(--p2)';
   }
-  const how = r.reason === 'kill' ? '击杀' : r.reason === 'stars' ? '星数' : '平局';
+  const how = REASON_CN[r.reason] ?? '平局';
   verdictSub.textContent = `${how} @ t=${r.ticks - 1} · 星 ${r.stars[0]}:${r.stars[1]} · 用时 ${(r.ticks / BASE_TPS).toFixed(1)}s`;
   verdictRef.textContent = `回放 · 战报 #${10000 + (match.seed % 90000)}`;
   if (box && box.count > 0) showErr(`脚本运行时报错 ${box.count} 次（该拍已按待机处理）：${box.last}`);

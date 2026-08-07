@@ -92,9 +92,24 @@
           "detail": "超时后星多者胜，end.reason=stars"
         },
         {
-          "name": "平局（无击杀且星数相同 winner=null reason=draw）",
+          "name": "平局根治（镜像超时局走判定链掷签，winner 永不为 null）",
           "pass": true,
-          "detail": "winner=null reason=draw"
+          "detail": "winner=1 reason=coin（种子确定）"
+        },
+        {
+          "name": "超时判定链（星平后比剩余 HP，reason=hp）",
+          "pass": true,
+          "detail": "打伤对方后超时，血量判定 A 胜（reason=hp）"
+        },
+        {
+          "name": "缩圈（zone_shrink 时刻表 + 毒圈伤害递增 + 必出胜负）",
+          "pass": true,
+          "detail": "收圈 3 次，毒圈 8→12，winner=1（coin）"
+        },
+        {
+          "name": "缩圈联动（星星避圈重生 + 传送不落毒圈）",
+          "pass": true,
+          "detail": "星星避圈重生 + 传送重定向进安全区"
         },
         {
           "name": "单发在飞（在飞期间 canFire=false、me().bulletInFlight=true）",
@@ -146,7 +161,7 @@
         {
           "name": "同 seed=20260805 两次重放逐字节相等（贴脸流 vs 蹲草流）",
           "pass": true,
-          "detail": "events 121 条，序列化 6751 字节，逐字节相等"
+          "detail": "events 121 条，序列化 6750 字节，逐字节相等"
         },
         {
           "name": "异 seed（42 vs 43）事件流必不同",
@@ -168,7 +183,7 @@
         {
           "name": "抢星流 vs 随机基线胜率 ≥6.5/10",
           "pass": true,
-          "detail": "固定 seeds [11,22,33,44,55] 双边共 10 局，得分 10/10"
+          "detail": "固定 seeds [11,22,33,44,55] 双边共 10 局，得分 7/10"
         },
         {
           "name": "贴脸流 vs 随机基线胜率 ≥6.5/10",
@@ -183,7 +198,7 @@
         {
           "name": "流派间存在明显非 50% 对局（|得分-5|≥1.5）",
           "pass": true,
-          "detail": "循环赛 蹲草流 vs 抢星流=1.5/10；蹲草流 vs 贴脸流=7.5/10；蹲草流 vs 隐身偷袭流=5/10；抢星流 vs 贴脸流=3/10；抢星流 vs 隐身偷袭流=8/10；贴脸流 vs 隐身偷袭流=6/10；偏离对局数=4"
+          "detail": "循环赛 蹲草流 vs 抢星流=1/10；蹲草流 vs 贴脸流=7/10；蹲草流 vs 隐身偷袭流=2/10；抢星流 vs 贴脸流=3/10；抢星流 vs 隐身偷袭流=8/10；贴脸流 vs 隐身偷袭流=6/10；偏离对局数=5"
         }
       ]
     },
@@ -207,7 +222,7 @@
         {
           "name": "100 局（随机 seeds、四组对阵轮换、默认地图）平均单局 <50ms",
           "pass": true,
-          "detail": "总耗时 410.77ms，平均 4.11ms/局，共 10457 ticks"
+          "detail": "总耗时 553.47ms，平均 5.53ms/局，共 10088 ticks"
         }
       ]
     },
@@ -224,11 +239,11 @@
       ]
     }
   ],
-  "generatedAt": "2026-08-07T13:52:42.372Z",
+  "generatedAt": "2026-08-07T16:51:25.240Z",
   "engineTestSummary": {
-    "pass": 65,
+    "pass": 75,
     "fail": 0,
-    "tests": 65,
+    "tests": 75,
     "ok": true
   }
 }

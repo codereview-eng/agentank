@@ -24,3 +24,8 @@
 - 图例新增：'='=冰面（TILE.ICE）、'~'=水域（TILE.WATER）；预置图 13 张（新增 frozenLake 冰湖 / riverCrossing 冰河渡口 / tundra 冻原）。
 - 冰面：踏上后沿原方向续滑至离冰/撞墙/撞敌，滑行途中吃星；新事件 `slide {t,who,x,y}`（web timeline 与 move 同口径消费）。
 - 水域：isWalkable=false（挡车），子弹/炸弹冲击波照常飞越（不挡弹）；teleport 落点非法集新增水域。
+
+## v11 缩圈与终局判定链（2026-08-08）
+- RULES.zone：start 240 / every 30 / dmg 5 / dmgStep 1；安全区 [1+ring, w-2-ring]，收到中心 1 格封顶；毒圈伤害无视护盾。
+- 新事件：zone_shrink {ring,x0,y0,x1,y1}、zone_hit {target,dmg,hp}、star_gone {x,y}；星星/传送/safestCorner 全部避圈。
+- 平局已根治：end.reason 新增 hp/damage/center/coin（击杀→星数→HP→输出→圈心→种子掷签），winner 永不为 null；旧战报 draw 仅回放兼容。

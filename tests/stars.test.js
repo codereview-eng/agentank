@@ -37,15 +37,17 @@ test('超时判定：无击杀时星多者胜（reason=stars）', () => {
   assert.equal(end.reason, 'stars');
 });
 
-test('超时判定：无击杀且星数相同 ⇒ 平局', () => {
+test('超时判定：无击杀且星数相同 ⇒ 走终局判定链掷签，必出胜负（平局已根治）', () => {
   const map = mapFromAscii([
     '#####',
     '#A.B#',
     '#####',
   ]);
   const r = runMatch({ seed: 1, map, botA: idle, botB: idle, maxTicks: 10 });
-  assert.equal(r.winner, null);
-  assert.equal(r.reason, 'draw');
+  assert.notEqual(r.winner, null, '不允许平局');
+  assert.equal(r.reason, 'coin', '完全镜像局应落到掷签兜底');
+  const r2 = runMatch({ seed: 1, map: mapFromAscii(['#####', '#A.B#', '#####']), botA: idle, botB: idle, maxTicks: 10 });
+  assert.equal(r.winner, r2.winner, '掷签必须种子确定');
 });
 
 test('击杀即胜（reason=kill），早于超时', () => {

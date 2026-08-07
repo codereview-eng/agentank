@@ -240,11 +240,74 @@ function sectionMechanics() {
     return '超时后星多者胜，end.reason=stars';
   });
 
-  add('平局（无击杀且星数相同 winner=null reason=draw）', () => {
-    const map = mapFromAscii(['#####', '#A.B#', '#####']);
-    const r = runMatch({ seed: 1, map, botA: idle, botB: idle, maxTicks: 10 });
-    assert(r.winner === null && r.reason === 'draw', `winner=${r.winner} reason=${r.reason}`);
-    return 'winner=null reason=draw';
+  add('平局根治（镜像超时局走判定链掷签，winner 永不为 null）', () => {
+    const mk = () => mapFromAscii(['#####', '#A.B#', '#####']);
+    const r = runMatch({ seed: 1, map: mk(), botA: idle, botB: idle, maxTicks: 10 });
+    assert(r.winner !== null, `不允许平局，winner=${r.winner}`);
+    assert(r.reason === 'coin', `完全镜像应落到掷签，reason=${r.reason}`);
+    const r2 = runMatch({ seed: 1, map: mk(), botA: idle, botB: idle, maxTicks: 10 });
+    assert(r.winner === r2.winner, '掷签必须种子确定');
+    return `winner=${r.winner} reason=coin（种子确定）`;
+  });
+
+  add('超时判定链（星平后比剩余 HP，reason=hp）', () => {
+    const map = mapFromAscii(['##########', '#A......B#', '##########']);
+    let fired = false;
+    const A = (api) => {
+      if (!fired && api.canFire()) { fired = true; return api.fireAt(api.enemy()); }
+      return null;
+    };
+    const r = runMatch({ seed: 1, map, botA: A, botB: idle, rules: { zone: { start: 9999 } }, maxTicks: 30 });
+    assert(r.winner === 0 && r.reason === 'hp', `winner=${r.winner} reason=${r.reason}`);
+    return '打伤对方后超时，血量判定 A 胜（reason=hp）';
+  });
+
+  add('缩圈（zone_shrink 时刻表 + 毒圈伤害递增 + 必出胜负）', () => {
+    const mk = () => mapFromAscii([
+      '#########', '#A......#', '#.......#', '#.......#', '#.......#',
+      '#.......#', '#.......#', '#......B#', '#########',
+    ]);
+    const r = runMatch({
+      seed: 3, map: mk(), botA: idle, botB: idle,
+      rules: { zone: { start: 4, every: 4, dmg: 8, dmgStep: 2 } }, maxTicks: 200,
+    });
+    const shrinks = r.events.filter((e) => e.type === 'zone_shrink');
+    assert(shrinks.length >= 2 && shrinks[0].t === 4 && shrinks[1].t === 8, '收圈时刻应为 start + k*every');
+    const hits = r.events.filter((e) => e.type === 'zone_hit');
+    assert(hits.length >= 2, '圈外应持续吃毒圈伤害');
+    assert(hits.at(-1).dmg > hits[0].dmg, '毒圈伤害应随圈数递增');
+    assert(r.events.some((e) => e.type === 'death'), '毒圈应能致死');
+    assert(r.winner !== null, '缩圈局不允许平局');
+    return `收圈 ${shrinks.length} 次，毒圈 ${hits[0].dmg}→${hits.at(-1).dmg}，winner=${r.winner}（${r.reason}）`;
+  });
+
+  add('缩圈联动（星星避圈重生 + 传送不落毒圈）', () => {
+    const mk = (rows) => mapFromAscii(rows);
+    const r = runMatch({
+      seed: 1,
+      map: mk(['#########', '#A*.....#', '#.......#', '#.......#', '#.......#', '#.......#', '#.......#', '#......B#', '#########']),
+      botA: idle, botB: idle,
+      rules: { zone: { start: 3, every: 50, dmg: 0, dmgStep: 0 } }, maxTicks: 60,
+    });
+    const gone = r.events.find((e) => e.type === 'star_gone');
+    assert(gone && gone.t === 3, '圈外星星应在收圈当拍被吞没');
+    const sp = r.events.find((e) => e.type === 'star_spawn' && e.t > gone.t);
+    assert(sp && sp.x >= 2 && sp.x <= 6 && sp.y >= 2 && sp.y <= 6, '重生点应在安全区内');
+    let used = false; const meLog = [];
+    const A2 = (api) => {
+      meLog.push(api.me());
+      if (!used && api.ready() && api.zone().ring >= 1) { used = true; return api.teleport({ x: 1, y: 1 }); }
+      return null;
+    };
+    runMatch({
+      seed: 1,
+      map: mk(['#########', '#A......#', '#.......#', '#.......#', '#.......#', '#.......#', '#.......#', '#......B#', '#########']),
+      botA: A2, botB: idle, skillA: 'teleport',
+      rules: { zone: { start: 2, every: 100, dmg: 0, dmgStep: 0 } }, maxTicks: 8,
+    });
+    const dest = meLog.at(-1);
+    assert(dest.x >= 2 && dest.x <= 6 && dest.y >= 2 && dest.y <= 6, `传送落点 (${dest.x},${dest.y}) 应避圈`);
+    return '星星避圈重生 + 传送重定向进安全区';
   });
 
   add('单发在飞（在飞期间 canFire=false、me().bulletInFlight=true）', () => {

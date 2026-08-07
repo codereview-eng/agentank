@@ -1,8 +1,10 @@
 // AgenTank 核心：tick 制确定性模拟。
 // 每 tick 结算顺序（测试锁死）：
-//   1 计时器递减 → 2 星星重生 → 3 推进已有子弹 → 4 超载自动补射 → 5 视野更新
-//   → 6 双方基于同一快照 decide → 7 按 0、1 顺序裁决动作 → 8 持续效果（炸弹引信/中毒）
-// 击杀即胜；到达 maxTicks 比吃星数；再平则平局；同拍双亡 = 平局。
+//   1 计时器递减 → 2 星星重生 → 2.5 缩圈（吞没圈外星星）→ 3 推进已有子弹 → 4 超载自动补射
+//   → 5 视野更新 → 6 双方基于同一快照 decide → 7 按 0、1 顺序裁决动作
+//   → 8 持续效果（炸弹引信/中毒/毒圈伤害）
+// 终局判定链（超时与同拍双亡通用，杜绝平局）：
+//   击杀 → 星数 → 剩余 HP → 累计输出伤害 → 距圈心近者 → 种子掷签（coin，确定性）。
 import { mulberry32, randInt } from './rng.js';
 import { generateMap, cloneMap, inBounds, isWalkable, tileAt, TILE } from './map.js';
 
@@ -21,6 +23,12 @@ export const RULES = {
   moundHp: 2,          // 土堆被子弹摧毁所需命中数（炸弹一击摧毁）
   starRespawn: 15,     // 星星被吃后重生间隔
   maxFieldStars: 1,    // 场上同时最多星星数
+  zone: {              // 缩圈（每局必有）：根治超时平局的核心机制
+    start: 240,        // 首次收圈 tick
+    every: 30,         // 之后每多少 tick 再收一圈（收到中心 1 格封顶）
+    dmg: 5,            // 毒圈基础伤害/tick（无视护盾）
+    dmgStep: 1,        // 每多收一圈，毒圈伤害递增量
+  },
   skills: {
     shield:   { cd: 60 },                    // 挡下一次子弹/炸弹伤害，消耗即失效
     freeze:   { cd: 90, dur: 8 },            // 冻结：完全不能动/转/开火
@@ -35,6 +43,23 @@ export const RULES = {
 export const SKILLS = Object.keys(RULES.skills);
 
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+// ===== 缩圈（安全区） =====
+// ring r 的安全区矩形：[1+r, w-2-r] x [1+r, h-2-r]；收到中心 1 格封顶
+function zoneRect(state) {
+  const m = state.map;
+  const r = state.zoneRing;
+  return { x0: 1 + r, y0: 1 + r, x1: m.width - 2 - r, y1: m.height - 2 - r };
+}
+
+function maxZoneRing(m) {
+  return Math.max(0, Math.min(Math.floor((m.width - 3) / 2), Math.floor((m.height - 3) / 2)));
+}
+
+function inZone(state, x, y) {
+  const z = zoneRect(state);
+  return x >= z.x0 && x <= z.x1 && y >= z.y0 && y <= z.y1;
+}
 
 function manhattan(a, b) {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
@@ -145,6 +170,15 @@ function makeApi(state, i) {
     },
     skill: () => T.skill,
     tick: () => state.t,
+    // 缩圈查询：当前安全区矩形 + 已收圈数 + 下次收圈 tick（收满为 null）
+    zone: () => {
+      const z = zoneRect(state);
+      const nxt = state.zoneRing < maxZoneRing(state.map)
+        ? state.R.zone.start + state.zoneRing * state.R.zone.every
+        : null;
+      return { ring: state.zoneRing, x0: z.x0, y0: z.y0, x1: z.x1, y1: z.y1, next: nxt };
+    },
+    inZone: (p) => (p ? inZone(state, p.x | 0, p.y | 0) : inZone(state, T.x, T.y)),
     rules: () => JSON.parse(JSON.stringify(R)),
     mapSize: () => ({ width: state.map.width, height: state.map.height }),
     inGrass: () => tileAt(state.map, T.x, T.y) === TILE.GRASS,
@@ -186,9 +220,10 @@ function makeApi(state, i) {
     },
     safestCorner: () => {
       const m = state.map;
+      const z = zoneRect(state); // 只在安全区四角里挑，避免把人送进毒圈
       const corners = [
-        { x: 1, y: 1 }, { x: m.width - 2, y: 1 },
-        { x: 1, y: m.height - 2 }, { x: m.width - 2, y: m.height - 2 },
+        { x: z.x0, y: z.y0 }, { x: z.x1, y: z.y0 },
+        { x: z.x0, y: z.y1 }, { x: z.x1, y: z.y1 },
       ].filter((c) => isWalkable(m, c.x, c.y) && !(c.x === E.x && c.y === E.y));
       let best = null;
       let bd = -1;
@@ -257,6 +292,7 @@ function damageByBullet(state, owner, K, ev) {
     return;
   }
   K.hp -= R.damage;
+  state.tanks[owner].dmgDealt += R.damage;
   ev({ t: state.t, type: 'hit', who: owner, target: K.i, dmg: R.damage, hp: K.hp, x: K.x, y: K.y });
 }
 
@@ -345,6 +381,7 @@ function explodeBomb(state, bomb, ev) {
       continue;
     }
     K.hp -= R.bombDamage;
+    if (K.i !== bomb.owner) state.tanks[bomb.owner].dmgDealt += R.bombDamage; // 自伤不计输出
     hits.push({ who: K.i, dmg: R.bombDamage });
   }
   ev({ t, type: 'bomb_explode', who: bomb.owner, x: bomb.x, y: bomb.y, cells, hits });
@@ -358,6 +395,7 @@ function teleportDest(state, i, tx, ty) {
   const E = state.tanks[1 - i];
   const legal = (x, y) => inBounds(m, x, y)
     && tileAt(m, x, y) !== TILE.WALL && tileAt(m, x, y) !== TILE.DIRT && tileAt(m, x, y) !== TILE.WATER
+    && inZone(state, x, y) // 传送不能落在毒圈里
     && !state.stars.some((s) => s.x === x && s.y === y)
     && !(E.x === x && E.y === y);
   if (legal(tx, ty)) return { x: tx, y: ty };
@@ -425,6 +463,7 @@ function castSkill(state, i, arg, ev) {
       if (!visibleTo(state, i)) return;
       T.cd.skill = S.cd;
       E.poison = S.dur;
+      E.poisonFrom = i;
       ev({ t, type: 'skill', who: i, name });
       ev({ t, type: 'poison_hit', who: i, target: 1 - i, duration: S.dur });
       break;
@@ -584,6 +623,7 @@ function randomFreeCell(state) {
     const x = 1 + randInt(state.rng, m.width - 2);
     const y = 1 + randInt(state.rng, m.height - 2);
     if (!isWalkable(m, x, y)) continue;
+    if (!inZone(state, x, y)) continue; // 星星只在安全区内重生
     if (state.tanks.some((T) => T.x === x && T.y === y)) continue;
     if (state.stars.some((s) => s.x === x && s.y === y)) continue;
     return { x, y };
@@ -591,7 +631,22 @@ function randomFreeCell(state) {
   return null;
 }
 
-// 阵亡判定：单亡 = 对方胜；同拍双亡 = 平局
+// 终局判定链（超时与同拍双亡通用）：星数 → 剩余 HP → 累计输出伤害 → 距圈心近者 → 种子掷签。
+// 链条末端必出胜负——平局被根治，winner 永不为 null。
+function resolveEnd(state) {
+  const [a, b] = state.tanks;
+  if (a.stars !== b.stars) return { winner: a.stars > b.stars ? 0 : 1, reason: 'stars' };
+  if (a.hp !== b.hp) return { winner: a.hp > b.hp ? 0 : 1, reason: 'hp' };
+  if (a.dmgDealt !== b.dmgDealt) return { winner: a.dmgDealt > b.dmgDealt ? 0 : 1, reason: 'damage' };
+  const cx = (state.map.width - 1) / 2;
+  const cy = (state.map.height - 1) / 2;
+  const da = Math.abs(a.x - cx) + Math.abs(a.y - cy);
+  const db = Math.abs(b.x - cx) + Math.abs(b.y - cy);
+  if (da !== db) return { winner: da < db ? 0 : 1, reason: 'center' };
+  return { winner: state.rng() < 0.5 ? 0 : 1, reason: 'coin' }; // 完全镜像局：种子掷签，确定性
+}
+
+// 阵亡判定：单亡 = 对方胜；同拍双亡 = 走终局判定链（不再有平局）
 function checkDeath(state, ev) {
   for (const T of state.tanks) {
     if (T.hp <= 0 && !T.deadAnnounced) {
@@ -602,7 +657,7 @@ function checkDeath(state, ev) {
   const alive = state.tanks.filter((T) => T.hp > 0);
   if (alive.length === 2) return null;
   if (alive.length === 1) return { winner: alive[0].i, reason: 'kill' };
-  return { winner: null, reason: 'draw' };
+  return resolveEnd(state);
 }
 
 export function runMatch(opts = {}) {
@@ -611,6 +666,7 @@ export function runMatch(opts = {}) {
     ...RULES,
     ...(opts.rules || {}),
     skills: { ...RULES.skills, ...((opts.rules || {}).skills || {}) },
+    zone: { ...RULES.zone, ...((opts.rules || {}).zone || {}) },
   };
   if (opts.maxTicks != null) R.maxTicks = opts.maxTicks;
   // 技能 8 选 1：显式参数 > bot 自带偏好（bot.skill）> 默认 A=teleport、B=cloak
@@ -628,6 +684,7 @@ export function runMatch(opts = {}) {
     t: 0,
     stars: m.stars.slice(0, R.maxFieldStars).map((s) => ({ x: s.x, y: s.y })), // 单星：初始截断
     starRespawnAt: null,
+    zoneRing: 0,
     bullets: [],
     bombs: [],
     moundHp: new Map(),
@@ -639,6 +696,8 @@ export function runMatch(opts = {}) {
       y: s.y,
       hp: R.hp,
       stars: 0,
+      dmgDealt: 0,
+      poisonFrom: null,
       skill: i === 0 ? skillA : skillB,
       facing: i === 0 ? [1, 0] : [-1, 0], // 炮口四向朝向：P1 朝右、P2 朝左
       cd: { fire: 0, skill: 0, bomb: 0 },
@@ -677,6 +736,19 @@ export function runMatch(opts = {}) {
         if (p) { state.stars.push(p); ev({ t, type: 'star_spawn', x: p.x, y: p.y }); }
       }
       state.starRespawnAt = null;
+    }
+    // 2.5 缩圈：t≥zone.start 起每 zone.every 拍收一圈（至中心 1 格封顶）；圈外星星被吞没并择期在圈内重生
+    if (state.zoneRing < maxZoneRing(m) && t >= R.zone.start + state.zoneRing * R.zone.every) {
+      state.zoneRing++;
+      const z = zoneRect(state);
+      ev({ t, type: 'zone_shrink', ring: state.zoneRing, x0: z.x0, y0: z.y0, x1: z.x1, y1: z.y1 });
+      const kept = [];
+      for (const s of state.stars) {
+        if (inZone(state, s.x, s.y)) { kept.push(s); continue; }
+        ev({ t, type: 'star_gone', x: s.x, y: s.y });
+        if (state.starRespawnAt == null) state.starRespawnAt = t + R.starRespawn;
+      }
+      state.stars = kept;
     }
     // 3. 推进已有子弹（先于双方动作）
     advanceBullets(state, ev);
@@ -725,17 +797,25 @@ export function runMatch(opts = {}) {
       if (T.hp <= 0 || T.poison <= 0) continue;
       T.poison--;
       T.hp -= R.skills.poison.dmg;
+      if (T.poisonFrom != null) state.tanks[T.poisonFrom].dmgDealt += R.skills.poison.dmg;
       ev({ t, type: 'poison_tick', target: T.i, dmg: R.skills.poison.dmg, hp: T.hp });
+    }
+    // 毒圈伤害：安全区外每拍掉血，圈数越多伤害越高（无视护盾）
+    if (state.zoneRing > 0) {
+      const zdmg = R.zone.dmg + (state.zoneRing - 1) * R.zone.dmgStep;
+      if (zdmg > 0) {
+        for (const T of state.tanks) {
+          if (T.hp <= 0 || inZone(state, T.x, T.y)) continue;
+          T.hp -= zdmg;
+          ev({ t, type: 'zone_hit', target: T.i, dmg: zdmg, hp: T.hp });
+        }
+      }
     }
     ended = checkDeath(state, ev);
   }
 
   const [a, b] = state.tanks;
-  if (!ended) {
-    ended = a.stars === b.stars
-      ? { winner: null, reason: 'draw' }
-      : { winner: a.stars > b.stars ? 0 : 1, reason: 'stars' };
-  }
+  if (!ended) ended = resolveEnd(state); // 超时：终局判定链，必出胜负
   ev({
     t: state.t,
     type: 'end',

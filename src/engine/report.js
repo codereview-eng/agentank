@@ -63,6 +63,15 @@ export function renderText(result, names = ['甲', '乙']) {
       case 'star_spawn':
         lines.push(`${t} 新星星出现在(${e.x},${e.y})`);
         break;
+      case 'star_gone':
+        lines.push(`${t} (${e.x},${e.y}) 的星星被毒圈吞没`);
+        break;
+      case 'zone_shrink':
+        lines.push(`${t} 毒圈收缩（第${e.ring}圈），安全区 (${e.x0},${e.y0})~(${e.x1},${e.y1})`);
+        break;
+      case 'zone_hit':
+        lines.push(`${t} ${nm(e.target)} 在毒圈中 -${e.dmg}（剩${e.hp}）`);
+        break;
       case 'skill': {
         const n = SKILL_NAMES[e.name] ?? e.name;
         if (e.name === 'teleport') lines.push(`${t} ${nm(e.who)} 传送到(${e.x},${e.y})`);
@@ -85,13 +94,19 @@ export function renderText(result, names = ['甲', '乙']) {
       case 'death':
         lines.push(`${t} ${nm(e.who)} 被击毁`);
         break;
-      case 'end':
+      case 'end': {
+        // 平局已根治：终局判定链必出胜负
+        const REASON_CN = {
+          kill: '击杀', stars: '星数', hp: '血量判定',
+          damage: '输出判定', center: '圈心判定', coin: '种子掷签',
+        };
         lines.push(
           e.winner == null
-            ? `${t} 平局（星${e.stars[0]}:${e.stars[1]}）`
-            : `${t} ${nm(e.winner)} 获胜（${e.reason === 'kill' ? '击杀' : '星数'}，星${e.stars[0]}:${e.stars[1]}）`,
+            ? `${t} 平局（星${e.stars[0]}:${e.stars[1]}）` // 兼容旧战报回放
+            : `${t} ${nm(e.winner)} 获胜（${REASON_CN[e.reason] ?? e.reason}，星${e.stars[0]}:${e.stars[1]}）`,
         );
         break;
+      }
       default:
         break; // poison_tick 等逐拍事件不入文字战报，避免刷屏
     }
