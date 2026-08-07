@@ -32,6 +32,16 @@
           "detail": "成功走上土堆格 (2,1)"
         },
         {
+          "name": "冰面滑行（slide 事件、一步滑到离冰才停）",
+          "pass": true,
+          "detail": "踏冰续滑 2 格（move 1 格 + slide 2 格），离冰即停"
+        },
+        {
+          "name": "水域挡车不挡弹（隔河可射不可渡）",
+          "pass": true,
+          "detail": "子弹越水命中；坦克无法渡河"
+        },
+        {
           "name": "草丛远距隐身（距离>1 不可见）",
           "pass": true,
           "detail": "5 拍全部不可见"
@@ -197,7 +207,7 @@
         {
           "name": "100 局（随机 seeds、四组对阵轮换、默认地图）平均单局 <50ms",
           "pass": true,
-          "detail": "总耗时 524.05ms，平均 5.24ms/局，共 10063 ticks"
+          "detail": "总耗时 410.77ms，平均 4.11ms/局，共 10457 ticks"
         }
       ]
     },
@@ -214,11 +224,11 @@
       ]
     }
   ],
-  "generatedAt": "2026-08-06T21:00:56.532Z",
+  "generatedAt": "2026-08-07T13:52:42.372Z",
   "engineTestSummary": {
-    "pass": 58,
+    "pass": 65,
     "fail": 0,
-    "tests": 58,
+    "tests": 65,
     "ok": true
   }
 }

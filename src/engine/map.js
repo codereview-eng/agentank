@@ -2,10 +2,12 @@
 // wall  墙   —— 挡子弹 + 挡坦克
 // dirt  土堆 —— 挡子弹，坦克可通行
 // grass 草丛 —— 站入后对距离>1 的敌人隐身，不挡弹不挡身
+// ice   冰面 —— 可通行；踏上后沿原方向续滑（惯性），直到离开冰面/撞墙/撞敌
+// water 水域 —— 挡坦克不挡子弹（挡车不挡弹），传送也不能落水
 // empty 空地
 import { randInt } from './rng.js';
 
-export const TILE = { EMPTY: 'empty', WALL: 'wall', DIRT: 'dirt', GRASS: 'grass' };
+export const TILE = { EMPTY: 'empty', WALL: 'wall', DIRT: 'dirt', GRASS: 'grass', ICE: 'ice', WATER: 'water' };
 
 export function inBounds(map, x, y) {
   return x >= 0 && y >= 0 && x < map.width && y < map.height;
@@ -16,7 +18,9 @@ export function tileAt(map, x, y) {
 }
 
 export function isWalkable(map, x, y) {
-  return inBounds(map, x, y) && map.tiles[y][x] !== TILE.WALL;
+  if (!inBounds(map, x, y)) return false;
+  const t = map.tiles[y][x];
+  return t !== TILE.WALL && t !== TILE.WATER;
 }
 
 export function blocksBullet(tile) {
@@ -34,7 +38,7 @@ export function cloneMap(m) {
 }
 
 // ASCII 建图（测试/自定义用）：
-// '#'=墙 'D'=土堆 'g'=草丛 '*'=星星 'A'/'B'=出生点 'a'/'b'=草丛上的出生点 '.'或' '=空地
+// '#'=墙 'D'=土堆 'g'=草丛 '='=冰面 '~'=水域 '*'=星星 'A'/'B'=出生点 'a'/'b'=草丛上的出生点 '.'或' '=空地
 export function mapFromAscii(rows) {
   const height = rows.length;
   const width = rows[0].length;
@@ -49,6 +53,8 @@ export function mapFromAscii(rows) {
       if (c === '#') tile = TILE.WALL;
       else if (c === 'D') tile = TILE.DIRT;
       else if (c === 'g') tile = TILE.GRASS;
+      else if (c === '=') tile = TILE.ICE;
+      else if (c === '~') tile = TILE.WATER;
       else if (c === '*') stars.push({ x, y });
       else if (c === 'A') spawns[0] = { x, y };
       else if (c === 'B') spawns[1] = { x, y };

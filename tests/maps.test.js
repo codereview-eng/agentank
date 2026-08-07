@@ -20,10 +20,10 @@ function reachable(map, from) {
   return seen;
 }
 
-test('预置地图库：恰好 10 张，id/名称唯一', () => {
-  assert.equal(PRESET_MAPS.length, 10);
-  assert.equal(new Set(PRESET_MAPS.map((m) => m.id)).size, 10);
-  assert.equal(new Set(PRESET_MAPS.map((m) => m.name)).size, 10);
+test('预置地图库：恰好 13 张，id/名称唯一', () => {
+  assert.equal(PRESET_MAPS.length, 13);
+  assert.equal(new Set(PRESET_MAPS.map((m) => m.id)).size, 13);
+  assert.equal(new Set(PRESET_MAPS.map((m) => m.name)).size, 13);
   for (const m of PRESET_MAPS) {
     assert.ok(m.id && m.name && m.desc, `${m.id}: 需有 id/name/desc`);
   }

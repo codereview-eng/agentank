@@ -19,3 +19,8 @@
 
 ## 评审模式
 - 重活 spawn_agent 分身；judge 用 clean-context + RUBRIC + 严格 JSON，阈值 ≥8.5 直接过 / 7-8.4 可过带改进点 / <7 返工。
+
+## 地形 v10（冰面 + 水域）
+- 图例新增：'='=冰面（TILE.ICE）、'~'=水域（TILE.WATER）；预置图 13 张（新增 frozenLake 冰湖 / riverCrossing 冰河渡口 / tundra 冻原）。
+- 冰面：踏上后沿原方向续滑至离冰/撞墙/撞敌，滑行途中吃星；新事件 `slide {t,who,x,y}`（web timeline 与 move 同口径消费）。
+- 水域：isWalkable=false（挡车），子弹/炸弹冲击波照常飞越（不挡弹）；teleport 落点非法集新增水域。

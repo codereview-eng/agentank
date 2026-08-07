@@ -217,10 +217,12 @@ function randInt(rng, n) {
 // wall  墙   —— 挡子弹 + 挡坦克
 // dirt  土堆 —— 挡子弹，坦克可通行
 // grass 草丛 —— 站入后对距离>1 的敌人隐身，不挡弹不挡身
+// ice   冰面 —— 可通行；踏上后沿原方向续滑（惯性），直到离开冰面/撞墙/撞敌
+// water 水域 —— 挡坦克不挡子弹（挡车不挡弹），传送也不能落水
 // empty 空地
 
 
-const TILE = { EMPTY: 'empty', WALL: 'wall', DIRT: 'dirt', GRASS: 'grass' };
+const TILE = { EMPTY: 'empty', WALL: 'wall', DIRT: 'dirt', GRASS: 'grass', ICE: 'ice', WATER: 'water' };
 
 function inBounds(map, x, y) {
   return x >= 0 && y >= 0 && x < map.width && y < map.height;
@@ -231,7 +233,9 @@ function tileAt(map, x, y) {
 }
 
 function isWalkable(map, x, y) {
-  return inBounds(map, x, y) && map.tiles[y][x] !== TILE.WALL;
+  if (!inBounds(map, x, y)) return false;
+  const t = map.tiles[y][x];
+  return t !== TILE.WALL && t !== TILE.WATER;
 }
 
 function blocksBullet(tile) {
@@ -249,7 +253,7 @@ function cloneMap(m) {
 }
 
 // ASCII 建图（测试/自定义用）：
-// '#'=墙 'D'=土堆 'g'=草丛 '*'=星星 'A'/'B'=出生点 'a'/'b'=草丛上的出生点 '.'或' '=空地
+// '#'=墙 'D'=土堆 'g'=草丛 '='=冰面 '~'=水域 '*'=星星 'A'/'B'=出生点 'a'/'b'=草丛上的出生点 '.'或' '=空地
 function mapFromAscii(rows) {
   const height = rows.length;
   const width = rows[0].length;
@@ -264,6 +268,8 @@ function mapFromAscii(rows) {
       if (c === '#') tile = TILE.WALL;
       else if (c === 'D') tile = TILE.DIRT;
       else if (c === 'g') tile = TILE.GRASS;
+      else if (c === '=') tile = TILE.ICE;
+      else if (c === '~') tile = TILE.WATER;
       else if (c === '*') stars.push({ x, y });
       else if (c === 'A') spawns[0] = { x, y };
       else if (c === 'B') spawns[1] = { x, y };
@@ -365,7 +371,7 @@ function generateMap(rng, { width = 17, height = 17, starCount = 6 } = {}) {
 // 预置地图库：10 张手工设计图，全部 17x17。
 // 只写上半（y0..y8 共 9 行，含中线），下半由 180° 旋转自动补全（A↔B、a↔b 互换），
 // 天然保证点对称——双方地形公平。图例同 mapFromAscii：
-// '#'=墙 'D'=土堆 'g'=草丛 '*'=星星 'A'/'B'=出生点 '.'=空地
+// '#'=墙 'D'=土堆 'g'=草丛 '='=冰面（滑行惯性） '~'=水域（挡车不挡弹） '*'=星星 'A'/'B'=出生点 '.'=空地
 
 
 const MIRROR = { A: 'B', B: 'A', a: 'b', b: 'a' };
@@ -541,6 +547,54 @@ const PRESET_MAPS = [
       '#.......#..g....#',
       '#g......#......g#',
       '#####...#...#####',
+    ],
+  },
+  {
+    id: 'frozenLake',
+    name: '冰湖',
+    desc: '中央大冰湖，走一步滑到底',
+    top: [
+      '#################',
+      '#A.....g........#',
+      '#..D.........D..#',
+      '#....=======....#',
+      '#...=========...#',
+      '#.*.=========.*.#',
+      '#g..=========..g#',
+      '#....=======....#',
+      '#.......*.......#',
+    ],
+  },
+  {
+    id: 'riverCrossing',
+    name: '冰河渡口',
+    desc: '大河拦路，冰桥是唯一渡口',
+    top: [
+      '#################',
+      '#A.....g........#',
+      '#...D.......D...#',
+      '#..*.....g....*.#',
+      '#......D........#',
+      '#g...........g..#',
+      '#......===......#',
+      '#~~~~~.===.~~~~~#',
+      '#~~~~~.===.~~~~~#',
+    ],
+  },
+  {
+    id: 'tundra',
+    name: '冻原',
+    desc: '冰带与水塘混杂，走位与弹道分离',
+    top: [
+      '#################',
+      '#A....=====.....#',
+      '#..~~..........g#',
+      '#..~~...D...==..#',
+      '#.......*...==..#',
+      '#...g...........#',
+      '#.==....~~~..*..#',
+      '#.==....~~~.....#',
+      '#....*.....*....#',
     ],
   },
 ];
@@ -904,14 +958,14 @@ function explodeBomb(state, bomb, ev) {
   ev({ t, type: 'bomb_explode', who: bomb.owner, x: bomb.x, y: bomb.y, cells, hits });
 }
 
-// 传送落点合法性：非墙/土堆/星星格/敌人所在格；非法则重定向到（曼哈顿）最近合法格，确定性扫描
+// 传送落点合法性：非墙/土堆/水域/星星格/敌人所在格；非法则重定向到（曼哈顿）最近合法格，确定性扫描
 function teleportDest(state, i, tx, ty) {
   const m = state.map;
   tx = Math.max(0, Math.min(m.width - 1, tx));
   ty = Math.max(0, Math.min(m.height - 1, ty));
   const E = state.tanks[1 - i];
   const legal = (x, y) => inBounds(m, x, y)
-    && tileAt(m, x, y) !== TILE.WALL && tileAt(m, x, y) !== TILE.DIRT
+    && tileAt(m, x, y) !== TILE.WALL && tileAt(m, x, y) !== TILE.DIRT && tileAt(m, x, y) !== TILE.WATER
     && !state.stars.some((s) => s.x === x && s.y === y)
     && !(E.x === x && E.y === y);
   if (legal(tx, ty)) return { x: tx, y: ty };
@@ -1006,6 +1060,22 @@ function castSkill(state, i, arg, ev) {
   }
 }
 
+// 冰面惯性：踏上冰面后沿原方向续滑，直到离开冰面/撞墙/撞水/撞敌才停（滑行途中照常吃星）
+function slideOnIce(state, i, dir, ev) {
+  const T = state.tanks[i];
+  const E = state.tanks[1 - i];
+  let guard = state.map.width + state.map.height;
+  while (guard-- > 0 && T.hp > 0 && tileAt(state.map, T.x, T.y) === TILE.ICE) {
+    const nx = T.x + dir[0];
+    const ny = T.y + dir[1];
+    if (!isWalkable(state.map, nx, ny) || (nx === E.x && ny === E.y)) break;
+    T.x = nx;
+    T.y = ny;
+    ev({ t: state.t, type: 'slide', who: i, x: nx, y: ny });
+    pickupStar(state, i, ev);
+  }
+}
+
 // 单步移动（含眩晕反转与吃星）；返回是否真的移动了
 function moveStep(state, i, tx, ty, ev) {
   const T = state.tanks[i];
@@ -1021,6 +1091,7 @@ function moveStep(state, i, tx, ty, ev) {
   T.y = ny;
   ev({ t: state.t, type: 'move', who: i, x: T.x, y: T.y });
   pickupStar(state, i, ev);
+  slideOnIce(state, i, dir, ev);
   return true;
 }
 
@@ -1065,6 +1136,7 @@ function applyAction(state, i, a, ev) {
         T.y = ny;
         ev({ t, type: 'move', who: i, x: T.x, y: T.y });
         pickupStar(state, i, ev);
+        slideOnIce(state, i, dir, ev);
       }
       break;
     }
@@ -1347,6 +1419,9 @@ function renderText(result, names = ['甲', '乙']) {
       }
       case 'shield_block':
         lines.push(`${t} ${nm(e.who)} 的护盾挡下了${e.source === 'bomb' ? '炸弹' : '子弹'}`);
+        break;
+      case 'slide':
+        lines.push(`${t} ${nm(e.who)} 在冰面滑到(${e.x},${e.y})`);
         break;
       case 'star':
         lines.push(`${t} ${nm(e.who)} 吃星（${e.total}）`);
@@ -1730,7 +1805,8 @@ function buildTimeline(map, result) {
     }
     for (const e of byTick[t]) {
       switch (e.type) {
-        case 'move': {
+        case 'move':
+        case 'slide': { // 冰面滑行与移动同口径更新位置/朝向
           const dx = e.x - pos[e.who].x;
           const dy = e.y - pos[e.who].y;
           if (dx || dy) facing[e.who] = Math.atan2(dy, dx);
@@ -1867,6 +1943,7 @@ function buildLog(result, names, seedStr) {
         html = `${nm(e.who)} <span class="st">吃星 ★ ${held[0]}:${held[1]}</span>`;
         break;
       case 'star_spawn': html = `<span class="st">新星星</span>出现在 (${e.x},${e.y})`; break;
+      case 'slide': html = `${nm(e.who)} 在<span class="sk">冰面</span>滑到 (${e.x},${e.y})`; break;
       case 'skill': html = `${nm(e.who)} 施放<span class="sk">${SKILL_CN[e.name] ?? e.name}</span>`; break;
       case 'stun_hit': html = `${nm(e.target)} 被<span class="sk">眩晕</span> ${e.duration} 拍`; break;
       case 'death': html = `${nm(e.who)} <span class="dmg">被击毁</span>`; break;
@@ -2073,6 +2150,56 @@ function drawGrassTile(x, y) {
   }
 }
 
+function drawIceTile(x, y) {
+  // 冰面：淡蓝冰砖 + 斜向高光 + 随机细裂纹
+  const px = x * TSZ;
+  const py = y * TSZ;
+  const v = tileHash(x, y, 21);
+  ctx.fillStyle = '#BFE2EE';
+  ctx.fillRect(px, py, TSZ, TSZ);
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.beginPath();
+  ctx.moveTo(px + TSZ * 0.12, py + TSZ * (0.72 + v * 0.12));
+  ctx.lineTo(px + TSZ * (0.38 + v * 0.2), py + TSZ * 0.1);
+  ctx.lineTo(px + TSZ * (0.56 + v * 0.2), py + TSZ * 0.1);
+  ctx.lineTo(px + TSZ * 0.3, py + TSZ * (0.72 + v * 0.12));
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(122,170,200,0.65)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(px + 0.5, py + 0.5, TSZ - 1, TSZ - 1);
+  if (v > 0.55) { // 细裂纹
+    ctx.strokeStyle = 'rgba(90,140,175,0.6)';
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(px + TSZ * 0.2, py + TSZ * 0.55);
+    ctx.lineTo(px + TSZ * 0.45, py + TSZ * 0.62);
+    ctx.lineTo(px + TSZ * 0.62, py + TSZ * 0.4);
+    ctx.stroke();
+  }
+}
+
+function drawWaterTile(x, y) {
+  // 水域：深蓝水面 + 底部暗层 + 错相波纹
+  const px = x * TSZ;
+  const py = y * TSZ;
+  const v = tileHash(x, y, 33);
+  ctx.fillStyle = '#3F7CB8';
+  ctx.fillRect(px, py, TSZ, TSZ);
+  ctx.fillStyle = 'rgba(28,74,120,0.35)';
+  ctx.fillRect(px, py + TSZ * 0.55, TSZ, TSZ * 0.45);
+  ctx.strokeStyle = 'rgba(220,240,255,0.7)';
+  ctx.lineWidth = 1.4;
+  for (const k of [0, 1]) {
+    const wy = py + TSZ * (0.28 + k * 0.38 + v * 0.12);
+    ctx.beginPath();
+    ctx.moveTo(px + TSZ * 0.12, wy);
+    ctx.quadraticCurveTo(px + TSZ * 0.3, wy - TSZ * 0.09, px + TSZ * 0.48, wy);
+    ctx.quadraticCurveTo(px + TSZ * 0.66, wy + TSZ * 0.09, px + TSZ * 0.86, wy);
+    ctx.stroke();
+  }
+}
+
 function drawArena(map, f, names, shots, sparks, curT) {
   const W = map.width;
   const H = map.height;
@@ -2104,6 +2231,8 @@ function drawArena(map, f, names, shots, sparks, curT) {
     for (let x = 0; x < W; x++) {
       const tile = map.tiles[y][x];
       if (tile === TILE.GRASS) drawGrassTile(x, y);
+      else if (tile === TILE.ICE) drawIceTile(x, y);
+      else if (tile === TILE.WATER) drawWaterTile(x, y);
       else if (tile === TILE.WALL) drawWallTile(x, y);
       else if (tile === TILE.DIRT) {
         if (f.gone && f.gone.has(`${x},${y}`)) continue; // 已被摧毁：露出地面

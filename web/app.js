@@ -216,7 +216,8 @@ function buildTimeline(map, result) {
     }
     for (const e of byTick[t]) {
       switch (e.type) {
-        case 'move': {
+        case 'move':
+        case 'slide': { // 冰面滑行与移动同口径更新位置/朝向
           const dx = e.x - pos[e.who].x;
           const dy = e.y - pos[e.who].y;
           if (dx || dy) facing[e.who] = Math.atan2(dy, dx);
@@ -353,6 +354,7 @@ function buildLog(result, names, seedStr) {
         html = `${nm(e.who)} <span class="st">吃星 ★ ${held[0]}:${held[1]}</span>`;
         break;
       case 'star_spawn': html = `<span class="st">新星星</span>出现在 (${e.x},${e.y})`; break;
+      case 'slide': html = `${nm(e.who)} 在<span class="sk">冰面</span>滑到 (${e.x},${e.y})`; break;
       case 'skill': html = `${nm(e.who)} 施放<span class="sk">${SKILL_CN[e.name] ?? e.name}</span>`; break;
       case 'stun_hit': html = `${nm(e.target)} 被<span class="sk">眩晕</span> ${e.duration} 拍`; break;
       case 'death': html = `${nm(e.who)} <span class="dmg">被击毁</span>`; break;
@@ -559,6 +561,56 @@ function drawGrassTile(x, y) {
   }
 }
 
+function drawIceTile(x, y) {
+  // 冰面：淡蓝冰砖 + 斜向高光 + 随机细裂纹
+  const px = x * TSZ;
+  const py = y * TSZ;
+  const v = tileHash(x, y, 21);
+  ctx.fillStyle = '#BFE2EE';
+  ctx.fillRect(px, py, TSZ, TSZ);
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.beginPath();
+  ctx.moveTo(px + TSZ * 0.12, py + TSZ * (0.72 + v * 0.12));
+  ctx.lineTo(px + TSZ * (0.38 + v * 0.2), py + TSZ * 0.1);
+  ctx.lineTo(px + TSZ * (0.56 + v * 0.2), py + TSZ * 0.1);
+  ctx.lineTo(px + TSZ * 0.3, py + TSZ * (0.72 + v * 0.12));
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(122,170,200,0.65)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(px + 0.5, py + 0.5, TSZ - 1, TSZ - 1);
+  if (v > 0.55) { // 细裂纹
+    ctx.strokeStyle = 'rgba(90,140,175,0.6)';
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(px + TSZ * 0.2, py + TSZ * 0.55);
+    ctx.lineTo(px + TSZ * 0.45, py + TSZ * 0.62);
+    ctx.lineTo(px + TSZ * 0.62, py + TSZ * 0.4);
+    ctx.stroke();
+  }
+}
+
+function drawWaterTile(x, y) {
+  // 水域：深蓝水面 + 底部暗层 + 错相波纹
+  const px = x * TSZ;
+  const py = y * TSZ;
+  const v = tileHash(x, y, 33);
+  ctx.fillStyle = '#3F7CB8';
+  ctx.fillRect(px, py, TSZ, TSZ);
+  ctx.fillStyle = 'rgba(28,74,120,0.35)';
+  ctx.fillRect(px, py + TSZ * 0.55, TSZ, TSZ * 0.45);
+  ctx.strokeStyle = 'rgba(220,240,255,0.7)';
+  ctx.lineWidth = 1.4;
+  for (const k of [0, 1]) {
+    const wy = py + TSZ * (0.28 + k * 0.38 + v * 0.12);
+    ctx.beginPath();
+    ctx.moveTo(px + TSZ * 0.12, wy);
+    ctx.quadraticCurveTo(px + TSZ * 0.3, wy - TSZ * 0.09, px + TSZ * 0.48, wy);
+    ctx.quadraticCurveTo(px + TSZ * 0.66, wy + TSZ * 0.09, px + TSZ * 0.86, wy);
+    ctx.stroke();
+  }
+}
+
 function drawArena(map, f, names, shots, sparks, curT) {
   const W = map.width;
   const H = map.height;
@@ -590,6 +642,8 @@ function drawArena(map, f, names, shots, sparks, curT) {
     for (let x = 0; x < W; x++) {
       const tile = map.tiles[y][x];
       if (tile === TILE.GRASS) drawGrassTile(x, y);
+      else if (tile === TILE.ICE) drawIceTile(x, y);
+      else if (tile === TILE.WATER) drawWaterTile(x, y);
       else if (tile === TILE.WALL) drawWallTile(x, y);
       else if (tile === TILE.DIRT) {
         if (f.gone && f.gone.has(`${x},${y}`)) continue; // 已被摧毁：露出地面

@@ -350,14 +350,14 @@ function explodeBomb(state, bomb, ev) {
   ev({ t, type: 'bomb_explode', who: bomb.owner, x: bomb.x, y: bomb.y, cells, hits });
 }
 
-// 传送落点合法性：非墙/土堆/星星格/敌人所在格；非法则重定向到（曼哈顿）最近合法格，确定性扫描
+// 传送落点合法性：非墙/土堆/水域/星星格/敌人所在格；非法则重定向到（曼哈顿）最近合法格，确定性扫描
 function teleportDest(state, i, tx, ty) {
   const m = state.map;
   tx = Math.max(0, Math.min(m.width - 1, tx));
   ty = Math.max(0, Math.min(m.height - 1, ty));
   const E = state.tanks[1 - i];
   const legal = (x, y) => inBounds(m, x, y)
-    && tileAt(m, x, y) !== TILE.WALL && tileAt(m, x, y) !== TILE.DIRT
+    && tileAt(m, x, y) !== TILE.WALL && tileAt(m, x, y) !== TILE.DIRT && tileAt(m, x, y) !== TILE.WATER
     && !state.stars.some((s) => s.x === x && s.y === y)
     && !(E.x === x && E.y === y);
   if (legal(tx, ty)) return { x: tx, y: ty };
@@ -452,6 +452,22 @@ function castSkill(state, i, arg, ev) {
   }
 }
 
+// 冰面惯性：踏上冰面后沿原方向续滑，直到离开冰面/撞墙/撞水/撞敌才停（滑行途中照常吃星）
+function slideOnIce(state, i, dir, ev) {
+  const T = state.tanks[i];
+  const E = state.tanks[1 - i];
+  let guard = state.map.width + state.map.height;
+  while (guard-- > 0 && T.hp > 0 && tileAt(state.map, T.x, T.y) === TILE.ICE) {
+    const nx = T.x + dir[0];
+    const ny = T.y + dir[1];
+    if (!isWalkable(state.map, nx, ny) || (nx === E.x && ny === E.y)) break;
+    T.x = nx;
+    T.y = ny;
+    ev({ t: state.t, type: 'slide', who: i, x: nx, y: ny });
+    pickupStar(state, i, ev);
+  }
+}
+
 // 单步移动（含眩晕反转与吃星）；返回是否真的移动了
 function moveStep(state, i, tx, ty, ev) {
   const T = state.tanks[i];
@@ -467,6 +483,7 @@ function moveStep(state, i, tx, ty, ev) {
   T.y = ny;
   ev({ t: state.t, type: 'move', who: i, x: T.x, y: T.y });
   pickupStar(state, i, ev);
+  slideOnIce(state, i, dir, ev);
   return true;
 }
 
@@ -511,6 +528,7 @@ function applyAction(state, i, a, ev) {
         T.y = ny;
         ev({ t, type: 'move', who: i, x: T.x, y: T.y });
         pickupStar(state, i, ev);
+        slideOnIce(state, i, dir, ev);
       }
       break;
     }

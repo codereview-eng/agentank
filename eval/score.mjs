@@ -80,6 +80,29 @@ function sectionMechanics() {
     return '成功走上土堆格 (2,1)';
   });
 
+  add('冰面滑行（slide 事件、一步滑到离冰才停）', () => {
+    const map = mapFromAscii(['########', '#A==..B#', '#......#', '########']);
+    let moved = false;
+    const A = (api) => { if (!moved) { moved = true; return api.moveTo({ x: 2, y: 1 }); } return null; };
+    const r = runMatch({ seed: 1, map, botA: A, botB: idle, maxTicks: 2 });
+    const slides = r.events.filter((e) => e.type === 'slide' && e.who === 0);
+    assert(slides.length === 2, `slide 事件应 2 条，实际 ${slides.length}`);
+    assert(slides.at(-1).x === 4, `滑行终点应 x=4，实际 ${slides.at(-1)?.x}`);
+    return '踏冰续滑 2 格（move 1 格 + slide 2 格），离冰即停';
+  });
+
+  add('水域挡车不挡弹（隔河可射不可渡）', () => {
+    const mk = () => mapFromAscii(['#######', '#A.~.B#', '#..~..#', '#######']);
+    const A = (api) => (api.canFire() ? api.fireAt(api.enemy()) : null);
+    const r = runMatch({ seed: 1, map: mk(), botA: A, botB: idle, maxTicks: 6 });
+    assert(r.events.some((e) => e.type === 'hit' && e.who === 0), '子弹应飞越水域命中');
+    const xs = [];
+    const M = (api) => { xs.push(api.me().x); return api.moveTo({ x: 5, y: 1 }); };
+    runMatch({ seed: 1, map: mk(), botA: M, botB: idle, maxTicks: 10 });
+    assert(xs.every((x) => x <= 2), '水域应完全隔断坦克通行');
+    return '子弹越水命中；坦克无法渡河';
+  });
+
   add('草丛远距隐身（距离>1 不可见）', () => {
     const map = mapFromAscii(['##########', '#A......b#', '##########']);
     const vis = [];

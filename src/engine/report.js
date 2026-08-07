@@ -54,6 +54,9 @@ export function renderText(result, names = ['甲', '乙']) {
       case 'shield_block':
         lines.push(`${t} ${nm(e.who)} 的护盾挡下了${e.source === 'bomb' ? '炸弹' : '子弹'}`);
         break;
+      case 'slide':
+        lines.push(`${t} ${nm(e.who)} 在冰面滑到(${e.x},${e.y})`);
+        break;
       case 'star':
         lines.push(`${t} ${nm(e.who)} 吃星（${e.total}）`);
         break;
