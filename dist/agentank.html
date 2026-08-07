@@ -127,13 +127,13 @@ footer .mono{color:var(--muted)}
     <div class="ctrl">
       <div class="row"><label>对手</label>
         <select id="opp">
-          <option value="stealth">隐身偷袭流 (内置)</option>
-          <option value="starGrabber">抢星流 (内置)</option>
-          <option value="camper">蹲草流 (内置)</option>
-          <option value="brawler">贴脸流 (内置)</option>
+          <option value="stealth">隐身偷袭流 (内置 · 技能：隐身)</option>
+          <option value="starGrabber">抢星流 (内置 · 技能：疾驰)</option>
+          <option value="camper">蹲草流 (内置 · 技能：冰冻)</option>
+          <option value="brawler">贴脸流 (内置 · 技能：超载)</option>
         </select>
       </div>
-      <div class="row"><label>技能</label>
+      <div class="row"><label>我的技能</label>
         <select id="skillSel">
           <option value="teleport" selected>传送（8 选 1）</option>
           <option value="shield">护盾</option>
@@ -2452,7 +2452,7 @@ function renderLadder(parts) {
   for (const r of ROSTER) {
     const p = parts.find((x) => x.key === r.key);
     const opt = oppSelect.querySelector(`option[value="${r.key}"]`);
-    if (p && opt) opt.textContent = `${r.style}流 (内置 · ELO ${Math.round(p.elo)})`;
+    if (p && opt) opt.textContent = `${r.style}流 (内置 · 技能：${SKILL_CN[r.fn.skill] ?? r.fn.skill} · ELO ${Math.round(p.elo)})`;
   }
   const mine = parts.find((p) => p.me);
   rankChip.textContent = mine

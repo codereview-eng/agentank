@@ -937,7 +937,7 @@ function renderLadder(parts) {
   for (const r of ROSTER) {
     const p = parts.find((x) => x.key === r.key);
     const opt = oppSelect.querySelector(`option[value="${r.key}"]`);
-    if (p && opt) opt.textContent = `${r.style}流 (内置 · ELO ${Math.round(p.elo)})`;
+    if (p && opt) opt.textContent = `${r.style}流 (内置 · 技能：${SKILL_CN[r.fn.skill] ?? r.fn.skill} · ELO ${Math.round(p.elo)})`;
   }
   const mine = parts.find((p) => p.me);
   rankChip.textContent = mine
