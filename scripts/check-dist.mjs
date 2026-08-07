@@ -4,6 +4,7 @@
 // ② 抽出引擎段真跑一局 + 确定性双跑对比
 // ③ 用产物内联引擎编译默认脚本，跑「默认脚本 vs 隐身偷袭流」一局（浏览器同口径）
 // ④ 自包含体检：无外链 src/href、无 CDN、无 import/export 残留
+// ⑤ 内置 bot 全员体检：产物引擎里逐个实跑，必须零异常且有实际动作（防内联漏文件导致对手静默瘫痪）
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -56,4 +57,21 @@ if (/\s(src|href)\s*=\s*["'](https?:|\/\/)/i.test(html)) fail('含外部 URL 引
 if (/<script[^>]*\ssrc=/i.test(html)) fail('存在外链 script');
 if (/<link\s/i.test(html)) fail('存在 <link> 外部资源');
 console.log('④ 自包含体检 PASS：无外链 script/link/href/src，零外部请求');
+
+// ⑤ 内置 bot 全员体检：引擎对脚本异常容错（本拍待机），所以必须用探针显式抓异常 + 断言有动作
+{
+  const idle = () => null;
+  const summary = [];
+  for (const [key, fn] of Object.entries(eng.bots)) {
+    let threw = null;
+    const probe = (api) => { try { return fn(api); } catch (e) { threw = threw || e; return null; } };
+    const map5 = eng.generateMap(eng.mulberry32(7));
+    const r = eng.runMatch({ seed: 7, map: map5, botA: idle, botB: probe, maxTicks: 80 });
+    if (threw) fail(`⑤ 内置 bot「${key}」在产物引擎中抛异常：${threw.message}`);
+    const acts = r.events.filter((e) => e.who === 1 && (e.type === 'move' || e.type === 'turn' || e.type === 'fire' || e.type === 'skill')).length;
+    if (acts === 0) fail(`⑤ 内置 bot「${key}」在产物引擎中 80 拍零动作（疑似静默瘫痪）`);
+    summary.push(`${key}:${acts}`);
+  }
+  console.log(`⑤ 内置 bot 全员体检 PASS：零异常、80 拍动作数 ${summary.join(' ')}`);
+}
 console.log('check-dist: ALL PASS');

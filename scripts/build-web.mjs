@@ -15,6 +15,7 @@ const ORDER = [
   'src/engine/maps.js',
   'src/engine/engine.js',
   'src/engine/report.js',
+  'bots/util.js',
   'bots/camper.js',
   'bots/starGrabber.js',
   'bots/brawler.js',
@@ -22,7 +23,21 @@ const ORDER = [
   'bots/baseline.js',
 ];
 
+// 内联覆盖检查：被剥掉的相对 import 必须指向 ORDER 内文件（或被跳过的 index.js 桶），
+// 否则内联后引用会变成运行期 ReferenceError（引擎对脚本容错 → 静默瘫痪），必须在构建期炸出来。
+function assertImportsCovered(src, file) {
+  const dir = dirname(join(ROOT, file));
+  for (const im of src.matchAll(/^import\s[^\n]*?from\s*['"]([^'"]+)['"]/gm)) {
+    const spec = im[1];
+    if (!spec.startsWith('.')) throw new Error(`${file}: 非相对依赖 ${spec}，单文件包无法内联`);
+    const abs = join(dir, spec).replace(`${ROOT}/`, '');
+    if (abs.endsWith('/index.js') || abs === 'index.js') continue; // 桶文件由 shim 覆盖
+    if (!ORDER.includes(abs)) throw new Error(`${file}: import 了 ${abs}，但它不在 build-web ORDER 内联清单里`);
+  }
+}
+
 function stripModule(src, file, { appMode = false } = {}) {
+  assertImportsCovered(src, file);
   let out = src.replace(/^import\s[^\n]*$/gm, '');
   if (appMode) {
     // app.js 的模板字符串里合法地含有 "export default ..."（默认脚本文本），
