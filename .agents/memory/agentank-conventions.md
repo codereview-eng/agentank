@@ -11,7 +11,7 @@
 - 确定性引擎（种子 RNG、禁 Math.random）；`node --test` 严格先红后绿、最终全绿；
 - 改动链：引擎/规则 → eval/score.mjs 重跑评分 → web 端适配 → `scripts/check-dist.mjs` 冒烟 → headless Chrome 实机截图判分过线 → 本地 git 提交 → 同 URL 发新版；
 - 脚本契约固定为 `decide(api)`（保留 fireAt 语法糖），**不改成**官方 onIdle/HTTP API；
-- 截图：headless Chrome 独立临时 `--user-data-dir` profile，pkill 只匹配自己的 profile 名，绝不动 chrome-cu-1/2/3 及其 Profile。
+- 浏览器（用户裁定 2026-08-07，作废旧口径）：tankgame 一切浏览器类工作（实机截图、网页验证、CU 调试）**专门使用 chrome-cu-3**（CDP 19303）——不再起临时 headless Chrome / 独立临时 `--user-data-dir` profile；借用共享实例只 detach 自己的 CDP/Playwright 连接，不杀进程、不 `browser.close()`、不 pkill，禁止 `bring_to_front` 抢前台。
 
 ## v5 事件 schema 关键改名（下游消费注意）
 - `bullet_end.cause` → `reason`，取值 `hit/wall/mound/out`（原 `dirt`→`mound`，`range` 移除）；
