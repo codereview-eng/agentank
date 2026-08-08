@@ -1,6 +1,6 @@
 // AgenTank 网页端 UI：本地跑引擎对战 + canvas 逐 tick 回放 + 实时战报 + 天梯。
 // 开发版经 <script type="module"> 加载；发布版由 scripts/build-web.mjs 去 import/export 内联进单文件。
-import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS, presetMap } from '../src/engine/index.js';
+import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS, presetMap, validateContent, makePack, serializePack, parsePack, promoteStage, resolvePackMap, compileBot, OFFICIAL_CONTENT } from '../src/engine/index.js';
 import { bots } from '../bots/index.js';
 import { LOCALES, LANGS, fmt, resolveLang } from './i18n.js';
 
@@ -14,6 +14,7 @@ document.title = L.ui.title;
 // 静态节点按 data-i18n="ui.key" 批量替换（切语言 = 存偏好 + 带参刷新，战报按新语言重建）
 for (const el of document.querySelectorAll('[data-i18n]')) el.textContent = T(el.dataset.i18n);
 for (const el of document.querySelectorAll('[data-i18n-title]')) el.title = T(el.dataset.i18nTitle);
+for (const el of document.querySelectorAll('[data-i18n-ph]')) el.placeholder = T(el.dataset.i18nPh);
 // 语言切换器：写偏好 → 以 ?lang= 刷新（种子/地图等参数保留，回放战报按新语言重建）
 {
   const langSel = document.getElementById('langSel');
@@ -89,6 +90,10 @@ const userMapKey = () => (mapSel ? mapSel.value : 'random');
 function makeMap(seed) {
   const key = userMapKey();
   if (key !== 'random') {
+    if (key.startsWith('pack:')) { // 工坊/官方地图：从活动内容包取（每次全新对象）
+      const pm = resolvePackMap(PACK, key.slice(5));
+      if (pm) return pm;
+    }
     const m = presetMap(key);
     if (m) return m;
   }
@@ -110,6 +115,167 @@ const LADDER_SEEDS = [11, 22, 33, 44, 55];
 for (const r of ROSTER) {
   const opt = oppSelect && oppSelect.querySelector(`option[value="${r.key}"]`);
   if (opt) opt.textContent = T('ladder.oppOptionBoot', { style: r.style, skill: SKILL_CN[r.fn.skill] ?? r.fn.skill });
+}
+
+// ---------- 创作工坊（UGC 三阶段：私有 → 分享 → 官方收录） ----------
+// 阶段1：内容存本机 localStorage，仅自己可见可测；
+// 阶段2：生成分享串/链接（内容包整包嵌进战报参数），任何人打开即确定性重现整场战斗；
+// 阶段3：官方收录进 OFFICIAL_CONTENT（引擎侧列表），与内置地图/技能/道具/流派同权使用。
+const WS_KEY = 'agentank-workshop';
+const b64e = (s) => btoa(unescape(encodeURIComponent(s)));
+const b64d = (s) => decodeURIComponent(escape(atob(s)));
+let wsEntries = (() => { try { return JSON.parse(localStorage.getItem(WS_KEY) || '[]'); } catch { return []; } })();
+const wsPersist = () => { try { localStorage.setItem(WS_KEY, JSON.stringify(wsEntries)); } catch { /* 忽略 */ } };
+// 活动内容包 = 官方收录 + 我的/导入（type:id 去重，官方优先不可被顶替；坏存量跳过不拖垮整包）
+function buildPack() {
+  const seen = new Set();
+  const entries = [];
+  for (const e of [...OFFICIAL_CONTENT, ...wsEntries]) {
+    const k = `${e.type}:${e.id}`;
+    if (seen.has(k) || !validateContent(e).ok) continue;
+    seen.add(k);
+    entries.push(e);
+  }
+  return makePack(entries);
+}
+let PACK = buildPack();
+const packName = (type, id) => PACK.entries.find((e) => e.type === type && e.id === id)?.name ?? null;
+const skillLabel = (id) => SKILL_CN[id] ?? packName('skill', id) ?? id;
+const itemLabel = (id) => ITEM_CN[id] ?? packName('item', id) ?? id;
+const stageTag = (e) => T(`ui.stage_${e.stage || 'private'}`);
+
+// 三来源下拉合并：内置 + 官方收录 + 我的/导入（带阶段徽标；重建时先清旧注入项、保住当前选择）
+function injectPackOptions() {
+  const refill = (sel, type, mk) => {
+    if (!sel) return;
+    const cur = sel.value;
+    for (const o of [...sel.options]) if (o.dataset.pack) o.remove();
+    for (const d of PACK.entries.filter((e) => e.type === type)) {
+      const o = document.createElement('option');
+      Object.assign(o, mk(d));
+      o.dataset.pack = '1';
+      sel.appendChild(o);
+    }
+    if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+  };
+  refill(mapSel, 'map', (d) => ({ value: `pack:${d.id}`, textContent: `${stageTag(d)} ${d.name}（${d.desc || d.id}）` }));
+  refill(skillSel, 'skill', (d) => ({ value: d.id, textContent: `${stageTag(d)} ${d.name}` }));
+  refill(oppSelect, 'bot', (d) => ({ value: `pack:${d.id}`, textContent: `${stageTag(d)} ${d.name}` }));
+}
+
+// 工坊 UI：模板/校验保存/列表/分享/导入/分享本局
+const WS_TPL = {
+  map: { type: 'map', id: 'mymap', name: LANG === 'zh' ? '我的地图' : 'My Map', desc: '', rows: ['#########', '#A..g...#', '#..DD...#', '#...*...#', '#..~~...#', '#...=...#', '#.......#', '#...g..B#', '#########'] },
+  skill: { type: 'skill', id: 'myskill', name: LANG === 'zh' ? '我的技能' : 'My Skill', cd: 60, effect: { kind: 'freeze', dur: 6 } },
+  item: { type: 'item', id: 'myitem', name: LANG === 'zh' ? '我的道具' : 'My Item', effect: { kind: 'heal', heal: 25 } },
+  bot: { type: 'bot', id: 'mybot', name: LANG === 'zh' ? '我的流派' : 'My Style', skill: 'shield', code: 'export default function decide(api) {\n  if (api.enemyVisible() && api.canFire()) return api.fireAt(api.enemy());\n  return api.patrol();\n}' },
+};
+let wsImportPack = null; // ?pack= 深链复用（在下方工坊模块内赋值）
+{
+  const wsEd = $id('wsEditor');
+  const wsMsg = $id('wsErr');
+  const wsListEl = $id('wsList');
+  const wsOut = $id('wsShareOut');
+  const showWs = (msg, bad) => { if (wsMsg) { wsMsg.textContent = msg; wsMsg.style.color = bad ? '#f85149' : '#7ee787'; } };
+  const emitShare = (url) => {
+    if (wsOut) wsOut.value = url;
+    try { navigator.clipboard?.writeText(url); } catch { /* 忽略 */ }
+    showWs(T('ui.wsShared'), false);
+  };
+  const refresh = () => { PACK = buildPack(); injectPackOptions(); renderWsList(); scheduleLadder(); };
+  function renderWsList() {
+    if (!wsListEl) return;
+    wsListEl.innerHTML = '';
+    const addHdr = (key) => {
+      const h = document.createElement('div');
+      h.style.cssText = 'font-size:11px;color:var(--dim);margin:6px 0 2px';
+      h.textContent = T(key);
+      wsListEl.appendChild(h);
+    };
+    const addRow = (e, mine) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:6px;align-items:center;font-size:11px;margin:2px 0;color:var(--muted)';
+      const label = document.createElement('span');
+      label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+      label.textContent = `${stageTag(e)} ${e.name} · ${e.type}/${e.id}`;
+      row.appendChild(label);
+      const mkBtn = (text, fn) => {
+        const b = document.createElement('button');
+        b.className = 'btn ghost';
+        b.style.cssText = 'padding:1px 8px;font-size:11px;min-width:0';
+        b.textContent = text;
+        b.addEventListener('click', fn);
+        row.appendChild(b);
+      };
+      if (mine) {
+        mkBtn(T('ui.wsShare'), () => { // 分享 = 阶段1→2（私有先晋升），生成 ?pack= 链接
+          const idx = wsEntries.indexOf(e);
+          if ((e.stage ?? 'private') === 'private') { wsEntries[idx] = promoteStage(e); wsPersist(); }
+          const s = serializePack(makePack([wsEntries[idx]]));
+          emitShare(`${location.origin}${location.pathname}?pack=${encodeURIComponent(s)}&lang=${LANG}`);
+          refresh();
+        });
+        mkBtn(T('ui.wsDelete'), () => { wsEntries.splice(wsEntries.indexOf(e), 1); wsPersist(); refresh(); });
+      }
+      wsListEl.appendChild(row);
+    };
+    addHdr('ui.wsMine');
+    if (!wsEntries.length) {
+      const p = document.createElement('div');
+      p.style.cssText = 'font-size:11px;color:var(--dim)';
+      p.textContent = T('ui.wsEmpty');
+      wsListEl.appendChild(p);
+    } else for (const e of wsEntries) addRow(e, true);
+    addHdr('ui.wsOfficial');
+    for (const e of OFFICIAL_CONTENT) addRow(e, false);
+  }
+  function importPackStr(str, opts = {}) {
+    const p = parsePack(String(str).trim()); // 校验失败会抛中文原因
+    for (const e of p.entries) {
+      const entry = { ...e, stage: 'shared' }; // 导入的内容一律记为阶段2（official 只能来自引擎收录列表）
+      const i = wsEntries.findIndex((x) => x.type === e.type && x.id === e.id);
+      if (i >= 0) wsEntries[i] = entry; else wsEntries.push(entry);
+    }
+    wsPersist();
+    refresh();
+    if (!opts.silent) showWs(`${T('ui.wsImported')} ×${p.entries.length}`, false);
+    return p.entries.length;
+  }
+  wsImportPack = importPackStr; // 供 ?pack= 深链复用
+  $id('wsNewBtn')?.addEventListener('click', () => {
+    if (wsEd) wsEd.value = JSON.stringify(WS_TPL[$id('wsTpl')?.value || 'map'], null, 2);
+    showWs('', false);
+  });
+  $id('wsSaveBtn')?.addEventListener('click', () => {
+    let def;
+    try { def = JSON.parse(wsEd.value); } catch (e) { showWs(`JSON: ${e.message}`, true); return; }
+    const r = validateContent(def);
+    if (!r.ok) { showWs(r.errors.join('；'), true); return; }
+    const entry = { ...def, stage: 'private' }; // 保存/改动一律回私有：改完需重新分享（阶段1）
+    const i = wsEntries.findIndex((e) => e.type === def.type && e.id === def.id);
+    if (i >= 0) wsEntries[i] = entry; else wsEntries.push(entry);
+    wsPersist();
+    showWs(T('ui.wsSaved'), false);
+    refresh();
+  });
+  $id('wsImportBtn')?.addEventListener('click', () => {
+    try { importPackStr($id('wsImport')?.value || ''); } catch (e) { showWs(String((e && e.message) || e), true); }
+  });
+  $id('wsShareBattleBtn')?.addEventListener('click', () => { // 阶段2：战报重现链接（种子+图+技能+对手+内容包+脚本 全嵌）
+    if (!match) { showWs(T('ui.wsNoBattle'), true); return; }
+    const u = new URL(location.origin + location.pathname);
+    u.searchParams.set('pack', serializePack(match.result.content ?? PACK));
+    u.searchParams.set('seed', match.seedStr);
+    u.searchParams.set('map', userMapKey());
+    u.searchParams.set('skill', userSkill());
+    u.searchParams.set('opp', oppSelect.value);
+    u.searchParams.set('script', b64e(editorEl.value));
+    u.searchParams.set('lang', LANG);
+    u.searchParams.set('autoplay', '1');
+    emitShare(u.toString());
+  });
+  injectPackOptions();
+  renderWsList();
 }
 
 // ---------- 工具 ----------
@@ -366,7 +532,7 @@ function buildLog(result, names, seedStr) {
       case 'start':
         html = T('log.start', { w: e.width, h: e.height });
         if (seedStr) html += T('log.startSeed', { seed: seedStr });
-        if (e.skills) html += T('log.startSkills', { n0: nm(0), n1: nm(1), s0: SKILL_CN[e.skills[0]] ?? e.skills[0], s1: SKILL_CN[e.skills[1]] ?? e.skills[1] });
+        if (e.skills) html += T('log.startSkills', { n0: nm(0), n1: nm(1), s0: skillLabel(e.skills[0]), s1: skillLabel(e.skills[1]) });
         break;
       case 'goal':
         html = T(e.tag === 'star' ? 'log.moveStar' : e.tag === 'enemy' ? 'log.moveEnemy' : 'log.moveTo', { who: nm(e.who), x: e.x, y: e.y });
@@ -400,18 +566,18 @@ function buildLog(result, names, seedStr) {
         break;
       case 'star_spawn': html = T('log.starSpawn', { x: e.x, y: e.y }); break;
       case 'star_gone': html = T('log.starGone', { x: e.x, y: e.y }); break;
-      case 'item_spawn': html = T('log.itemSpawn', { item: ITEM_CN[e.kind] ?? e.kind, x: e.x, y: e.y }); break;
+      case 'item_spawn': html = T('log.itemSpawn', { item: itemLabel(e.kind), x: e.x, y: e.y }); break;
       case 'item_pick':
         html = T(
           e.kind === 'medkit' ? 'log.itemPickMedkit' : e.kind === 'clock' ? 'log.itemPickClock' : 'log.itemPick',
-          { who: nm(e.who), item: ITEM_CN[e.kind] ?? e.kind, hp: e.hp },
+          { who: nm(e.who), item: itemLabel(e.kind), hp: e.hp },
         );
         break;
-      case 'item_gone': html = T('log.itemGone', { item: ITEM_CN[e.kind] ?? e.kind, x: e.x, y: e.y }); break;
+      case 'item_gone': html = T('log.itemGone', { item: itemLabel(e.kind), x: e.x, y: e.y }); break;
       case 'zone_shrink': html = T('log.zoneShrink', { ring: e.ring, x0: e.x0, y0: e.y0, x1: e.x1, y1: e.y1 }); break;
       case 'zone_hit': html = T('log.zoneHit', { target: nm(e.target), dmg: e.dmg, hp: e.hp }); break;
       case 'slide': html = T('log.slide', { who: nm(e.who), x: e.x, y: e.y }); break;
-      case 'skill': html = T('log.skillCast', { who: nm(e.who), skill: SKILL_CN[e.name] ?? e.name }); break;
+      case 'skill': html = T('log.skillCast', { who: nm(e.who), skill: skillLabel(e.name) }); break;
       case 'stun_hit': html = T('log.stunHit', { target: nm(e.target), dur: e.duration }); break;
       case 'death': html = T('log.death', { who: nm(e.who) }); break;
       case 'end':
@@ -499,7 +665,12 @@ function drawItemBadge(cx, cy, kind) {
       ctx.moveTo(cx - r * 0.05, cy - r * 0.3); ctx.lineTo(cx + r * 0.45, cy); ctx.lineTo(cx - r * 0.05, cy + r * 0.3);
       ctx.stroke();
       break;
-    default:
+    default: // 工坊自定义道具：通用菱形图标
+      ctx.strokeStyle = '#a06a1f';
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - r * 0.45); ctx.lineTo(cx + r * 0.45, cy);
+      ctx.lineTo(cx, cy + r * 0.45); ctx.lineTo(cx - r * 0.45, cy);
+      ctx.closePath(); ctx.stroke();
       break;
   }
   ctx.lineCap = 'butt';
@@ -1073,11 +1244,23 @@ function startBattle() {
   pendingSeed = null;
   const seed = seedFromString(seedStr);
   const oppKey = oppSelect.value;
-  const opp = ROSTER.find((r) => r.key === oppKey) || ROSTER[0];
+  let oppFn;
+  let oppStyle;
+  if (oppKey.startsWith('pack:')) { // 工坊/官方流派 bot：与用户脚本同一沙箱编译
+    if (!EVAL_OK) { showErr(T('err.cspEval')); return; }
+    const d = PACK.entries.find((e) => e.type === 'bot' && e.id === oppKey.slice(5));
+    try { oppFn = compileBot(d); } catch (e) { showErr(String((e && e.message) || e)); return; }
+    oppStyle = d.name;
+  } else {
+    const opp = ROSTER.find((r) => r.key === oppKey) || ROSTER[0];
+    oppFn = opp.fn;
+    oppStyle = T('ladder.styleTag', { style: opp.style });
+  }
   // 地图与对局同源：预置图按选择取，随机图与 seed 同源；先取图再喂给 runMatch，保证渲染的就是对局用图
   const map = makeMap(seed);
-  const names = [`${L.ui.myTank} v${curVersion}`, T('ladder.styleTag', { style: opp.style })];
-  const result = runMatch({ seed, botA: guarded, botB: opp.fn, map });
+  const names = [`${L.ui.myTank} v${curVersion}`, oppStyle];
+  // 内容包全程随局（UGC 技能/道具/地图注册 + 战报嵌 pack：分享后任何人可确定性重现）
+  const result = runMatch({ seed, botA: guarded, botB: oppFn, map, content: PACK });
   const tl = buildTimeline(map, result);
   match = { seedStr, seed, map, result, names, frames: tl.frames, shots: tl.shots, sparks: tl.sparks, entries: buildLog(result, names, seedStr) };
   setupCanvas(map);
@@ -1112,7 +1295,7 @@ function computeLadder() {
       for (const flip of [false, true]) {
         const A = flip ? parts[j] : parts[i];
         const B = flip ? parts[i] : parts[j];
-        const r = runMatch({ seed, botA: A.fn, botB: B.fn });
+        const r = runMatch({ seed, botA: A.fn, botB: B.fn, content: PACK }); // 用户可能装备工坊技能
         const sA = r.winner === null ? 0.5 : r.winner === 0 ? 1 : 0;
         const ea = 1 / (1 + 10 ** ((B.elo - A.elo) / 400));
         A.elo += 24 * (sA - ea);
@@ -1202,8 +1385,20 @@ if (!EVAL_OK) {
 updateVersionUi();
 const qp = new URLSearchParams(location.search);
 if (qp.get('seed')) pendingSeed = qp.get('seed').trim() || null; // ?seed= 回放深链：下一局按此种子复现
+if (qp.get('pack') && wsImportPack) { // ?pack= 分享深链（阶段2）：先导入内容包，选项注入后再应用 map/skill/opp
+  try { wsImportPack(qp.get('pack'), { silent: true }); } catch (e) { console.log('内容包导入失败：', e.message); }
+}
+if (qp.get('script')) { // 战报重现链接自带对局脚本（不嵌脚本无法逐字节重现）
+  try { editorEl.value = b64d(qp.get('script')); } catch { /* 忽略 */ }
+}
 if (qp.get('map') && mapSel && [...mapSel.options].some((o) => o.value === qp.get('map'))) {
   mapSel.value = qp.get('map'); // ?map=id 直达预置图（可分享/截图复现）
+}
+if (qp.get('skill') && skillSel && [...skillSel.options].some((o) => o.value === qp.get('skill'))) {
+  skillSel.value = qp.get('skill');
+}
+if (qp.get('opp') && oppSelect && [...oppSelect.options].some((o) => o.value === qp.get('opp'))) {
+  oppSelect.value = qp.get('opp');
 }
 footSeed.textContent = pendingSeed ? T('ui.footSeedReplay', { seed: pendingSeed }) : T('ui.footSeedAuto');
 previewMap = makeMap(seedFromString(pendingSeed || genSeed()));

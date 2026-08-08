@@ -40,3 +40,10 @@
 - 语言解析 ?lang= > localStorage(agentank-lang) > navigator.language > zh；切换器在顶栏，切换=存偏好+带参刷新。
 - 引擎 report.js（battle.log）保持中文不动（确定性口径）；网页战报由 buildLog 按字典渲染。
 - check-dist ③ 默认脚本改从字典 script.default 提取（兼容旧字面量）；新增⑥ i18n 产物体检。
+
+## v14 UGC 内容架构（2026-08-08）
+- src/engine/content.js：四类内容（map/skill/item/bot）纯 JSON 声明式定义；技能/道具只能对效果原语参数化（SKILL_EFFECTS 8 种 / ITEM_EFFECTS 6 种，数值有界），bot 为 decide 源码字符串走 new Function 沙箱（引擎本体零 eval）。
+- 三阶段：stage private→shared→official（promoteStage 逐级）；分享串 atpack1.<base64 JSON>；官方收录 = OFFICIAL_CONTENT 列表追加条目。
+- runMatch({content: pack})：skillDefs/itemDefs = 内置 + 内容包（castSkill/pickupItem 按 effect.kind 分发）；战报 result.content 嵌整包 → 同 seed+同 pack 逐字节重现。
+- web：创作工坊 details 面板（localStorage agentank-workshop）；下拉三来源合并带 [私有]/[已分享]/[官方] 徽标；深链 ?pack=/&script=/&skill=/&opp=（分享本局=串全嵌）。
+- 坑：build-web 剥 import 是单行正则，app.js import 必须写单行；check-dist ⑦ 工坊体检 + makeEngine 暴露面记得加新符号。

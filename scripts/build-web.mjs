@@ -12,6 +12,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ORDER = [
   'src/engine/rng.js',
   'src/engine/map.js',
+  'src/engine/content.js',
   'src/engine/maps.js',
   'src/engine/engine.js',
   'src/engine/report.js',

@@ -117,6 +117,11 @@
           "detail": "刷新 t=3/7 封顶 2；急救包回血至 90；item_gone@t6"
         },
         {
+          "name": "UGC 三阶段（校验/序列化往返/自定义技能实跑/战报嵌包/官方收录）",
+          "pass": true,
+          "detail": "校验/往返/实跑/嵌包全过；官方收录 4 条（map/skill/item/bot）"
+        },
+        {
           "name": "单发在飞（在飞期间 canFire=false、me().bulletInFlight=true）",
           "pass": true,
           "detail": "t1 在飞（bulletInFlight=true、canFire=false）"
@@ -227,7 +232,7 @@
         {
           "name": "100 局（随机 seeds、四组对阵轮换、默认地图）平均单局 <50ms",
           "pass": true,
-          "detail": "总耗时 428.72ms，平均 4.29ms/局，共 10056 ticks"
+          "detail": "总耗时 851.42ms，平均 8.51ms/局，共 10139 ticks"
         }
       ]
     },
@@ -244,11 +249,11 @@
       ]
     }
   ],
-  "generatedAt": "2026-08-08T05:20:37.158Z",
+  "generatedAt": "2026-08-08T15:16:38.502Z",
   "engineTestSummary": {
-    "pass": 87,
+    "pass": 106,
     "fail": 0,
-    "tests": 87,
+    "tests": 106,
     "ok": true
   }
 }

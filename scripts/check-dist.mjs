@@ -26,7 +26,7 @@ console.log(`① 语法检查 PASS（内联 JS ${(full.length / 1024).toFixed(1)
 // ② 引擎段真跑一局
 const em = full.match(/\/\*__ENGINE_START__\*\/([\s\S]*?)\/\*__ENGINE_END__\*\//);
 if (!em) fail('未找到 __ENGINE_START__ 标记');
-const makeEngine = new Function(`${em[1]}\n;return { runMatch, bots, renderText, generateMap, mulberry32, RULES };`);
+const makeEngine = new Function(`${em[1]}\n;return { runMatch, bots, renderText, generateMap, mapFromAscii, mulberry32, RULES };`);
 const eng = makeEngine();
 const r1 = eng.runMatch({ seed: 42, botA: eng.bots.starGrabber, botB: eng.bots.camper });
 const r2 = eng.runMatch({ seed: 42, botA: eng.bots.starGrabber, botB: eng.bots.camper });
@@ -89,5 +89,32 @@ console.log('④ 自包含体检 PASS：无外链 script/link/href/src，零外�
     if (!html.includes(needle)) fail(`⑥ i18n 体检：产物缺少「${needle}」（${why}）`);
   }
   console.log('⑥ i18n 体检 PASS：zh/en 字典内联、语言切换器与 data-i18n 标注齐全');
+}
+// ⑦ 创作工坊体检：UGC 三阶段链路必须整链内联（面板/分享串前缀/本机存储键/官方收录证据）
+{
+  const must = [
+    ['wsEditor', '工坊编辑器节点'],
+    ['创作工坊', 'zh 工坊标题词条'],
+    ['Workshop', 'en 工坊标题词条'],
+    ['atpack1.', '内容包分享串前缀（阶段2）'],
+    ['agentank-workshop', '私有内容 localStorage 键（阶段1）'],
+    ['OFFICIAL_CONTENT', '官方收录列表（阶段3）'],
+  ];
+  for (const [needle, why] of must) {
+    if (!html.includes(needle)) fail(`⑦ 工坊体检：产物缺少「${needle}」（${why}）`);
+  }
+  // 产物内引擎实跑一局 UGC：自定义技能经内容包注册应可用且事件带自定义 id
+  const packRun = eng.runMatch({
+    seed: 5,
+    map: eng.mapFromAscii(['######', '#A.B.#', '######']),
+    botA: (api) => (api.ready() ? api.useSkill() : null),
+    botB: () => null,
+    skillA: 'zap',
+    content: { formatVersion: 1, author: null, entries: [{ type: 'skill', id: 'zap', name: '测试电击', stage: 'shared', cd: 40, effect: { kind: 'stun', dur: 4 } }] },
+    maxTicks: 10,
+  });
+  if (!packRun.events.some((e) => e.type === 'skill' && e.name === 'zap')) fail('⑦ 工坊体检：产物引擎未按内容包注册自定义技能');
+  if (!packRun.content) fail('⑦ 工坊体检：战报未嵌内容包（阶段2 重现凭据缺失）');
+  console.log('⑦ 工坊体检 PASS：三阶段链路内联齐全，产物引擎可跑 UGC 技能且战报嵌 pack');
 }
 console.log('check-dist: ALL PASS');

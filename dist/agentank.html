@@ -156,6 +156,29 @@ footer .mono{color:var(--muted)}
       </div>
       <button class="btn" id="battleBtn" data-i18n="ui.battle">开 战</button>
       <button class="btn ghost" id="saveBtn">保存为新版本（当前 v1 · 共 1 版）</button>
+      <details id="workshop" style="margin-top:10px;border:1px solid var(--line);border-radius:8px;padding:8px">
+        <summary data-i18n="ui.workshop" style="cursor:pointer;font-size:12px;color:var(--muted)">创作工坊 · 地图/技能/道具/流派</summary>
+        <div data-i18n="ui.wsHint" style="font-size:11px;color:var(--dim);margin:6px 0;line-height:1.5">三阶段：私有 → 分享 → 官方收录</div>
+        <div style="display:flex;gap:6px;margin-bottom:6px">
+          <select id="wsTpl" style="flex:1">
+            <option value="map">map</option>
+            <option value="skill">skill</option>
+            <option value="item">item</option>
+            <option value="bot">bot</option>
+          </select>
+          <button class="btn ghost" id="wsNewBtn" data-i18n="ui.wsNew" style="padding:2px 10px;font-size:11px">填入模板</button>
+        </div>
+        <textarea id="wsEditor" spellcheck="false" style="width:100%;height:130px;font-size:11px;box-sizing:border-box"></textarea>
+        <div id="wsErr" style="font-size:11px;min-height:14px;margin:2px 0"></div>
+        <button class="btn ghost" id="wsSaveBtn" data-i18n="ui.wsSave" style="padding:4px 10px;font-size:11px">校验并保存（私有）</button>
+        <div id="wsList" style="margin-top:4px"></div>
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <input id="wsImport" data-i18n-ph="ui.wsImportPh" placeholder="atpack1.…" style="flex:1;min-width:0">
+          <button class="btn ghost" id="wsImportBtn" data-i18n="ui.wsImport" style="padding:2px 10px;font-size:11px">导入</button>
+        </div>
+        <button class="btn ghost" id="wsShareBattleBtn" data-i18n="ui.wsShareBattle" style="margin-top:6px;padding:4px 10px;font-size:11px">分享本局战报（含内容包+脚本）</button>
+        <textarea id="wsShareOut" readonly style="width:100%;height:44px;font-size:10px;margin-top:4px;box-sizing:border-box"></textarea>
+      </details>
     </div>
   </section>
 
@@ -370,6 +393,250 @@ function generateMap(rng, { width = 17, height = 17, starCount = 6 } = {}) {
   ].filter((s) => s.x >= 1 && s.y >= 1 && s.x <= width - 2 && s.y <= height - 2);
   return { width, height, tiles, spawns: [{ x: 1, y: 1 }, { x: width - 2, y: height - 2 }], stars };
 }
+
+// ===== src/engine/content.js =====
+// UGC 内容注册表：地图 / 技能 / 道具 / 流派 bot 四类用户内容的定义、校验、
+// 序列化与三阶段生命周期（private 私有 → shared 分享 → official 官方收录）。
+//
+// 设计铁律：
+// - 内容定义是**纯 JSON**（bot 的 decide 源码也是字符串），因此内容包可以整包
+//   嵌进战报——阶段2 的「凭战报重现整场战斗」由此成立（同 seed + 同 pack ⇒ 逐字节一致）。
+// - 技能/道具不允许任意代码，只能对既有**效果原语**参数化（数值有界），
+//   保证确定性与平衡可审计；流派 bot 走与用户脚本同一沙箱（new Function），引擎本体零 eval。
+
+
+const STAGES = ['private', 'shared', 'official'];
+
+// 效果原语（引擎 castSkill/pickupItem 按 kind 分发）：新技能/新道具 = 原语 + 自定义参数
+const SKILL_EFFECTS = ['shield', 'freeze', 'stun', 'overload', 'cloak', 'poison', 'teleport', 'boost'];
+const ITEM_EFFECTS = ['heal', 'rapid', 'pierce', 'shield', 'freeze', 'boost'];
+
+const ID_RE = /^[a-z][a-zA-Z0-9_-]{1,23}$/;
+const MAP_CHARS = /^[#Dg*AB.=~]+$/;
+const LIMITS = {
+  cd: [10, 300], dur: [1, 60], dmg: [1, 15], heal: [5, 60],
+  shots: [1, 6], bonus: [1, 30], codeMax: 4000, nameMax: 24, descMax: 60,
+  mapMin: 5, mapMax: 25,
+};
+
+function num(v, [lo, hi]) {
+  return typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
+}
+
+function validateMapDef(def, errs) {
+  const rows = def.rows;
+  if (!Array.isArray(rows) || rows.length < LIMITS.mapMin || rows.length > LIMITS.mapMax) {
+    errs.push(`地图行数需在 ${LIMITS.mapMin}~${LIMITS.mapMax} 之间`);
+    return;
+  }
+  const w = rows[0].length;
+  if (w < LIMITS.mapMin || w > LIMITS.mapMax) { errs.push(`地图列数需在 ${LIMITS.mapMin}~${LIMITS.mapMax} 之间`); return; }
+  for (const r of rows) {
+    if (typeof r !== 'string' || r.length !== w) { errs.push('地图各行宽度必须一致'); return; }
+    if (!MAP_CHARS.test(r)) { errs.push('地图含非法字符（合法：# D g * A B . = ~）'); return; }
+  }
+  const h = rows.length;
+  for (let x = 0; x < w; x++) {
+    if (rows[0][x] !== '#' || rows[h - 1][x] !== '#') { errs.push('地图四周必须封墙'); return; }
+  }
+  for (let y = 0; y < h; y++) {
+    if (rows[y][0] !== '#' || rows[y][w - 1] !== '#') { errs.push('地图四周必须封墙'); return; }
+  }
+  const flat = rows.join('');
+  const countA = (flat.match(/A/g) || []).length;
+  const countB = (flat.match(/B/g) || []).length;
+  if (countA !== 1 || countB !== 1) { errs.push('地图必须恰好各有一个 A/B 出生点'); return; }
+  let map;
+  try { map = mapFromAscii(rows); } catch (e) { errs.push(`地图解析失败：${e.message}`); return; }
+  // BFS 连通性：A→B、A→每颗星必须可达
+  const seen = new Set([`${map.spawns[0].x},${map.spawns[0].y}`]);
+  const q = [map.spawns[0]];
+  while (q.length) {
+    const { x, y } = q.shift();
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const k = `${x + dx},${y + dy}`;
+      if (!seen.has(k) && isWalkable(map, x + dx, y + dy)) { seen.add(k); q.push({ x: x + dx, y: y + dy }); }
+    }
+  }
+  if (!seen.has(`${map.spawns[1].x},${map.spawns[1].y}`)) errs.push('A/B 出生点必须连通');
+  for (const s of map.stars) {
+    if (!seen.has(`${s.x},${s.y}`)) errs.push(`星星 (${s.x},${s.y}) 必须可达`);
+  }
+}
+
+// 校验单条内容定义；返回 { ok, errors }（错误原因中文，供工坊 UI 直接展示）
+function validateContent(def) {
+  const errs = [];
+  if (!def || typeof def !== 'object') return { ok: false, errors: ['内容定义必须是对象'] };
+  if (!['map', 'skill', 'item', 'bot'].includes(def.type)) errs.push('未知内容类型（只支持 map/skill/item/bot）');
+  if (typeof def.id !== 'string' || !ID_RE.test(def.id)) errs.push('id 需为 2~24 位小写字母开头的英数串');
+  if (typeof def.name !== 'string' || !def.name.length || def.name.length > LIMITS.nameMax) errs.push(`name 必填且不超过 ${LIMITS.nameMax} 字`);
+  if (def.desc != null && (typeof def.desc !== 'string' || def.desc.length > LIMITS.descMax)) errs.push(`desc 不超过 ${LIMITS.descMax} 字`);
+  if (def.stage != null && !STAGES.includes(def.stage)) errs.push('stage 只能是 private/shared/official');
+  if (errs.length) return { ok: false, errors: errs };
+  switch (def.type) {
+    case 'map':
+      validateMapDef(def, errs);
+      break;
+    case 'skill': {
+      if (!num(def.cd, LIMITS.cd)) errs.push(`技能 cd 需在 ${LIMITS.cd[0]}~${LIMITS.cd[1]} tick 之间`);
+      const e = def.effect;
+      if (!e || !SKILL_EFFECTS.includes(e.kind)) errs.push(`技能效果原语只能是：${SKILL_EFFECTS.join('/')}`);
+      else {
+        if (['freeze', 'stun', 'poison', 'cloak', 'boost'].includes(e.kind) && !num(e.dur, LIMITS.dur)) errs.push(`该原语需要 dur（${LIMITS.dur[0]}~${LIMITS.dur[1]} tick）`);
+        if (e.kind === 'poison' && !num(e.dmg, LIMITS.dmg)) errs.push(`poison 需要 dmg（${LIMITS.dmg[0]}~${LIMITS.dmg[1]}/tick）`);
+      }
+      break;
+    }
+    case 'item': {
+      const e = def.effect;
+      if (!e || !ITEM_EFFECTS.includes(e.kind)) errs.push(`道具效果原语只能是：${ITEM_EFFECTS.join('/')}`);
+      else {
+        if (e.kind === 'heal' && !num(e.heal, LIMITS.heal)) errs.push(`heal 需要 heal（${LIMITS.heal[0]}~${LIMITS.heal[1]} HP）`);
+        if (['rapid', 'pierce'].includes(e.kind) && !num(e.shots, LIMITS.shots)) errs.push(`该原语需要 shots（${LIMITS.shots[0]}~${LIMITS.shots[1]} 发）`);
+        if (e.kind === 'pierce' && !num(e.bonus, LIMITS.bonus)) errs.push(`pierce 需要 bonus（${LIMITS.bonus[0]}~${LIMITS.bonus[1]} 伤害）`);
+        if (['freeze', 'boost'].includes(e.kind) && !num(e.dur, LIMITS.dur)) errs.push(`该原语需要 dur（${LIMITS.dur[0]}~${LIMITS.dur[1]} tick）`);
+      }
+      break;
+    }
+    case 'bot': {
+      if (typeof def.code !== 'string' || !def.code.trim()) errs.push('bot 需要 decide 源码 code');
+      else if (def.code.length > LIMITS.codeMax) errs.push(`bot 代码超长（上限 ${LIMITS.codeMax} 字符）`);
+      else if (!/function\s+decide\s*\(|export\s+default\s+function/.test(def.code)) errs.push('bot 代码需定义 decide(api) 入口');
+      if (def.skill != null && typeof def.skill !== 'string') errs.push('bot 默认技能 skill 需为字符串');
+      break;
+    }
+    default:
+      break;
+  }
+  return { ok: errs.length === 0, errors: errs };
+}
+
+// ===== 内容包（分享/嵌战报的最小单位） =====
+function makePack(entries, meta = {}) {
+  const out = [];
+  for (const def of entries) {
+    const r = validateContent(def);
+    if (!r.ok) throw new Error(`内容包校验失败（${def && def.id}）：${r.errors.join('；')}`);
+    out.push({ stage: 'private', ...def });
+  }
+  const ids = new Set();
+  for (const e of out) {
+    const key = `${e.type}:${e.id}`;
+    if (ids.has(key)) throw new Error(`内容包校验失败：${key} 重复`);
+    ids.add(key);
+  }
+  return { formatVersion: 1, author: meta.author ?? null, entries: out };
+}
+
+// base64(UTF-8 JSON)：Node 与浏览器双端可用，串可贴聊天框/进 URL
+function toB64(s) {
+  if (typeof Buffer !== 'undefined') return Buffer.from(s, 'utf8').toString('base64');
+  return btoa(String.fromCharCode(...new TextEncoder().encode(s)));
+}
+function fromB64(s) {
+  if (typeof Buffer !== 'undefined') return Buffer.from(s, 'base64').toString('utf8');
+  return new TextDecoder().decode(Uint8Array.from(atob(s), (c) => c.charCodeAt(0)));
+}
+
+function serializePack(pack) {
+  return `atpack1.${toB64(JSON.stringify(pack))}`;
+}
+
+function parsePack(str) {
+  if (typeof str !== 'string' || !str.startsWith('atpack1.')) throw new Error('内容包分享串格式不对（应以 atpack1. 开头）');
+  let obj;
+  try { obj = JSON.parse(fromB64(str.slice('atpack1.'.length))); } catch { throw new Error('内容包分享串解码失败'); }
+  if (!obj || obj.formatVersion !== 1 || !Array.isArray(obj.entries)) throw new Error('内容包结构不对（formatVersion/entries）');
+  for (const def of obj.entries) {
+    const r = validateContent(def);
+    if (!r.ok) throw new Error(`内容包校验失败（${def && def.id}）：${r.errors.join('；')}`);
+  }
+  return obj;
+}
+
+// ===== 三阶段生命周期 =====
+function promoteStage(entry) {
+  const cur = entry.stage ?? 'private';
+  const i = STAGES.indexOf(cur);
+  if (i < 0) throw new Error(`未知阶段：${cur}`);
+  if (cur === 'official') throw new Error('已是 official（官方收录），不可再晋升');
+  return { ...entry, stage: STAGES[i + 1] };
+}
+
+// ===== 消费侧工具 =====
+// 取内容包里的地图（转成引擎地图对象；每次全新对象，防模板污染）
+function resolvePackMap(pack, id) {
+  const def = (pack?.entries || []).find((e) => e.type === 'map' && e.id === id);
+  return def ? mapFromAscii(def.rows) : null;
+}
+
+// 编译流派 bot（与网页用户脚本同一沙箱口径：new Function，宿主 CSP 禁 eval 时由上层降级）
+function compileBot(def) {
+  const r = validateContent(def);
+  if (!r.ok || def.type !== 'bot') throw new Error(`bot 定义非法：${(r.errors || ['类型不对']).join('；')}`);
+  const src = def.code.replace(/export\s+default\s+/, 'return ');
+  let fn;
+  try {
+    const factory = new Function(`"use strict";\n${src}\n;return (typeof decide === 'function' ? decide : undefined);`);
+    fn = factory();
+  } catch (e) {
+    throw new Error(`bot 代码编译失败：${e.message}`);
+  }
+  if (typeof fn !== 'function') throw new Error('bot 代码未提供 decide(api) 入口');
+  const bot = (api) => fn(api);
+  bot.skill = def.skill ?? 'shield';
+  bot.contentId = def.id;
+  return bot;
+}
+
+// ===== 阶段3：官方收录列表（与内置内容同权；收录 = 在此追加条目并随版本发布） =====
+const OFFICIAL_CONTENT = [
+  {
+    type: 'map',
+    id: 'canyon',
+    name: '峡谷对冲',
+    desc: '社区收录：中央长墙对冲图',
+    stage: 'official',
+    rows: [
+      '###########',
+      '#A...g....#',
+      '#..D...D..#',
+      '#....#....#',
+      '#.*..#..*.#',
+      '#....#....#',
+      '#..D...D..#',
+      '#....g...B#',
+      '###########',
+    ],
+  },
+  {
+    type: 'skill',
+    id: 'blink',
+    name: '短传闪现',
+    desc: '社区收录：低冷却小传送',
+    stage: 'official',
+    cd: 60,
+    effect: { kind: 'teleport' },
+  },
+  {
+    type: 'item',
+    id: 'adrenaline',
+    name: '肾上腺素',
+    desc: '社区收录：短疾跑针剂',
+    stage: 'official',
+    effect: { kind: 'boost', dur: 6 },
+  },
+  {
+    type: 'bot',
+    id: 'sentinel',
+    name: '哨戒流',
+    desc: '社区收录：原地架炮见人就打',
+    stage: 'official',
+    skill: 'shield',
+    code: 'export default function decide(api) {\n  if (api.enemyVisible() && api.canFire()) return api.fireAt(api.enemy());\n  if (!api.enemyVisible() && api.ready()) return api.useSkill();\n  return null;\n}',
+  },
+];
 
 // ===== src/engine/maps.js =====
 // 预置地图库：10 张手工设计图，全部 17x17。
@@ -893,30 +1160,33 @@ function pickupItem(state, i, ev) {
   if (idx === -1) return;
   const R = state.R;
   const it = state.items.splice(idx, 1)[0];
+  // 注册表分发：内置道具与内容包道具同一条路——按效果原语（kind）+ 注册表参数结算
+  const def = state.itemDefs[it.kind];
   const e = { t: state.t, type: 'item_pick', who: i, kind: it.kind, x: it.x, y: it.y };
-  switch (it.kind) {
-    case 'medkit':
-      T.hp = Math.min(R.hp, T.hp + R.items.medkit.heal);
+  switch (def.kind) {
+    case 'heal':
+      T.hp = Math.min(R.hp, T.hp + def.heal);
       e.hp = T.hp;
       break;
     case 'rapid':
-      T.rapidShots += R.items.rapid.shots;
+      T.rapidShots += def.shots;
       break;
     case 'pierce':
-      T.pierceShots += R.items.pierce.shots;
+      T.pierceShots += def.shots;
+      T.pierceBonus = def.bonus; // 自定义穿甲道具可改伤害加成
       break;
-    case 'helmet':
+    case 'shield':
       T.shield = 1; // 与护盾技能同槽：挡下一次伤害，消耗即失效
       break;
-    case 'clock': { // 拾取当拍冻结敌人（复用 freeze 渲染/战报口径，source 标记来源）
+    case 'freeze': { // 拾取当拍冻结敌人（复用 freeze 渲染/战报口径，source 标记来源道具）
       const E = state.tanks[1 - i];
-      E.freeze = Math.max(E.freeze, R.items.clock.dur);
+      E.freeze = Math.max(E.freeze, def.dur);
       ev(e);
-      ev({ t: state.t, type: 'freeze_hit', who: i, target: E.i, duration: R.items.clock.dur, source: 'clock' });
+      ev({ t: state.t, type: 'freeze_hit', who: i, target: E.i, duration: def.dur, source: it.kind });
       return;
     }
-    case 'boots':
-      T.boost = Math.max(T.boost, R.items.boots.dur);
+    case 'boost':
+      T.boost = Math.max(T.boost, def.dur);
       break;
     default:
       break;
@@ -988,7 +1258,7 @@ function spawnBullet(state, i, dx, dy, ev) {
   if (T.pierceShots > 0) {
     T.pierceShots--;
     b.pierce = true;
-    b.dmg = state.R.damage + state.R.items.pierce.bonus;
+    b.dmg = state.R.damage + (T.pierceBonus ?? state.R.items.pierce.bonus);
   }
   state.bullets.push(b);
   ev({ t: state.t, type: 'fire', who: i, x: T.x, y: T.y, dx, dy });
@@ -1133,9 +1403,11 @@ function castSkill(state, i, arg, ev) {
   const E = state.tanks[1 - i];
   const t = state.t;
   const name = T.skill;
-  const S = R.skills[name];
+  // 注册表分发：内置技能与内容包技能同一条路——cd/dur/dmg 全部来自注册表定义
+  const def = state.skillDefs[name];
+  const S = { cd: def.cd, ...def.effect };
   if (T.cd.skill > 0) return;
-  switch (name) {
+  switch (def.effect.kind) {
     case 'shield': {
       if (T.shield > 0) return;
       T.cd.skill = S.cd;
@@ -1176,6 +1448,7 @@ function castSkill(state, i, arg, ev) {
       if (!visibleTo(state, i)) return;
       T.cd.skill = S.cd;
       E.poison = S.dur;
+      E.poisonDmg = S.dmg; // 自定义 poison 技能可改每拍伤害
       E.poisonFrom = i;
       ev({ t, type: 'skill', who: i, name });
       ev({ t, type: 'poison_hit', who: i, target: 1 - i, duration: S.dur });
@@ -1390,16 +1663,41 @@ function runMatch(opts = {}) {
     items: { ...RULES.items, ...((opts.rules || {}).items || {}) },
   };
   if (opts.maxTicks != null) R.maxTicks = opts.maxTicks;
-  // 技能 8 选 1：显式参数 > bot 自带偏好（bot.skill）> 默认 A=teleport、B=cloak
+  // ===== UGC 内容包（阶段2 分享/重现凭据）：技能/道具注册表 = 内置 + 内容包条目 =====
+  const pack = opts.content ?? null;
+  const packOf = (type) => (pack?.entries || []).filter((e) => e.type === type);
+  const skillDefs = {};
+  for (const [id, S] of Object.entries(R.skills)) skillDefs[id] = { cd: S.cd, effect: { kind: id, dur: S.dur, dmg: S.dmg } };
+  for (const d of packOf('skill')) skillDefs[d.id] = { cd: d.cd, effect: { ...d.effect } };
+  const itemDefs = {
+    medkit: { kind: 'heal', heal: R.items.medkit.heal },
+    rapid: { kind: 'rapid', shots: R.items.rapid.shots },
+    pierce: { kind: 'pierce', shots: R.items.pierce.shots, bonus: R.items.pierce.bonus },
+    helmet: { kind: 'shield' },
+    clock: { kind: 'freeze', dur: R.items.clock.dur },
+    boots: { kind: 'boost', dur: R.items.boots.dur },
+  };
+  const packItems = packOf('item');
+  for (const d of packItems) itemDefs[d.id] = { ...d.effect };
+  // 内容包道具默认并入刷新池（显式传 rules.items.kinds 时以显式为准）
+  if (packItems.length && !((opts.rules || {}).items || {}).kinds) {
+    R.items = { ...R.items, kinds: [...R.items.kinds, ...packItems.map((d) => d.id)] };
+  }
+  for (const k of R.items.kinds) {
+    if (!itemDefs[k]) throw new Error(`未知道具: ${k}（内置或经内容包注册后方可进刷新池）`);
+  }
+  // 技能 8 选 1（内容包可扩池）：显式参数 > bot 自带偏好（bot.skill）> 默认 A=teleport、B=cloak
   const skillA = opts.skillA ?? botA?.skill ?? 'teleport';
   const skillB = opts.skillB ?? botB?.skill ?? 'cloak';
   for (const s of [skillA, skillB]) {
-    if (!R.skills[s]) throw new Error(`未知技能: ${s}（可选：${SKILLS.join('/')}）`);
+    if (!skillDefs[s]) throw new Error(`未知技能: ${s}（内置：${SKILLS.join('/')}，或经内容包注册）`);
   }
   const rng = mulberry32(seed >>> 0);
   const m = map ? cloneMap(map) : generateMap(rng);
   const state = {
     R,
+    skillDefs,
+    itemDefs,
     rng,
     map: m,
     t: 0,
@@ -1532,9 +1830,10 @@ function runMatch(opts = {}) {
     for (const T of state.tanks) {
       if (T.hp <= 0 || T.poison <= 0) continue;
       T.poison--;
-      T.hp -= R.skills.poison.dmg;
-      if (T.poisonFrom != null) state.tanks[T.poisonFrom].dmgDealt += R.skills.poison.dmg;
-      ev({ t, type: 'poison_tick', target: T.i, dmg: R.skills.poison.dmg, hp: T.hp });
+      const pdmg = T.poisonDmg ?? R.skills.poison.dmg;
+      T.hp -= pdmg;
+      if (T.poisonFrom != null) state.tanks[T.poisonFrom].dmgDealt += pdmg;
+      ev({ t, type: 'poison_tick', target: T.i, dmg: pdmg, hp: T.hp });
     }
     // 毒圈伤害：安全区外每拍掉血，圈数越多伤害越高（无视护盾）
     if (state.zoneRing > 0) {
@@ -1568,6 +1867,7 @@ function runMatch(opts = {}) {
     skills: [skillA, skillB],
     ticks: state.t + 1,
     seed,
+    ...(pack ? { content: pack } : {}), // 战报自带内容包：阶段2 分享后任何人可确定性重现
   };
 }
 
@@ -1899,6 +2199,25 @@ const LOCALES = {
       thTank: '坦克', thStyle: '流派', thElo: 'ELO', thWin: '胜率',
       skillOption: '{skill}（8 选 1）',
       langLabel: '语言',
+      workshop: '创作工坊 · 地图/技能/道具/流派',
+      wsHint: '三阶段：私有（仅自己可见可测）→ 分享（生成串/链接，凭战报确定性重现整场战斗）→ 官方收录（与内置同权）',
+      wsNew: '填入模板',
+      wsSave: '校验并保存（私有）',
+      wsImport: '导入',
+      wsImportPh: '粘贴 atpack1. 分享串',
+      wsShare: '分享',
+      wsDelete: '删除',
+      wsShareBattle: '分享本局战报（含内容包+脚本）',
+      wsNoBattle: '先开一局才能分享战报',
+      wsShared: '分享串/链接已生成并复制',
+      wsSaved: '已保存为私有内容（阶段1）',
+      wsImported: '已导入分享内容（阶段2）',
+      wsMine: '我的内容',
+      wsOfficial: '官方收录',
+      wsEmpty: '还没有内容：选类型 → 填模板 → 保存',
+      stage_private: '[私有]',
+      stage_shared: '[已分享]',
+      stage_official: '[官方]',
       waiting: '等待开战…',
       eloCalc: '★ ELO 计算中…',
       ladderIdle: '空闲时计算循环赛中…',
@@ -2050,6 +2369,25 @@ function decide(api) {
       thTank: 'Tank', thStyle: 'Style', thElo: 'ELO', thWin: 'Win%',
       skillOption: '{skill} (pick 1 of 8)',
       langLabel: 'Lang',
+      workshop: 'Workshop · maps/skills/items/styles',
+      wsHint: '3 stages: private (only you) → shared (string/link, byte-exact replay from the report) → official (same rights as built-ins)',
+      wsNew: 'Fill template',
+      wsSave: 'Validate & save (private)',
+      wsImport: 'Import',
+      wsImportPh: 'Paste an atpack1. share string',
+      wsShare: 'Share',
+      wsDelete: 'Delete',
+      wsShareBattle: 'Share this battle (pack + script)',
+      wsNoBattle: 'Run a battle first',
+      wsShared: 'Share string/link generated & copied',
+      wsSaved: 'Saved as private (stage 1)',
+      wsImported: 'Imported shared content (stage 2)',
+      wsMine: 'My content',
+      wsOfficial: 'Official adopted',
+      wsEmpty: 'Nothing yet: pick a type → fill template → save',
+      stage_private: '[private]',
+      stage_shared: '[shared]',
+      stage_official: '[official]',
       waiting: 'waiting for battle…',
       eloCalc: '★ ELO computing…',
       ladderIdle: 'round-robin computed when idle…',
@@ -2170,6 +2508,7 @@ document.title = L.ui.title;
 // 静态节点按 data-i18n="ui.key" 批量替换（切语言 = 存偏好 + 带参刷新，战报按新语言重建）
 for (const el of document.querySelectorAll('[data-i18n]')) el.textContent = T(el.dataset.i18n);
 for (const el of document.querySelectorAll('[data-i18n-title]')) el.title = T(el.dataset.i18nTitle);
+for (const el of document.querySelectorAll('[data-i18n-ph]')) el.placeholder = T(el.dataset.i18nPh);
 // 语言切换器：写偏好 → 以 ?lang= 刷新（种子/地图等参数保留，回放战报按新语言重建）
 {
   const langSel = document.getElementById('langSel');
@@ -2245,6 +2584,10 @@ const userMapKey = () => (mapSel ? mapSel.value : 'random');
 function makeMap(seed) {
   const key = userMapKey();
   if (key !== 'random') {
+    if (key.startsWith('pack:')) { // 工坊/官方地图：从活动内容包取（每次全新对象）
+      const pm = resolvePackMap(PACK, key.slice(5));
+      if (pm) return pm;
+    }
     const m = presetMap(key);
     if (m) return m;
   }
@@ -2266,6 +2609,167 @@ const LADDER_SEEDS = [11, 22, 33, 44, 55];
 for (const r of ROSTER) {
   const opt = oppSelect && oppSelect.querySelector(`option[value="${r.key}"]`);
   if (opt) opt.textContent = T('ladder.oppOptionBoot', { style: r.style, skill: SKILL_CN[r.fn.skill] ?? r.fn.skill });
+}
+
+// ---------- 创作工坊（UGC 三阶段：私有 → 分享 → 官方收录） ----------
+// 阶段1：内容存本机 localStorage，仅自己可见可测；
+// 阶段2：生成分享串/链接（内容包整包嵌进战报参数），任何人打开即确定性重现整场战斗；
+// 阶段3：官方收录进 OFFICIAL_CONTENT（引擎侧列表），与内置地图/技能/道具/流派同权使用。
+const WS_KEY = 'agentank-workshop';
+const b64e = (s) => btoa(unescape(encodeURIComponent(s)));
+const b64d = (s) => decodeURIComponent(escape(atob(s)));
+let wsEntries = (() => { try { return JSON.parse(localStorage.getItem(WS_KEY) || '[]'); } catch { return []; } })();
+const wsPersist = () => { try { localStorage.setItem(WS_KEY, JSON.stringify(wsEntries)); } catch { /* 忽略 */ } };
+// 活动内容包 = 官方收录 + 我的/导入（type:id 去重，官方优先不可被顶替；坏存量跳过不拖垮整包）
+function buildPack() {
+  const seen = new Set();
+  const entries = [];
+  for (const e of [...OFFICIAL_CONTENT, ...wsEntries]) {
+    const k = `${e.type}:${e.id}`;
+    if (seen.has(k) || !validateContent(e).ok) continue;
+    seen.add(k);
+    entries.push(e);
+  }
+  return makePack(entries);
+}
+let PACK = buildPack();
+const packName = (type, id) => PACK.entries.find((e) => e.type === type && e.id === id)?.name ?? null;
+const skillLabel = (id) => SKILL_CN[id] ?? packName('skill', id) ?? id;
+const itemLabel = (id) => ITEM_CN[id] ?? packName('item', id) ?? id;
+const stageTag = (e) => T(`ui.stage_${e.stage || 'private'}`);
+
+// 三来源下拉合并：内置 + 官方收录 + 我的/导入（带阶段徽标；重建时先清旧注入项、保住当前选择）
+function injectPackOptions() {
+  const refill = (sel, type, mk) => {
+    if (!sel) return;
+    const cur = sel.value;
+    for (const o of [...sel.options]) if (o.dataset.pack) o.remove();
+    for (const d of PACK.entries.filter((e) => e.type === type)) {
+      const o = document.createElement('option');
+      Object.assign(o, mk(d));
+      o.dataset.pack = '1';
+      sel.appendChild(o);
+    }
+    if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+  };
+  refill(mapSel, 'map', (d) => ({ value: `pack:${d.id}`, textContent: `${stageTag(d)} ${d.name}（${d.desc || d.id}）` }));
+  refill(skillSel, 'skill', (d) => ({ value: d.id, textContent: `${stageTag(d)} ${d.name}` }));
+  refill(oppSelect, 'bot', (d) => ({ value: `pack:${d.id}`, textContent: `${stageTag(d)} ${d.name}` }));
+}
+
+// 工坊 UI：模板/校验保存/列表/分享/导入/分享本局
+const WS_TPL = {
+  map: { type: 'map', id: 'mymap', name: LANG === 'zh' ? '我的地图' : 'My Map', desc: '', rows: ['#########', '#A..g...#', '#..DD...#', '#...*...#', '#..~~...#', '#...=...#', '#.......#', '#...g..B#', '#########'] },
+  skill: { type: 'skill', id: 'myskill', name: LANG === 'zh' ? '我的技能' : 'My Skill', cd: 60, effect: { kind: 'freeze', dur: 6 } },
+  item: { type: 'item', id: 'myitem', name: LANG === 'zh' ? '我的道具' : 'My Item', effect: { kind: 'heal', heal: 25 } },
+  bot: { type: 'bot', id: 'mybot', name: LANG === 'zh' ? '我的流派' : 'My Style', skill: 'shield', code: 'export default function decide(api) {\n  if (api.enemyVisible() && api.canFire()) return api.fireAt(api.enemy());\n  return api.patrol();\n}' },
+};
+let wsImportPack = null; // ?pack= 深链复用（在下方工坊模块内赋值）
+{
+  const wsEd = $id('wsEditor');
+  const wsMsg = $id('wsErr');
+  const wsListEl = $id('wsList');
+  const wsOut = $id('wsShareOut');
+  const showWs = (msg, bad) => { if (wsMsg) { wsMsg.textContent = msg; wsMsg.style.color = bad ? '#f85149' : '#7ee787'; } };
+  const emitShare = (url) => {
+    if (wsOut) wsOut.value = url;
+    try { navigator.clipboard?.writeText(url); } catch { /* 忽略 */ }
+    showWs(T('ui.wsShared'), false);
+  };
+  const refresh = () => { PACK = buildPack(); injectPackOptions(); renderWsList(); scheduleLadder(); };
+  function renderWsList() {
+    if (!wsListEl) return;
+    wsListEl.innerHTML = '';
+    const addHdr = (key) => {
+      const h = document.createElement('div');
+      h.style.cssText = 'font-size:11px;color:var(--dim);margin:6px 0 2px';
+      h.textContent = T(key);
+      wsListEl.appendChild(h);
+    };
+    const addRow = (e, mine) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:6px;align-items:center;font-size:11px;margin:2px 0;color:var(--muted)';
+      const label = document.createElement('span');
+      label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+      label.textContent = `${stageTag(e)} ${e.name} · ${e.type}/${e.id}`;
+      row.appendChild(label);
+      const mkBtn = (text, fn) => {
+        const b = document.createElement('button');
+        b.className = 'btn ghost';
+        b.style.cssText = 'padding:1px 8px;font-size:11px;min-width:0';
+        b.textContent = text;
+        b.addEventListener('click', fn);
+        row.appendChild(b);
+      };
+      if (mine) {
+        mkBtn(T('ui.wsShare'), () => { // 分享 = 阶段1→2（私有先晋升），生成 ?pack= 链接
+          const idx = wsEntries.indexOf(e);
+          if ((e.stage ?? 'private') === 'private') { wsEntries[idx] = promoteStage(e); wsPersist(); }
+          const s = serializePack(makePack([wsEntries[idx]]));
+          emitShare(`${location.origin}${location.pathname}?pack=${encodeURIComponent(s)}&lang=${LANG}`);
+          refresh();
+        });
+        mkBtn(T('ui.wsDelete'), () => { wsEntries.splice(wsEntries.indexOf(e), 1); wsPersist(); refresh(); });
+      }
+      wsListEl.appendChild(row);
+    };
+    addHdr('ui.wsMine');
+    if (!wsEntries.length) {
+      const p = document.createElement('div');
+      p.style.cssText = 'font-size:11px;color:var(--dim)';
+      p.textContent = T('ui.wsEmpty');
+      wsListEl.appendChild(p);
+    } else for (const e of wsEntries) addRow(e, true);
+    addHdr('ui.wsOfficial');
+    for (const e of OFFICIAL_CONTENT) addRow(e, false);
+  }
+  function importPackStr(str, opts = {}) {
+    const p = parsePack(String(str).trim()); // 校验失败会抛中文原因
+    for (const e of p.entries) {
+      const entry = { ...e, stage: 'shared' }; // 导入的内容一律记为阶段2（official 只能来自引擎收录列表）
+      const i = wsEntries.findIndex((x) => x.type === e.type && x.id === e.id);
+      if (i >= 0) wsEntries[i] = entry; else wsEntries.push(entry);
+    }
+    wsPersist();
+    refresh();
+    if (!opts.silent) showWs(`${T('ui.wsImported')} ×${p.entries.length}`, false);
+    return p.entries.length;
+  }
+  wsImportPack = importPackStr; // 供 ?pack= 深链复用
+  $id('wsNewBtn')?.addEventListener('click', () => {
+    if (wsEd) wsEd.value = JSON.stringify(WS_TPL[$id('wsTpl')?.value || 'map'], null, 2);
+    showWs('', false);
+  });
+  $id('wsSaveBtn')?.addEventListener('click', () => {
+    let def;
+    try { def = JSON.parse(wsEd.value); } catch (e) { showWs(`JSON: ${e.message}`, true); return; }
+    const r = validateContent(def);
+    if (!r.ok) { showWs(r.errors.join('；'), true); return; }
+    const entry = { ...def, stage: 'private' }; // 保存/改动一律回私有：改完需重新分享（阶段1）
+    const i = wsEntries.findIndex((e) => e.type === def.type && e.id === def.id);
+    if (i >= 0) wsEntries[i] = entry; else wsEntries.push(entry);
+    wsPersist();
+    showWs(T('ui.wsSaved'), false);
+    refresh();
+  });
+  $id('wsImportBtn')?.addEventListener('click', () => {
+    try { importPackStr($id('wsImport')?.value || ''); } catch (e) { showWs(String((e && e.message) || e), true); }
+  });
+  $id('wsShareBattleBtn')?.addEventListener('click', () => { // 阶段2：战报重现链接（种子+图+技能+对手+内容包+脚本 全嵌）
+    if (!match) { showWs(T('ui.wsNoBattle'), true); return; }
+    const u = new URL(location.origin + location.pathname);
+    u.searchParams.set('pack', serializePack(match.result.content ?? PACK));
+    u.searchParams.set('seed', match.seedStr);
+    u.searchParams.set('map', userMapKey());
+    u.searchParams.set('skill', userSkill());
+    u.searchParams.set('opp', oppSelect.value);
+    u.searchParams.set('script', b64e(editorEl.value));
+    u.searchParams.set('lang', LANG);
+    u.searchParams.set('autoplay', '1');
+    emitShare(u.toString());
+  });
+  injectPackOptions();
+  renderWsList();
 }
 
 // ---------- 工具 ----------
@@ -2522,7 +3026,7 @@ function buildLog(result, names, seedStr) {
       case 'start':
         html = T('log.start', { w: e.width, h: e.height });
         if (seedStr) html += T('log.startSeed', { seed: seedStr });
-        if (e.skills) html += T('log.startSkills', { n0: nm(0), n1: nm(1), s0: SKILL_CN[e.skills[0]] ?? e.skills[0], s1: SKILL_CN[e.skills[1]] ?? e.skills[1] });
+        if (e.skills) html += T('log.startSkills', { n0: nm(0), n1: nm(1), s0: skillLabel(e.skills[0]), s1: skillLabel(e.skills[1]) });
         break;
       case 'goal':
         html = T(e.tag === 'star' ? 'log.moveStar' : e.tag === 'enemy' ? 'log.moveEnemy' : 'log.moveTo', { who: nm(e.who), x: e.x, y: e.y });
@@ -2556,18 +3060,18 @@ function buildLog(result, names, seedStr) {
         break;
       case 'star_spawn': html = T('log.starSpawn', { x: e.x, y: e.y }); break;
       case 'star_gone': html = T('log.starGone', { x: e.x, y: e.y }); break;
-      case 'item_spawn': html = T('log.itemSpawn', { item: ITEM_CN[e.kind] ?? e.kind, x: e.x, y: e.y }); break;
+      case 'item_spawn': html = T('log.itemSpawn', { item: itemLabel(e.kind), x: e.x, y: e.y }); break;
       case 'item_pick':
         html = T(
           e.kind === 'medkit' ? 'log.itemPickMedkit' : e.kind === 'clock' ? 'log.itemPickClock' : 'log.itemPick',
-          { who: nm(e.who), item: ITEM_CN[e.kind] ?? e.kind, hp: e.hp },
+          { who: nm(e.who), item: itemLabel(e.kind), hp: e.hp },
         );
         break;
-      case 'item_gone': html = T('log.itemGone', { item: ITEM_CN[e.kind] ?? e.kind, x: e.x, y: e.y }); break;
+      case 'item_gone': html = T('log.itemGone', { item: itemLabel(e.kind), x: e.x, y: e.y }); break;
       case 'zone_shrink': html = T('log.zoneShrink', { ring: e.ring, x0: e.x0, y0: e.y0, x1: e.x1, y1: e.y1 }); break;
       case 'zone_hit': html = T('log.zoneHit', { target: nm(e.target), dmg: e.dmg, hp: e.hp }); break;
       case 'slide': html = T('log.slide', { who: nm(e.who), x: e.x, y: e.y }); break;
-      case 'skill': html = T('log.skillCast', { who: nm(e.who), skill: SKILL_CN[e.name] ?? e.name }); break;
+      case 'skill': html = T('log.skillCast', { who: nm(e.who), skill: skillLabel(e.name) }); break;
       case 'stun_hit': html = T('log.stunHit', { target: nm(e.target), dur: e.duration }); break;
       case 'death': html = T('log.death', { who: nm(e.who) }); break;
       case 'end':
@@ -2655,7 +3159,12 @@ function drawItemBadge(cx, cy, kind) {
       ctx.moveTo(cx - r * 0.05, cy - r * 0.3); ctx.lineTo(cx + r * 0.45, cy); ctx.lineTo(cx - r * 0.05, cy + r * 0.3);
       ctx.stroke();
       break;
-    default:
+    default: // 工坊自定义道具：通用菱形图标
+      ctx.strokeStyle = '#a06a1f';
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - r * 0.45); ctx.lineTo(cx + r * 0.45, cy);
+      ctx.lineTo(cx, cy + r * 0.45); ctx.lineTo(cx - r * 0.45, cy);
+      ctx.closePath(); ctx.stroke();
       break;
   }
   ctx.lineCap = 'butt';
@@ -3229,11 +3738,23 @@ function startBattle() {
   pendingSeed = null;
   const seed = seedFromString(seedStr);
   const oppKey = oppSelect.value;
-  const opp = ROSTER.find((r) => r.key === oppKey) || ROSTER[0];
+  let oppFn;
+  let oppStyle;
+  if (oppKey.startsWith('pack:')) { // 工坊/官方流派 bot：与用户脚本同一沙箱编译
+    if (!EVAL_OK) { showErr(T('err.cspEval')); return; }
+    const d = PACK.entries.find((e) => e.type === 'bot' && e.id === oppKey.slice(5));
+    try { oppFn = compileBot(d); } catch (e) { showErr(String((e && e.message) || e)); return; }
+    oppStyle = d.name;
+  } else {
+    const opp = ROSTER.find((r) => r.key === oppKey) || ROSTER[0];
+    oppFn = opp.fn;
+    oppStyle = T('ladder.styleTag', { style: opp.style });
+  }
   // 地图与对局同源：预置图按选择取，随机图与 seed 同源；先取图再喂给 runMatch，保证渲染的就是对局用图
   const map = makeMap(seed);
-  const names = [`${L.ui.myTank} v${curVersion}`, T('ladder.styleTag', { style: opp.style })];
-  const result = runMatch({ seed, botA: guarded, botB: opp.fn, map });
+  const names = [`${L.ui.myTank} v${curVersion}`, oppStyle];
+  // 内容包全程随局（UGC 技能/道具/地图注册 + 战报嵌 pack：分享后任何人可确定性重现）
+  const result = runMatch({ seed, botA: guarded, botB: oppFn, map, content: PACK });
   const tl = buildTimeline(map, result);
   match = { seedStr, seed, map, result, names, frames: tl.frames, shots: tl.shots, sparks: tl.sparks, entries: buildLog(result, names, seedStr) };
   setupCanvas(map);
@@ -3268,7 +3789,7 @@ function computeLadder() {
       for (const flip of [false, true]) {
         const A = flip ? parts[j] : parts[i];
         const B = flip ? parts[i] : parts[j];
-        const r = runMatch({ seed, botA: A.fn, botB: B.fn });
+        const r = runMatch({ seed, botA: A.fn, botB: B.fn, content: PACK }); // 用户可能装备工坊技能
         const sA = r.winner === null ? 0.5 : r.winner === 0 ? 1 : 0;
         const ea = 1 / (1 + 10 ** ((B.elo - A.elo) / 400));
         A.elo += 24 * (sA - ea);
@@ -3358,8 +3879,20 @@ if (!EVAL_OK) {
 updateVersionUi();
 const qp = new URLSearchParams(location.search);
 if (qp.get('seed')) pendingSeed = qp.get('seed').trim() || null; // ?seed= 回放深链：下一局按此种子复现
+if (qp.get('pack') && wsImportPack) { // ?pack= 分享深链（阶段2）：先导入内容包，选项注入后再应用 map/skill/opp
+  try { wsImportPack(qp.get('pack'), { silent: true }); } catch (e) { console.log('内容包导入失败：', e.message); }
+}
+if (qp.get('script')) { // 战报重现链接自带对局脚本（不嵌脚本无法逐字节重现）
+  try { editorEl.value = b64d(qp.get('script')); } catch { /* 忽略 */ }
+}
 if (qp.get('map') && mapSel && [...mapSel.options].some((o) => o.value === qp.get('map'))) {
   mapSel.value = qp.get('map'); // ?map=id 直达预置图（可分享/截图复现）
+}
+if (qp.get('skill') && skillSel && [...skillSel.options].some((o) => o.value === qp.get('skill'))) {
+  skillSel.value = qp.get('skill');
+}
+if (qp.get('opp') && oppSelect && [...oppSelect.options].some((o) => o.value === qp.get('opp'))) {
+  oppSelect.value = qp.get('opp');
 }
 footSeed.textContent = pendingSeed ? T('ui.footSeedReplay', { seed: pendingSeed }) : T('ui.footSeedAuto');
 previewMap = makeMap(seedFromString(pendingSeed || genSeed()));

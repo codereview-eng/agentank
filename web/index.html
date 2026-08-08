@@ -156,6 +156,29 @@ footer .mono{color:var(--muted)}
       </div>
       <button class="btn" id="battleBtn" data-i18n="ui.battle">开 战</button>
       <button class="btn ghost" id="saveBtn">保存为新版本（当前 v1 · 共 1 版）</button>
+      <details id="workshop" style="margin-top:10px;border:1px solid var(--line);border-radius:8px;padding:8px">
+        <summary data-i18n="ui.workshop" style="cursor:pointer;font-size:12px;color:var(--muted)">创作工坊 · 地图/技能/道具/流派</summary>
+        <div data-i18n="ui.wsHint" style="font-size:11px;color:var(--dim);margin:6px 0;line-height:1.5">三阶段：私有 → 分享 → 官方收录</div>
+        <div style="display:flex;gap:6px;margin-bottom:6px">
+          <select id="wsTpl" style="flex:1">
+            <option value="map">map</option>
+            <option value="skill">skill</option>
+            <option value="item">item</option>
+            <option value="bot">bot</option>
+          </select>
+          <button class="btn ghost" id="wsNewBtn" data-i18n="ui.wsNew" style="padding:2px 10px;font-size:11px">填入模板</button>
+        </div>
+        <textarea id="wsEditor" spellcheck="false" style="width:100%;height:130px;font-size:11px;box-sizing:border-box"></textarea>
+        <div id="wsErr" style="font-size:11px;min-height:14px;margin:2px 0"></div>
+        <button class="btn ghost" id="wsSaveBtn" data-i18n="ui.wsSave" style="padding:4px 10px;font-size:11px">校验并保存（私有）</button>
+        <div id="wsList" style="margin-top:4px"></div>
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <input id="wsImport" data-i18n-ph="ui.wsImportPh" placeholder="atpack1.…" style="flex:1;min-width:0">
+          <button class="btn ghost" id="wsImportBtn" data-i18n="ui.wsImport" style="padding:2px 10px;font-size:11px">导入</button>
+        </div>
+        <button class="btn ghost" id="wsShareBattleBtn" data-i18n="ui.wsShareBattle" style="margin-top:6px;padding:4px 10px;font-size:11px">分享本局战报（含内容包+脚本）</button>
+        <textarea id="wsShareOut" readonly style="width:100%;height:44px;font-size:10px;margin-top:4px;box-sizing:border-box"></textarea>
+      </details>
     </div>
   </section>
 

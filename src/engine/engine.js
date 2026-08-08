@@ -281,30 +281,33 @@ function pickupItem(state, i, ev) {
   if (idx === -1) return;
   const R = state.R;
   const it = state.items.splice(idx, 1)[0];
+  // 注册表分发：内置道具与内容包道具同一条路——按效果原语（kind）+ 注册表参数结算
+  const def = state.itemDefs[it.kind];
   const e = { t: state.t, type: 'item_pick', who: i, kind: it.kind, x: it.x, y: it.y };
-  switch (it.kind) {
-    case 'medkit':
-      T.hp = Math.min(R.hp, T.hp + R.items.medkit.heal);
+  switch (def.kind) {
+    case 'heal':
+      T.hp = Math.min(R.hp, T.hp + def.heal);
       e.hp = T.hp;
       break;
     case 'rapid':
-      T.rapidShots += R.items.rapid.shots;
+      T.rapidShots += def.shots;
       break;
     case 'pierce':
-      T.pierceShots += R.items.pierce.shots;
+      T.pierceShots += def.shots;
+      T.pierceBonus = def.bonus; // 自定义穿甲道具可改伤害加成
       break;
-    case 'helmet':
+    case 'shield':
       T.shield = 1; // 与护盾技能同槽：挡下一次伤害，消耗即失效
       break;
-    case 'clock': { // 拾取当拍冻结敌人（复用 freeze 渲染/战报口径，source 标记来源）
+    case 'freeze': { // 拾取当拍冻结敌人（复用 freeze 渲染/战报口径，source 标记来源道具）
       const E = state.tanks[1 - i];
-      E.freeze = Math.max(E.freeze, R.items.clock.dur);
+      E.freeze = Math.max(E.freeze, def.dur);
       ev(e);
-      ev({ t: state.t, type: 'freeze_hit', who: i, target: E.i, duration: R.items.clock.dur, source: 'clock' });
+      ev({ t: state.t, type: 'freeze_hit', who: i, target: E.i, duration: def.dur, source: it.kind });
       return;
     }
-    case 'boots':
-      T.boost = Math.max(T.boost, R.items.boots.dur);
+    case 'boost':
+      T.boost = Math.max(T.boost, def.dur);
       break;
     default:
       break;
@@ -376,7 +379,7 @@ function spawnBullet(state, i, dx, dy, ev) {
   if (T.pierceShots > 0) {
     T.pierceShots--;
     b.pierce = true;
-    b.dmg = state.R.damage + state.R.items.pierce.bonus;
+    b.dmg = state.R.damage + (T.pierceBonus ?? state.R.items.pierce.bonus);
   }
   state.bullets.push(b);
   ev({ t: state.t, type: 'fire', who: i, x: T.x, y: T.y, dx, dy });
@@ -521,9 +524,11 @@ function castSkill(state, i, arg, ev) {
   const E = state.tanks[1 - i];
   const t = state.t;
   const name = T.skill;
-  const S = R.skills[name];
+  // 注册表分发：内置技能与内容包技能同一条路——cd/dur/dmg 全部来自注册表定义
+  const def = state.skillDefs[name];
+  const S = { cd: def.cd, ...def.effect };
   if (T.cd.skill > 0) return;
-  switch (name) {
+  switch (def.effect.kind) {
     case 'shield': {
       if (T.shield > 0) return;
       T.cd.skill = S.cd;
@@ -564,6 +569,7 @@ function castSkill(state, i, arg, ev) {
       if (!visibleTo(state, i)) return;
       T.cd.skill = S.cd;
       E.poison = S.dur;
+      E.poisonDmg = S.dmg; // 自定义 poison 技能可改每拍伤害
       E.poisonFrom = i;
       ev({ t, type: 'skill', who: i, name });
       ev({ t, type: 'poison_hit', who: i, target: 1 - i, duration: S.dur });
@@ -778,16 +784,41 @@ export function runMatch(opts = {}) {
     items: { ...RULES.items, ...((opts.rules || {}).items || {}) },
   };
   if (opts.maxTicks != null) R.maxTicks = opts.maxTicks;
-  // 技能 8 选 1：显式参数 > bot 自带偏好（bot.skill）> 默认 A=teleport、B=cloak
+  // ===== UGC 内容包（阶段2 分享/重现凭据）：技能/道具注册表 = 内置 + 内容包条目 =====
+  const pack = opts.content ?? null;
+  const packOf = (type) => (pack?.entries || []).filter((e) => e.type === type);
+  const skillDefs = {};
+  for (const [id, S] of Object.entries(R.skills)) skillDefs[id] = { cd: S.cd, effect: { kind: id, dur: S.dur, dmg: S.dmg } };
+  for (const d of packOf('skill')) skillDefs[d.id] = { cd: d.cd, effect: { ...d.effect } };
+  const itemDefs = {
+    medkit: { kind: 'heal', heal: R.items.medkit.heal },
+    rapid: { kind: 'rapid', shots: R.items.rapid.shots },
+    pierce: { kind: 'pierce', shots: R.items.pierce.shots, bonus: R.items.pierce.bonus },
+    helmet: { kind: 'shield' },
+    clock: { kind: 'freeze', dur: R.items.clock.dur },
+    boots: { kind: 'boost', dur: R.items.boots.dur },
+  };
+  const packItems = packOf('item');
+  for (const d of packItems) itemDefs[d.id] = { ...d.effect };
+  // 内容包道具默认并入刷新池（显式传 rules.items.kinds 时以显式为准）
+  if (packItems.length && !((opts.rules || {}).items || {}).kinds) {
+    R.items = { ...R.items, kinds: [...R.items.kinds, ...packItems.map((d) => d.id)] };
+  }
+  for (const k of R.items.kinds) {
+    if (!itemDefs[k]) throw new Error(`未知道具: ${k}（内置或经内容包注册后方可进刷新池）`);
+  }
+  // 技能 8 选 1（内容包可扩池）：显式参数 > bot 自带偏好（bot.skill）> 默认 A=teleport、B=cloak
   const skillA = opts.skillA ?? botA?.skill ?? 'teleport';
   const skillB = opts.skillB ?? botB?.skill ?? 'cloak';
   for (const s of [skillA, skillB]) {
-    if (!R.skills[s]) throw new Error(`未知技能: ${s}（可选：${SKILLS.join('/')}）`);
+    if (!skillDefs[s]) throw new Error(`未知技能: ${s}（内置：${SKILLS.join('/')}，或经内容包注册）`);
   }
   const rng = mulberry32(seed >>> 0);
   const m = map ? cloneMap(map) : generateMap(rng);
   const state = {
     R,
+    skillDefs,
+    itemDefs,
     rng,
     map: m,
     t: 0,
@@ -920,9 +951,10 @@ export function runMatch(opts = {}) {
     for (const T of state.tanks) {
       if (T.hp <= 0 || T.poison <= 0) continue;
       T.poison--;
-      T.hp -= R.skills.poison.dmg;
-      if (T.poisonFrom != null) state.tanks[T.poisonFrom].dmgDealt += R.skills.poison.dmg;
-      ev({ t, type: 'poison_tick', target: T.i, dmg: R.skills.poison.dmg, hp: T.hp });
+      const pdmg = T.poisonDmg ?? R.skills.poison.dmg;
+      T.hp -= pdmg;
+      if (T.poisonFrom != null) state.tanks[T.poisonFrom].dmgDealt += pdmg;
+      ev({ t, type: 'poison_tick', target: T.i, dmg: pdmg, hp: T.hp });
     }
     // 毒圈伤害：安全区外每拍掉血，圈数越多伤害越高（无视护盾）
     if (state.zoneRing > 0) {
@@ -956,5 +988,6 @@ export function runMatch(opts = {}) {
     skills: [skillA, skillB],
     ticks: state.t + 1,
     seed,
+    ...(pack ? { content: pack } : {}), // 战报自带内容包：阶段2 分享后任何人可确定性重现
   };
 }

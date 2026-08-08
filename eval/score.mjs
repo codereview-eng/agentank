@@ -3,7 +3,7 @@
 // 纯 Node ESM、零外部依赖。真实调用引擎 API 实测打分，产出 eval/scorecard.json。
 // 不修改 src/ bots/ tests/ 任何代码。
 
-import { runMatch, mapFromAscii } from '../src/engine/index.js';
+import { runMatch, mapFromAscii, validateContent, makePack, serializePack, parsePack, resolvePackMap, compileBot, OFFICIAL_CONTENT } from '../src/engine/index.js';
 import { bots } from '../bots/index.js';
 import { writeFileSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -340,6 +340,38 @@ function sectionMechanics() {
     const gone = r3.events.find((e) => e.type === 'item_gone');
     assert(gone && gone.t === 6, '收圈当拍应吞没圈外道具');
     return `刷新 t=3/7 封顶 2；急救包回血至 ${pick.hp}；item_gone@t6`;
+  });
+
+  add('UGC 三阶段（校验/序列化往返/自定义技能实跑/战报嵌包/官方收录）', () => {
+    const skillDef = { type: 'skill', id: 'frostn', name: '霜球', cd: 50, effect: { kind: 'freeze', dur: 5 } };
+    assert(validateContent(skillDef).ok, '合法技能应过校验');
+    assert(!validateContent({ ...skillDef, cd: 1 }).ok, '越界 cd 应拒收');
+    const pack = makePack([skillDef], { author: 'eval' });
+    assert(pack.entries[0].stage === 'private', '新内容默认私有（阶段1）');
+    const back = parsePack(serializePack(pack));
+    assert(JSON.stringify(back) === JSON.stringify(pack), '分享串往返应逐字段一致（阶段2）');
+    const map = mapFromAscii(['######', '#A.B.#', '######']);
+    const run = () => runMatch({
+      seed: 1, map: mapFromAscii(['######', '#A.B.#', '######']),
+      botA: (api) => (api.ready() ? api.useSkill() : null), botB: (api) => api.moveTo({ x: 4, y: 1 }),
+      skillA: 'frostn', content: pack, maxTicks: 12,
+    });
+    const r = run();
+    assert(r.events.some((e) => e.type === 'skill' && e.name === 'frostn'), '自定义技能应实跑生效');
+    const fh = r.events.find((e) => e.type === 'freeze_hit');
+    assert(fh && fh.duration === 5, '自定义参数应生效');
+    assert(JSON.stringify(r.content) === JSON.stringify(pack), '战报应嵌内容包');
+    assert(JSON.stringify(run()) === JSON.stringify(r), '凭战报参数+内容包应逐字节重现');
+    let threw = false;
+    try { runMatch({ seed: 1, map, botA: idle, botB: idle, skillA: 'frostn', maxTicks: 3 }); } catch { threw = true; }
+    assert(threw, '未带内容包装备未知技能应报错');
+    assert(OFFICIAL_CONTENT.length >= 4 && OFFICIAL_CONTENT.every((e) => e.stage === 'official' && validateContent(e).ok), '官方收录全体应合法（阶段3）');
+    const offMap = OFFICIAL_CONTENT.find((e) => e.type === 'map');
+    const offBot = OFFICIAL_CONTENT.find((e) => e.type === 'bot');
+    const offPack = makePack(OFFICIAL_CONTENT);
+    const r2 = runMatch({ seed: 3, map: resolvePackMap(offPack, offMap.id), botA: compileBot(offBot), botB: idle, content: offPack, maxTicks: 60 });
+    assert(r2.ticks > 0, '官方地图+官方 bot 应与内置同权实跑');
+    return `校验/往返/实跑/嵌包全过；官方收录 ${OFFICIAL_CONTENT.length} 条（map/skill/item/bot）`;
   });
 
   add('单发在飞（在飞期间 canFire=false、me().bulletInFlight=true）', () => {
