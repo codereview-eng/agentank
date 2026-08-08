@@ -111,11 +111,15 @@ footer .mono{color:var(--muted)}
 </head>
 <body>
 <header>
-  <div class="logo"><b>AGEN</b>TANK <span>AI 脚本坦克对战 · 你当教练，AI 开炮</span></div>
+  <div class="logo"><b>AGEN</b>TANK <span data-i18n="ui.tagline">AI 脚本坦克对战 · 你当教练，AI 开炮</span></div>
   <div class="badge">
-    <span class="chip rank" id="rankChip">★ ELO 计算中…</span>
-    <span class="chip">赛季 S1</span>
+    <span class="chip rank" id="rankChip" data-i18n="ui.eloCalc">★ ELO 计算中…</span>
+    <span class="chip" data-i18n="ui.season">赛季 S1</span>
     <span class="chip">v0.1.0</span>
+    <select id="langSel" class="chip" style="background:transparent;border-color:var(--line);color:var(--muted);padding:2px 8px;font-size:12px" aria-label="language">
+      <option value="zh">中文</option>
+      <option value="en">English</option>
+    </select>
   </div>
 </header>
 <main>
@@ -125,7 +129,7 @@ footer .mono{color:var(--muted)}
     <textarea id="editor" spellcheck="false"></textarea>
     <div class="err" id="scriptErr"></div>
     <div class="ctrl">
-      <div class="row"><label>对手</label>
+      <div class="row"><label data-i18n="ui.opponent">对手</label>
         <select id="opp">
           <option value="stealth">隐身偷袭流 (内置 · 技能：隐身)</option>
           <option value="starGrabber">抢星流 (内置 · 技能：疾驰)</option>
@@ -133,7 +137,7 @@ footer .mono{color:var(--muted)}
           <option value="brawler">贴脸流 (内置 · 技能：超载)</option>
         </select>
       </div>
-      <div class="row"><label>我的技能</label>
+      <div class="row"><label data-i18n="ui.mySkill">我的技能</label>
         <select id="skillSel">
           <option value="teleport" selected>传送（8 选 1）</option>
           <option value="shield">护盾</option>
@@ -145,12 +149,12 @@ footer .mono{color:var(--muted)}
           <option value="boost">疾驰</option>
         </select>
       </div>
-      <div class="row"><label>地图</label>
+      <div class="row"><label data-i18n="ui.map">地图</label>
         <select id="mapSel">
-          <option value="random" selected>随机（按种子生成）</option>
+          <option value="random" selected data-i18n="ui.mapRandom">随机（按种子生成）</option>
         </select>
       </div>
-      <button class="btn" id="battleBtn">开 战</button>
+      <button class="btn" id="battleBtn" data-i18n="ui.battle">开 战</button>
       <button class="btn ghost" id="saveBtn">保存为新版本（当前 v1 · 共 1 版）</button>
     </div>
   </section>
@@ -158,15 +162,15 @@ footer .mono{color:var(--muted)}
   <!-- 中：竞技场回放 -->
   <section class="panel arena-wrap">
     <div class="verdict">
-      <span class="win" id="verdictMain">尚未开战</span>
-      <span class="vs" id="verdictSub">编辑左侧脚本，点「开 战」开始对局</span>
+      <span class="win" id="verdictMain" data-i18n="verdict.notStarted">尚未开战</span>
+      <span class="vs" id="verdictSub" data-i18n="verdict.editHint">编辑左侧脚本，点「开 战」开始对局</span>
       <span class="ref" id="verdictRef"></span>
     </div>
     <div class="arena-scroll"><canvas id="arena" width="476" height="476"></canvas></div>
     <div class="playbar">
-      <button class="pb-btn" id="firstBtn" title="跳到开局">⏮</button>
+      <button class="pb-btn" id="firstBtn" title="跳到开局" data-i18n-title="ui.jumpStart">⏮</button>
       <button class="pb-btn play" id="playBtn">▶</button>
-      <button class="pb-btn" id="lastBtn" title="跳到终局">⏭</button>
+      <button class="pb-btn" id="lastBtn" title="跳到终局" data-i18n-title="ui.jumpEnd">⏭</button>
       <div class="track" id="track"><i id="trackFill"></i><b id="trackKnob"></b></div>
       <span class="tick mono" id="tickLabel">t=— / —</span>
       <div class="speed" id="speedBox"><span data-s="0">1x</span><span data-s="1" class="on">2x</span><span data-s="2">4x</span></div>
@@ -175,20 +179,20 @@ footer .mono{color:var(--muted)}
 
   <!-- 右：战报 + 天梯 -->
   <section class="panel">
-    <h2><span class="dot"></span>实时战报</h2>
-    <div class="log" id="log"><div class="ln on"><span class="t mono">t=000</span>等待开战…</div></div>
-    <h2><span class="dot"></span>天梯 · 内置流派</h2>
+    <h2><span class="dot"></span><span data-i18n="ui.liveLog">实时战报</span></h2>
+    <div class="log" id="log"><div class="ln on"><span class="t mono">t=000</span><span data-i18n="ui.waiting">等待开战…</span></div></div>
+    <h2><span class="dot"></span><span data-i18n="ui.ladder">天梯 · 内置流派</span></h2>
     <table>
-      <thead><tr><th>#</th><th>坦克</th><th>流派</th><th>ELO</th><th>胜率</th></tr></thead>
-      <tbody id="ladderBody"><tr><td colspan="5" style="color:var(--dim)">空闲时计算循环赛中…</td></tr></tbody>
+      <thead><tr><th>#</th><th data-i18n="ui.thTank">坦克</th><th data-i18n="ui.thStyle">流派</th><th data-i18n="ui.thElo">ELO</th><th data-i18n="ui.thWin">胜率</th></tr></thead>
+      <tbody id="ladderBody"><tr><td colspan="5" style="color:var(--dim)" data-i18n="ui.ladderIdle">空闲时计算循环赛中…</td></tr></tbody>
     </table>
-    <div class="ladder-hint" id="ladderHint">固定 seeds 循环赛 · 页面空闲时实算</div>
+    <div class="ladder-hint" id="ladderHint" data-i18n="ui.ladderHintBoot">固定 seeds 循环赛 · 页面空闲时实算</div>
   </section>
 </main>
 <footer>
-  <span>引擎 <span class="mono" id="footSeed">deterministic · seed=每局自动生成</span></span>
-  <span>战报仅文字记录 <span class="mono" id="footLog">battle.log —</span>，回放由前端渲染</span>
-  <span>沙箱 <span class="mono">new Function 编译 · 受限 API · 脚本报错=本拍待机</span></span>
+  <span><span data-i18n="ui.footEngine">引擎</span> <span class="mono" id="footSeed">deterministic · seed=每局自动生成</span></span>
+  <span><span data-i18n="ui.footLogPre">战报仅文字记录</span> <span class="mono" id="footLog">battle.log —</span><span data-i18n="ui.footLogPost">，回放由前端渲染</span></span>
+  <span><span data-i18n="ui.footSandboxPre">沙箱</span> <span class="mono" data-i18n="ui.footSandbox">new Function 编译 · 受限 API · 脚本报错=本拍待机</span></span>
 </footer>
 <script type="module" src="./app.js"></script>
 </body>

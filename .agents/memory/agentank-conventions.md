@@ -34,3 +34,9 @@
 - RULES.items：start 40 / every 45 / max 2；kinds 六件套 medkit(+30HP)/rapid(3 次双发)/pierce(3 发 +10 伤且一击毁土堆)/helmet(挡一次伤害，同护盾槽)/clock(冻敌 6 拍)/boots(10 拍每拍 2 格)。
 - 新事件：item_spawn {kind,x,y}、item_pick {who,kind,x,y(,hp)}、item_gone {x,y,kind}；clock 复用 freeze_hit 加 source:"clock"；hit.dmg 随穿甲弹可变。
 - api：items()/nearestItem(kind?)，me() 增 rapidShots/pierceShots；压过即拾取（move/slide/patrol 同口径），随机落点走 randomFreeCell（避星/避道具/避圈），rules.items.forceAt 定点投放供测试。
+
+## v13 i18n 双语（2026-08-08）
+- web/i18n.js：LOCALES zh/en 键位同构（tests/i18n.test.js 锁死：en 无中文、占位符对齐、技能8/道具6/判定链6/地图13 全覆盖、zh 地图词条与引擎逐字同源）。
+- 语言解析 ?lang= > localStorage(agentank-lang) > navigator.language > zh；切换器在顶栏，切换=存偏好+带参刷新。
+- 引擎 report.js（battle.log）保持中文不动（确定性口径）；网页战报由 buildLog 按字典渲染。
+- check-dist ③ 默认脚本改从字典 script.default 提取（兼容旧字面量）；新增⑥ i18n 产物体检。

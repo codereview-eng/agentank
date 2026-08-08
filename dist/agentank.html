@@ -111,11 +111,15 @@ footer .mono{color:var(--muted)}
 </head>
 <body>
 <header>
-  <div class="logo"><b>AGEN</b>TANK <span>AI 脚本坦克对战 · 你当教练，AI 开炮</span></div>
+  <div class="logo"><b>AGEN</b>TANK <span data-i18n="ui.tagline">AI 脚本坦克对战 · 你当教练，AI 开炮</span></div>
   <div class="badge">
-    <span class="chip rank" id="rankChip">★ ELO 计算中…</span>
-    <span class="chip">赛季 S1</span>
+    <span class="chip rank" id="rankChip" data-i18n="ui.eloCalc">★ ELO 计算中…</span>
+    <span class="chip" data-i18n="ui.season">赛季 S1</span>
     <span class="chip">v0.1.0</span>
+    <select id="langSel" class="chip" style="background:transparent;border-color:var(--line);color:var(--muted);padding:2px 8px;font-size:12px" aria-label="language">
+      <option value="zh">中文</option>
+      <option value="en">English</option>
+    </select>
   </div>
 </header>
 <main>
@@ -125,7 +129,7 @@ footer .mono{color:var(--muted)}
     <textarea id="editor" spellcheck="false"></textarea>
     <div class="err" id="scriptErr"></div>
     <div class="ctrl">
-      <div class="row"><label>对手</label>
+      <div class="row"><label data-i18n="ui.opponent">对手</label>
         <select id="opp">
           <option value="stealth">隐身偷袭流 (内置 · 技能：隐身)</option>
           <option value="starGrabber">抢星流 (内置 · 技能：疾驰)</option>
@@ -133,7 +137,7 @@ footer .mono{color:var(--muted)}
           <option value="brawler">贴脸流 (内置 · 技能：超载)</option>
         </select>
       </div>
-      <div class="row"><label>我的技能</label>
+      <div class="row"><label data-i18n="ui.mySkill">我的技能</label>
         <select id="skillSel">
           <option value="teleport" selected>传送（8 选 1）</option>
           <option value="shield">护盾</option>
@@ -145,12 +149,12 @@ footer .mono{color:var(--muted)}
           <option value="boost">疾驰</option>
         </select>
       </div>
-      <div class="row"><label>地图</label>
+      <div class="row"><label data-i18n="ui.map">地图</label>
         <select id="mapSel">
-          <option value="random" selected>随机（按种子生成）</option>
+          <option value="random" selected data-i18n="ui.mapRandom">随机（按种子生成）</option>
         </select>
       </div>
-      <button class="btn" id="battleBtn">开 战</button>
+      <button class="btn" id="battleBtn" data-i18n="ui.battle">开 战</button>
       <button class="btn ghost" id="saveBtn">保存为新版本（当前 v1 · 共 1 版）</button>
     </div>
   </section>
@@ -158,15 +162,15 @@ footer .mono{color:var(--muted)}
   <!-- 中：竞技场回放 -->
   <section class="panel arena-wrap">
     <div class="verdict">
-      <span class="win" id="verdictMain">尚未开战</span>
-      <span class="vs" id="verdictSub">编辑左侧脚本，点「开 战」开始对局</span>
+      <span class="win" id="verdictMain" data-i18n="verdict.notStarted">尚未开战</span>
+      <span class="vs" id="verdictSub" data-i18n="verdict.editHint">编辑左侧脚本，点「开 战」开始对局</span>
       <span class="ref" id="verdictRef"></span>
     </div>
     <div class="arena-scroll"><canvas id="arena" width="476" height="476"></canvas></div>
     <div class="playbar">
-      <button class="pb-btn" id="firstBtn" title="跳到开局">⏮</button>
+      <button class="pb-btn" id="firstBtn" title="跳到开局" data-i18n-title="ui.jumpStart">⏮</button>
       <button class="pb-btn play" id="playBtn">▶</button>
-      <button class="pb-btn" id="lastBtn" title="跳到终局">⏭</button>
+      <button class="pb-btn" id="lastBtn" title="跳到终局" data-i18n-title="ui.jumpEnd">⏭</button>
       <div class="track" id="track"><i id="trackFill"></i><b id="trackKnob"></b></div>
       <span class="tick mono" id="tickLabel">t=— / —</span>
       <div class="speed" id="speedBox"><span data-s="0">1x</span><span data-s="1" class="on">2x</span><span data-s="2">4x</span></div>
@@ -175,20 +179,20 @@ footer .mono{color:var(--muted)}
 
   <!-- 右：战报 + 天梯 -->
   <section class="panel">
-    <h2><span class="dot"></span>实时战报</h2>
-    <div class="log" id="log"><div class="ln on"><span class="t mono">t=000</span>等待开战…</div></div>
-    <h2><span class="dot"></span>天梯 · 内置流派</h2>
+    <h2><span class="dot"></span><span data-i18n="ui.liveLog">实时战报</span></h2>
+    <div class="log" id="log"><div class="ln on"><span class="t mono">t=000</span><span data-i18n="ui.waiting">等待开战…</span></div></div>
+    <h2><span class="dot"></span><span data-i18n="ui.ladder">天梯 · 内置流派</span></h2>
     <table>
-      <thead><tr><th>#</th><th>坦克</th><th>流派</th><th>ELO</th><th>胜率</th></tr></thead>
-      <tbody id="ladderBody"><tr><td colspan="5" style="color:var(--dim)">空闲时计算循环赛中…</td></tr></tbody>
+      <thead><tr><th>#</th><th data-i18n="ui.thTank">坦克</th><th data-i18n="ui.thStyle">流派</th><th data-i18n="ui.thElo">ELO</th><th data-i18n="ui.thWin">胜率</th></tr></thead>
+      <tbody id="ladderBody"><tr><td colspan="5" style="color:var(--dim)" data-i18n="ui.ladderIdle">空闲时计算循环赛中…</td></tr></tbody>
     </table>
-    <div class="ladder-hint" id="ladderHint">固定 seeds 循环赛 · 页面空闲时实算</div>
+    <div class="ladder-hint" id="ladderHint" data-i18n="ui.ladderHintBoot">固定 seeds 循环赛 · 页面空闲时实算</div>
   </section>
 </main>
 <footer>
-  <span>引擎 <span class="mono" id="footSeed">deterministic · seed=每局自动生成</span></span>
-  <span>战报仅文字记录 <span class="mono" id="footLog">battle.log —</span>，回放由前端渲染</span>
-  <span>沙箱 <span class="mono">new Function 编译 · 受限 API · 脚本报错=本拍待机</span></span>
+  <span><span data-i18n="ui.footEngine">引擎</span> <span class="mono" id="footSeed">deterministic · seed=每局自动生成</span></span>
+  <span><span data-i18n="ui.footLogPre">战报仅文字记录</span> <span class="mono" id="footLog">battle.log —</span><span data-i18n="ui.footLogPost">，回放由前端渲染</span></span>
+  <span><span data-i18n="ui.footSandboxPre">沙箱</span> <span class="mono" data-i18n="ui.footSandbox">new Function 编译 · 受限 API · 脚本报错=本拍待机</span></span>
 </footer>
 <script>
 (function () {
@@ -1820,6 +1824,332 @@ function baseline(api) {
   return api.patrol();
 }
 
+// ===== web/i18n.js =====
+// AgenTank i18n：zh/en 双语字典 + 模板工具。
+// 纪律：zh/en 叶子键位必须完全同构（tests/i18n.test.js 锁死）；zh 地图词条与
+// src/engine/maps.js 逐字同源；en 叶子禁止出现中文。模板占位符用 {token}。
+// 引擎侧 report.js（battle.log 确定性文本日志）保持中文不动，i18n 只覆盖网页呈现层。
+
+const LANGS = ['zh', 'en'];
+
+// 语言解析优先级：?lang= > localStorage > 浏览器语言 > 默认 zh；非法值逐级回落。
+function resolveLang(query, stored, navLang) {
+  if (query && LANGS.includes(query)) return query;
+  if (stored && LANGS.includes(stored)) return stored;
+  if (navLang) return String(navLang).toLowerCase().startsWith('zh') ? 'zh' : 'en';
+  return 'zh';
+}
+
+// 模板替换：未提供的占位符原样保留（便于发现漏参）
+function fmt(tpl, vars) {
+  return String(tpl).replace(/\{(\w+)\}/g, (m, k) => (vars && k in vars ? String(vars[k]) : m));
+}
+
+const LOCALES = {
+  zh: {
+    skill: {
+      shield: '护盾', freeze: '冰冻', stun: '眩晕', overload: '超载',
+      cloak: '隐身', poison: '剧毒', teleport: '传送', boost: '疾驰',
+    },
+    item: {
+      medkit: '急救包', rapid: '双发弹', pierce: '穿甲弹',
+      helmet: '头盔', clock: '时钟', boots: '疾行靴',
+    },
+    reason: {
+      kill: '击杀', stars: '星数', hp: '血量判定',
+      damage: '输出判定', center: '圈心判定', coin: '种子掷签',
+    },
+    maps: {
+      crossFort: { name: '十字要塞', desc: '中央十字工事，四条突破口' },
+      openPlains: { name: '开阔平原', desc: '稀疏掩体，远距离对狙' },
+      mazeCorridor: { name: '迷宫回廊', desc: '宽走廊迷宫，卡位与绕后' },
+      grassSea: { name: '草海伏击', desc: '大片草丛，隐身流天堂' },
+      dirtCheckers: { name: '土堆棋盘', desc: '满场可摧毁掩体，越打越开阔' },
+      twinBridges: { name: '双桥对峙', desc: '城河分割南北，土桥是唯一通路' },
+      arena: { name: '竞技场', desc: '环形立柱围出中央斗兽场' },
+      serpentine: { name: '蛇形走廊', desc: 'S 形长墙，追逐与反打' },
+      honeycomb: { name: '蜂巢', desc: '成对方块阵列，遍地掩体' },
+      quadrants: { name: '四象限', desc: '十字分区，抢中路控图' },
+      frozenLake: { name: '冰湖', desc: '中央大冰湖，走一步滑到底' },
+      riverCrossing: { name: '冰河渡口', desc: '大河拦路，冰桥是唯一渡口' },
+      tundra: { name: '冻原', desc: '冰带与水塘混杂，走位与弹道分离' },
+    },
+    bots: {
+      stealth: { tank: '幽灵-7', style: '隐身偷袭' },
+      starGrabber: { tank: '采星者', style: '抢星' },
+      camper: { tank: '草垛王', style: '蹲草' },
+      brawler: { tank: '铁头娃', style: '贴脸' },
+    },
+    ui: {
+      title: 'AgenTank — AI 脚本坦克对战',
+      tagline: 'AI 脚本坦克对战 · 你当教练，AI 开炮',
+      season: '赛季 S1',
+      editorTitle: '策略脚本 · {name}',
+      myTank: '我的坦克',
+      opponent: '对手',
+      mySkill: '我的技能',
+      map: '地图',
+      mapRandom: '随机（按种子生成）',
+      mapOption: '{name}（{desc}）',
+      seed: '种子',
+      battle: '开 战',
+      save: '保存为新版本（当前 v{v} · 共 {n} 版）',
+      liveLog: '实时战报',
+      ladder: '天梯 · 内置流派',
+      thTank: '坦克', thStyle: '流派', thElo: 'ELO', thWin: '胜率',
+      skillOption: '{skill}（8 选 1）',
+      langLabel: '语言',
+      waiting: '等待开战…',
+      eloCalc: '★ ELO 计算中…',
+      ladderIdle: '空闲时计算循环赛中…',
+      ladderHintBoot: '固定 seeds 循环赛 · 页面空闲时实算',
+      jumpStart: '跳到开局',
+      jumpEnd: '跳到终局',
+      footEngine: '引擎',
+      footSeedAuto: 'deterministic · seed=每局自动生成',
+      footSeedReplay: 'deterministic · seed={seed}（回放）',
+      footLogPre: '战报仅文字记录',
+      footLogPost: '，回放由前端渲染',
+      footSandboxPre: '沙箱',
+      footSandbox: 'new Function 编译 · 受限 API · 脚本报错=本拍待机',
+    },
+    verdict: {
+      notStarted: '尚未开战',
+      editHint: '编辑左侧脚本，点「开战」开始对局',
+      draw: '◐ 平局',
+      drawWord: '平局',
+      sub: '{how} @ t={t} · 星 {a}:{b} · 用时 {sec}s',
+      ref: '回放 · 战报 #{id}',
+    },
+    ladder: {
+      userStyle: '自定义',
+      styleTag: '{style}流',
+      oppOptionBoot: '{style}流 (内置 · 技能：{skill})',
+      oppOption: '{style}流 (内置 · 技能：{skill} · ELO {elo})',
+      rankChip: '★ {name} · ELO {elo}（#{rank}/{total}）',
+      updated: '★ 天梯已更新',
+      hint: '固定 seeds {seeds} 双边循环赛 · 共 {n} 局实算',
+      cloakTag: ' 隐身中…',
+    },
+    log: {
+      start: '对战开始 · 地图 {w}×{h}',
+      startSeed: ' · 种子 <span class="sk">{seed}</span>（自动生成，回放用）',
+      startSkills: ' · 技能 {n0}=<span class="sk">{s0}</span> {n1}=<span class="sk">{s1}</span>',
+      moveStar: '{who} 直奔星星 ({x},{y})',
+      moveEnemy: '{who} 扑向敌人 ({x},{y})',
+      moveTo: '{who} 移动到 ({x},{y})',
+      turn: '{who} 转炮口{arrow}',
+      fire: '{who} 开火',
+      hit: '{who} 命中 {target} <span class="dmg">-{dmg}</span>（剩 {hp}）',
+      bulletWall: '{who} 的子弹被墙挡下',
+      bulletMound: '{who} 的子弹打在土堆上',
+      bulletOut: '{who} 的子弹飞出场外',
+      moundCrack: '({x},{y}) 的土堆被打出裂缝',
+      moundDestroyed: '({x},{y}) 的土堆<span class="dmg">被摧毁</span>',
+      bombPlace: '{who} 在 ({x},{y}) 放下<span class="sk">炸弹</span>',
+      bombExplode: '({x},{y}) <span class="dmg">炸弹爆炸</span>（波及 {cells} 格{hits}）',
+      shieldBlockBomb: '{who} 的<span class="sk">护盾</span>挡下了炸弹',
+      shieldBlockBullet: '{who} 的<span class="sk">护盾</span>挡下了子弹',
+      freezeHit: '{target} 被<span class="sk">冰冻</span> {dur} 拍',
+      poisonHit: '{target} <span class="sk">中毒</span>，{dur} 拍内持续掉血',
+      star: '{who} <span class="st">吃星 ★ {a}:{b}</span>',
+      starSpawn: '<span class="st">新星星</span>出现在 ({x},{y})',
+      starGone: '({x},{y}) 的星星被<span class="dmg">毒圈</span>吞没',
+      itemSpawn: '道具 <span class="sk">{item}</span> 出现在 ({x},{y})',
+      itemPickMedkit: '{who} 拾取<span class="sk">{item}</span>，回血至 {hp}',
+      itemPickClock: '{who} 拾取<span class="sk">{item}</span>，冻住了对手',
+      itemPick: '{who} 拾取<span class="sk">{item}</span>',
+      itemGone: '({x},{y}) 的{item}被<span class="dmg">毒圈</span>吞没',
+      zoneShrink: '<span class="dmg">毒圈收缩</span>（第 {ring} 圈），安全区 ({x0},{y0})~({x1},{y1})',
+      zoneHit: '{target} 在<span class="dmg">毒圈</span>中 -{dmg}（剩 {hp}）',
+      slide: '{who} 在<span class="sk">冰面</span>滑到 ({x},{y})',
+      skillCast: '{who} 施放<span class="sk">{skill}</span>',
+      stunHit: '{target} 被<span class="sk">眩晕</span> {dur} 拍',
+      death: '{who} <span class="dmg">被击毁</span>',
+      endDraw: '平局（星 {a}:{b}）',
+      endWin: '{who} <span class="win2">获胜</span>（{reason}，星 {a}:{b}）',
+    },
+    err: {
+      compileFail: '脚本编译失败：{msg}',
+      runtime: '脚本运行时报错 {n} 次（该拍已按待机处理）：{msg}',
+      noEntry: '未找到入口函数 {entry}(api)，请定义 function decide(api) {...}',
+      noDecide: '脚本未提供 decide(api) 函数',
+      cspEval: '线上托管版受 CSP 限制（禁 eval），暂不支持编译改动后的脚本；默认脚本可直接开战。要自定义脚本，请把本页另存为 .html 在本地打开。',
+      cspNote: '线上托管版：宿主 CSP 禁 eval，默认脚本以内置等价策略运行；编辑自定义脚本请把本页另存为 .html 在本地打开。',
+    },
+    script: {
+      default: `// 你的战术：优先吃星，残血传送跑路
+function decide(api) {
+  const me = api.me();
+  const star = api.nearestStar();
+
+  // 看得见敌人就开炮
+  if (api.enemyVisible() && api.canFire())
+    return api.fireAt(api.enemy());
+
+  // 残血：传送去安全角落
+  if (me.hp < 30 && api.ready('teleport'))
+    return api.teleport(api.safestCorner());
+
+  // 默认：抢最近的星
+  return star ? api.moveTo(star)
+              : api.patrol();
+}`,
+    },
+  },
+  en: {
+    skill: {
+      shield: 'Shield', freeze: 'Freeze', stun: 'Stun', overload: 'Overload',
+      cloak: 'Cloak', poison: 'Poison', teleport: 'Teleport', boost: 'Boost',
+    },
+    item: {
+      medkit: 'Medkit', rapid: 'Double Shot', pierce: 'AP Shell',
+      helmet: 'Helmet', clock: 'Clock', boots: 'Speed Boots',
+    },
+    reason: {
+      kill: 'kill', stars: 'stars', hp: 'HP tiebreak',
+      damage: 'damage tiebreak', center: 'center tiebreak', coin: 'seeded coin toss',
+    },
+    maps: {
+      crossFort: { name: 'Cross Fort', desc: 'central cross works, four breaches' },
+      openPlains: { name: 'Open Plains', desc: 'sparse cover, long-range duels' },
+      mazeCorridor: { name: 'Maze Corridor', desc: 'wide-corridor maze, hold and flank' },
+      grassSea: { name: 'Grass Sea', desc: 'vast grass, a cloaker paradise' },
+      dirtCheckers: { name: 'Dirt Checkers', desc: 'destructible cover everywhere, opens up as you shoot' },
+      twinBridges: { name: 'Twin Bridges', desc: 'a moat splits the field, dirt bridges are the only way' },
+      arena: { name: 'Arena', desc: 'ring of pillars around a central pit' },
+      serpentine: { name: 'Serpentine', desc: 'S-shaped walls, chase and counter' },
+      honeycomb: { name: 'Honeycomb', desc: 'paired block arrays, cover everywhere' },
+      quadrants: { name: 'Quadrants', desc: 'cross-divided zones, fight for mid' },
+      frozenLake: { name: 'Frozen Lake', desc: 'one big central ice lake, one step slides you across' },
+      riverCrossing: { name: 'River Crossing', desc: 'a river blocks the way, the ice bridge is the only ford' },
+      tundra: { name: 'Tundra', desc: 'ice belts mixed with ponds, footwork splits from ballistics' },
+    },
+    bots: {
+      stealth: { tank: 'Ghost-7', style: 'Stealth Ambush' },
+      starGrabber: { tank: 'Star Reaper', style: 'Star Rush' },
+      camper: { tank: 'Haystack King', style: 'Grass Camper' },
+      brawler: { tank: 'Iron Head', style: 'Brawler' },
+    },
+    ui: {
+      title: 'AgenTank — AI Script Tank Battle',
+      tagline: 'AI script tank battle · you coach, AI fires',
+      season: 'Season S1',
+      editorTitle: 'Strategy Script · {name}',
+      myTank: 'My Tank',
+      opponent: 'Opponent',
+      mySkill: 'My Skill',
+      map: 'Map',
+      mapRandom: 'Random (seeded)',
+      mapOption: '{name} ({desc})',
+      seed: 'Seed',
+      battle: 'BATTLE',
+      save: 'Save as new version (v{v} · {n} total)',
+      liveLog: 'Live Battle Log',
+      ladder: 'Ladder · Built-in Styles',
+      thTank: 'Tank', thStyle: 'Style', thElo: 'ELO', thWin: 'Win%',
+      skillOption: '{skill} (pick 1 of 8)',
+      langLabel: 'Lang',
+      waiting: 'waiting for battle…',
+      eloCalc: '★ ELO computing…',
+      ladderIdle: 'round-robin computed when idle…',
+      ladderHintBoot: 'fixed-seed round-robin · computed when the page is idle',
+      jumpStart: 'jump to start',
+      jumpEnd: 'jump to end',
+      footEngine: 'engine',
+      footSeedAuto: 'deterministic · seed=auto per battle',
+      footSeedReplay: 'deterministic · seed={seed} (replay)',
+      footLogPre: 'text-only battle log',
+      footLogPost: ', replay rendered client-side',
+      footSandboxPre: 'sandbox',
+      footSandbox: 'new Function compile · limited API · script error = idle that tick',
+    },
+    verdict: {
+      notStarted: 'Not started',
+      editHint: 'Edit the script on the left, press BATTLE to start',
+      draw: '◐ Draw',
+      drawWord: 'draw',
+      sub: '{how} @ t={t} · stars {a}:{b} · {sec}s',
+      ref: 'Replay · Report #{id}',
+    },
+    ladder: {
+      userStyle: 'Custom',
+      styleTag: '{style}',
+      oppOptionBoot: '{style} (built-in · skill: {skill})',
+      oppOption: '{style} (built-in · skill: {skill} · ELO {elo})',
+      rankChip: '★ {name} · ELO {elo} (#{rank}/{total})',
+      updated: '★ Ladder updated',
+      hint: 'fixed seeds {seeds} double round-robin · {n} matches computed',
+      cloakTag: ' cloaked…',
+    },
+    log: {
+      start: 'Battle start · map {w}×{h}',
+      startSeed: ' · seed <span class="sk">{seed}</span> (auto-generated, for replay)',
+      startSkills: ' · skills {n0}=<span class="sk">{s0}</span> {n1}=<span class="sk">{s1}</span>',
+      moveStar: '{who} rushes the star ({x},{y})',
+      moveEnemy: '{who} charges the enemy ({x},{y})',
+      moveTo: '{who} moves to ({x},{y})',
+      turn: '{who} turns turret {arrow}',
+      fire: '{who} fires',
+      hit: '{who} hits {target} <span class="dmg">-{dmg}</span> (left {hp})',
+      bulletWall: "{who}'s shell is blocked by a wall",
+      bulletMound: "{who}'s shell hits a dirt mound",
+      bulletOut: "{who}'s shell flies off the field",
+      moundCrack: 'dirt mound at ({x},{y}) cracks',
+      moundDestroyed: 'dirt mound at ({x},{y}) is <span class="dmg">destroyed</span>',
+      bombPlace: '{who} drops a <span class="sk">bomb</span> at ({x},{y})',
+      bombExplode: '<span class="dmg">bomb explodes</span> at ({x},{y}) ({cells} cells{hits})',
+      shieldBlockBomb: "{who}'s <span class=\"sk\">shield</span> blocks the bomb",
+      shieldBlockBullet: "{who}'s <span class=\"sk\">shield</span> blocks the shell",
+      freezeHit: '{target} is <span class="sk">frozen</span> for {dur} ticks',
+      poisonHit: '{target} is <span class="sk">poisoned</span>, bleeding for {dur} ticks',
+      star: '{who} <span class="st">grabs a star ★ {a}:{b}</span>',
+      starSpawn: '<span class="st">new star</span> appears at ({x},{y})',
+      starGone: 'star at ({x},{y}) swallowed by the <span class="dmg">zone</span>',
+      itemSpawn: 'item <span class="sk">{item}</span> appears at ({x},{y})',
+      itemPickMedkit: '{who} picks up <span class="sk">{item}</span>, heals to {hp}',
+      itemPickClock: '{who} picks up <span class="sk">{item}</span>, freezing the enemy',
+      itemPick: '{who} picks up <span class="sk">{item}</span>',
+      itemGone: '{item} at ({x},{y}) swallowed by the <span class="dmg">zone</span>',
+      zoneShrink: '<span class="dmg">zone shrinks</span> (ring {ring}), safe area ({x0},{y0})~({x1},{y1})',
+      zoneHit: '{target} takes -{dmg} in the <span class="dmg">zone</span> (left {hp})',
+      slide: '{who} slides on <span class="sk">ice</span> to ({x},{y})',
+      skillCast: '{who} casts <span class="sk">{skill}</span>',
+      stunHit: '{target} is <span class="sk">stunned</span> for {dur} ticks',
+      death: '{who} is <span class="dmg">destroyed</span>',
+      endDraw: 'draw (stars {a}:{b})',
+      endWin: '{who} <span class="win2">wins</span> ({reason}, stars {a}:{b})',
+    },
+    err: {
+      compileFail: 'Script compile failed: {msg}',
+      runtime: 'Script threw {n} time(s) (idled those ticks): {msg}',
+      noEntry: 'Entry function {entry}(api) not found; define function decide(api) {...}',
+      noDecide: 'Script does not provide a decide(api) function',
+      cspEval: 'Hosted build is CSP-restricted (no eval): edited scripts cannot be compiled online; the default script works out of the box. To customize, save this page as .html and open it locally.',
+      cspNote: 'Hosted build: host CSP forbids eval, the default script runs via a built-in equivalent strategy; to edit custom scripts save this page as .html and open locally.',
+    },
+    script: {
+      default: `// Your tactics: grab stars first, teleport away when low
+function decide(api) {
+  const me = api.me();
+  const star = api.nearestStar();
+
+  // fire whenever the enemy is visible
+  if (api.enemyVisible() && api.canFire())
+    return api.fireAt(api.enemy());
+
+  // low HP: teleport to the safest corner
+  if (me.hp < 30 && api.ready('teleport'))
+    return api.teleport(api.safestCorner());
+
+  // default: chase the nearest star
+  return star ? api.moveTo(star)
+              : api.patrol();
+}`,
+    },
+  },
+};
+
 // ===== bots barrel shim =====
 const bots = { camper, starGrabber, brawler, stealth, baseline };
 /*__ENGINE_END__*/
@@ -1828,6 +2158,31 @@ const bots = { camper, starGrabber, brawler, stealth, baseline };
 // 开发版经 <script type="module"> 加载；发布版由 scripts/build-web.mjs 去 import/export 内联进单文件。
 
 
+
+
+// ---------- i18n：?lang= > localStorage > 浏览器语言 > zh ----------
+const storedLang = (() => { try { return localStorage.getItem('agentank-lang'); } catch { return null; } })();
+const LANG = resolveLang(new URLSearchParams(location.search).get('lang'), storedLang, navigator.language);
+const L = LOCALES[LANG];
+const T = (path, vars) => fmt(path.split('.').reduce((o, k) => o[k], L), vars);
+document.documentElement.lang = LANG === 'zh' ? 'zh-CN' : 'en';
+document.title = L.ui.title;
+// 静态节点按 data-i18n="ui.key" 批量替换（切语言 = 存偏好 + 带参刷新，战报按新语言重建）
+for (const el of document.querySelectorAll('[data-i18n]')) el.textContent = T(el.dataset.i18n);
+for (const el of document.querySelectorAll('[data-i18n-title]')) el.title = T(el.dataset.i18nTitle);
+// 语言切换器：写偏好 → 以 ?lang= 刷新（种子/地图等参数保留，回放战报按新语言重建）
+{
+  const langSel = document.getElementById('langSel');
+  if (langSel) {
+    langSel.value = LANG;
+    langSel.addEventListener('change', () => {
+      try { localStorage.setItem('agentank-lang', langSel.value); } catch { /* 忽略 */ }
+      const url = new URL(location.href);
+      url.searchParams.set('lang', langSel.value);
+      location.href = url.toString();
+    });
+  }
+}
 
 const $id = (s) => document.getElementById(s);
 const editorEl = $id('editor');
@@ -1859,22 +2214,20 @@ const COLOR = {
 const TSZ = 28;
 const SPEEDS = [1, 2, 4];
 const BASE_TPS = 20; // 1x = 每秒 20 tick，用时口径 = ticks/20 秒
-const SKILL_CN = {
-  shield: '护盾', freeze: '冰冻', stun: '眩晕', overload: '超载',
-  cloak: '隐身', poison: '剧毒', teleport: '传送', boost: '疾驰',
-};
-// 终局判定链文案（平局已根治：击杀→星数→血量→输出→圈心→掷签）
-const REASON_CN = {
-  kill: '击杀', stars: '星数', hp: '血量判定',
-  damage: '输出判定', center: '圈心判定', coin: '种子掷签',
-};
-// 场上道具文案
-const ITEM_CN = {
-  medkit: '急救包', rapid: '双发弹', pierce: '穿甲弹',
-  helmet: '头盔', clock: '时钟', boots: '疾行靴',
-};
+// 技能/判定链/道具文案全部走当前语言字典（键位对齐由 tests/i18n.test.js 锁死）
+const SKILL_CN = L.skill;
+const REASON_CN = L.reason;
+const ITEM_CN = L.item;
 const skillSel = $id('skillSel');
 const userSkill = () => (skillSel ? skillSel.value : 'teleport');
+// 技能下拉按当前语言渲染（默认项标注「8 选 1」）
+if (skillSel) {
+  for (const o of skillSel.options) {
+    o.textContent = o.value === 'teleport'
+      ? T('ui.skillOption', { skill: SKILL_CN[o.value] ?? o.value })
+      : (SKILL_CN[o.value] ?? o.value);
+  }
+}
 
 // ---------- 地图选择（10 张预置图 + 默认随机图） ----------
 const mapSel = $id('mapSel');
@@ -1882,7 +2235,8 @@ if (mapSel) {
   for (const m of PRESET_MAPS) {
     const o = document.createElement('option');
     o.value = m.id;
-    o.textContent = `${m.name}（${m.desc}）`;
+    const mm = L.maps[m.id] || m; // 词条缺失时回落引擎中文（键位对齐由测试锁死，正常不触发）
+    o.textContent = T('ui.mapOption', { name: mm.name, desc: mm.desc });
     mapSel.appendChild(o);
   }
 }
@@ -1898,33 +2252,21 @@ function makeMap(seed) {
 }
 
 // ---------- 默认脚本（效果稿同款） ----------
-const DEFAULT_SCRIPT = `// 你的战术：优先吃星，残血传送跑路
-export default function decide(api) {
-  const me = api.me();
-  const star = api.nearestStar();
-
-  // 看得见敌人就开炮
-  if (api.enemyVisible() && api.canFire())
-    return api.fireAt(api.enemy());
-
-  // 残血：传送去安全角落
-  if (me.hp < 30 && api.ready('teleport'))
-    return api.teleport(api.safestCorner());
-
-  // 默认：抢最近的星
-  return star ? api.moveTo(star)
-              : api.patrol();
-}
-`;
+const DEFAULT_SCRIPT = L.script.default + '\n'; // 注释随语言切换，代码语义两语言逐行一致
 
 // ---------- 内置天梯阵容 ----------
 const ROSTER = [
-  { key: 'stealth', tank: '幽灵-7', style: '隐身偷袭', fn: bots.stealth },
-  { key: 'starGrabber', tank: '采星者', style: '抢星', fn: bots.starGrabber },
-  { key: 'camper', tank: '草垛王', style: '蹲草', fn: bots.camper },
-  { key: 'brawler', tank: '铁头娃', style: '贴脸', fn: bots.brawler },
+  { key: 'stealth', tank: L.bots.stealth.tank, style: L.bots.stealth.style, fn: bots.stealth },
+  { key: 'starGrabber', tank: L.bots.starGrabber.tank, style: L.bots.starGrabber.style, fn: bots.starGrabber },
+  { key: 'camper', tank: L.bots.camper.tank, style: L.bots.camper.style, fn: bots.camper },
+  { key: 'brawler', tank: L.bots.brawler.tank, style: L.bots.brawler.style, fn: bots.brawler },
 ];
 const LADDER_SEEDS = [11, 22, 33, 44, 55];
+// 对手下拉初始文案按当前语言渲染（天梯实算完成后由 renderLadder 再补 ELO）
+for (const r of ROSTER) {
+  const opt = oppSelect && oppSelect.querySelector(`option[value="${r.key}"]`);
+  if (opt) opt.textContent = T('ladder.oppOptionBoot', { style: r.style, skill: SKILL_CN[r.fn.skill] ?? r.fn.skill });
+}
 
 // ---------- 工具 ----------
 function seedFromString(s) {
@@ -1962,7 +2304,7 @@ function compileScript(src) {
   if (!EVAL_OK) {
     if (String(src).replace(/\s+/g, '') === DEFAULT_SCRIPT.replace(/\s+/g, ''))
       return defaultDecide;
-    throw new Error('线上托管版受 CSP 限制（禁 eval），暂不支持编译改动后的脚本；默认脚本可直接开战。要自定义脚本，请把本页另存为 .html 在本地打开。');
+    throw new Error(T('err.cspEval'));
   }
   const m = src.match(/export\s+default\s+function\s+([A-Za-z_$][\w$]*)/);
   const entry = m ? m[1] : 'decide';
@@ -1970,10 +2312,10 @@ function compileScript(src) {
   const factory = new Function(
     '"use strict";\n' + code +
     '\n;if (typeof ' + entry + ' === "function") return ' + entry + ';' +
-    '\nthrow new Error("未找到入口函数 ' + entry + '(api)，请定义 function decide(api) {...}");'
+    '\nthrow new Error(' + JSON.stringify(T('err.noEntry', { entry })) + ');'
   );
   const fn = factory();
-  if (typeof fn !== 'function') throw new Error('脚本未提供 decide(api) 函数');
+  if (typeof fn !== 'function') throw new Error(T('err.noDecide'));
   return fn;
 }
 
@@ -2015,8 +2357,8 @@ function saveVersion() {
   scheduleLadder();
 }
 function updateVersionUi() {
-  saveBtn.textContent = `保存为新版本（当前 v${curVersion} · 共 ${versionCount} 版）`;
-  editorTitle.textContent = `策略脚本 · 我的坦克 v${curVersion}`;
+  saveBtn.textContent = T('ui.save', { v: curVersion, n: versionCount });
+  editorTitle.textContent = T('ui.editorTitle', { name: `${L.ui.myTank} v${curVersion}` });
 }
 
 // ---------- 回放时间线（由事件数组重建每 tick 快照） ----------
@@ -2178,61 +2520,60 @@ function buildLog(result, names, seedStr) {
     let html = null;
     switch (e.type) {
       case 'start':
-        html = `对战开始 · 地图 ${e.width}×${e.height}`;
-        if (seedStr) html += ` · 种子 <span class="sk">${seedStr}</span>（自动生成，回放用）`;
-        if (e.skills) html += ` · 技能 ${nm(0)}=<span class="sk">${SKILL_CN[e.skills[0]] ?? e.skills[0]}</span> ${nm(1)}=<span class="sk">${SKILL_CN[e.skills[1]] ?? e.skills[1]}</span>`;
+        html = T('log.start', { w: e.width, h: e.height });
+        if (seedStr) html += T('log.startSeed', { seed: seedStr });
+        if (e.skills) html += T('log.startSkills', { n0: nm(0), n1: nm(1), s0: SKILL_CN[e.skills[0]] ?? e.skills[0], s1: SKILL_CN[e.skills[1]] ?? e.skills[1] });
         break;
       case 'goal':
-        html = e.tag === 'star' ? `${nm(e.who)} 直奔星星 (${e.x},${e.y})`
-          : e.tag === 'enemy' ? `${nm(e.who)} 扑向敌人 (${e.x},${e.y})`
-            : `${nm(e.who)} 移动到 (${e.x},${e.y})`;
+        html = T(e.tag === 'star' ? 'log.moveStar' : e.tag === 'enemy' ? 'log.moveEnemy' : 'log.moveTo', { who: nm(e.who), x: e.x, y: e.y });
         break;
-      case 'turn': html = `${nm(e.who)} 转炮口${{ '1,0': '→', '-1,0': '←', '0,1': '↓', '0,-1': '↑' }[e.dx + ',' + e.dy] ?? ''}`; break;
-      case 'fire': html = `${nm(e.who)} 开火`; break;
-      case 'hit': html = `${nm(e.who)} 命中 ${nm(e.target)} <span class="dmg">-${e.dmg}</span>（剩 ${e.hp}）`; break;
+      case 'turn': html = T('log.turn', { who: nm(e.who), arrow: { '1,0': '→', '-1,0': '←', '0,1': '↓', '0,-1': '↑' }[e.dx + ',' + e.dy] ?? '' }); break;
+      case 'fire': html = T('log.fire', { who: nm(e.who) }); break;
+      case 'hit': html = T('log.hit', { who: nm(e.who), target: nm(e.target), dmg: e.dmg, hp: e.hp }); break;
       case 'bullet_end':
-        if (e.reason === 'wall') html = `${nm(e.who)} 的子弹被墙挡下`;
-        else if (e.reason === 'mound') html = `${nm(e.who)} 的子弹打在土堆上`;
-        else if (e.reason === 'out') html = `${nm(e.who)} 的子弹飞出场外`;
+        if (e.reason === 'wall') html = T('log.bulletWall', { who: nm(e.who) });
+        else if (e.reason === 'mound') html = T('log.bulletMound', { who: nm(e.who) });
+        else if (e.reason === 'out') html = T('log.bulletOut', { who: nm(e.who) });
         break;
       case 'mound_hit':
-        if (e.hp > 0) html = `(${e.x},${e.y}) 的土堆被打出裂缝`;
+        if (e.hp > 0) html = T('log.moundCrack', { x: e.x, y: e.y });
         break;
-      case 'mound_destroyed': html = `(${e.x},${e.y}) 的土堆<span class="dmg">被摧毁</span>`; break;
-      case 'bomb_place': html = `${nm(e.who)} 在 (${e.x},${e.y}) 放下<span class="sk">炸弹</span>`; break;
+      case 'mound_destroyed': html = T('log.moundDestroyed', { x: e.x, y: e.y }); break;
+      case 'bomb_place': html = T('log.bombPlace', { who: nm(e.who), x: e.x, y: e.y }); break;
       case 'bomb_explode': {
-        const hits = (e.hits || []).map((h) => `${nm(h.who)} <span class="dmg">-${h.dmg}</span>`).join('、');
-        html = `(${e.x},${e.y}) <span class="dmg">炸弹爆炸</span>（波及 ${e.cells.length} 格${hits ? '，' + hits : ''}）`;
+        const sep = LANG === 'zh' ? '、' : ', ';
+        const lead = LANG === 'zh' ? '，' : ', ';
+        const hits = (e.hits || []).map((h) => `${nm(h.who)} <span class="dmg">-${h.dmg}</span>`).join(sep);
+        html = T('log.bombExplode', { x: e.x, y: e.y, cells: e.cells.length, hits: hits ? lead + hits : '' });
         break;
       }
-      case 'shield_block': html = `${nm(e.who)} 的<span class="sk">护盾</span>挡下了${e.source === 'bomb' ? '炸弹' : '子弹'}`; break;
-      case 'freeze_hit': html = `${nm(e.target)} 被<span class="sk">冰冻</span> ${e.duration} 拍`; break;
-      case 'poison_hit': html = `${nm(e.target)} <span class="sk">中毒</span>，${e.duration} 拍内持续掉血`; break;
+      case 'shield_block': html = T(e.source === 'bomb' ? 'log.shieldBlockBomb' : 'log.shieldBlockBullet', { who: nm(e.who) }); break;
+      case 'freeze_hit': html = T('log.freezeHit', { target: nm(e.target), dur: e.duration }); break;
+      case 'poison_hit': html = T('log.poisonHit', { target: nm(e.target), dur: e.duration }); break;
       case 'star':
         held[e.who] = e.total;
-        html = `${nm(e.who)} <span class="st">吃星 ★ ${held[0]}:${held[1]}</span>`;
+        html = T('log.star', { who: nm(e.who), a: held[0], b: held[1] });
         break;
-      case 'star_spawn': html = `<span class="st">新星星</span>出现在 (${e.x},${e.y})`; break;
-      case 'star_gone': html = `(${e.x},${e.y}) 的星星被<span class="dmg">毒圈</span>吞没`; break;
-      case 'item_spawn': html = `道具 <span class="sk">${ITEM_CN[e.kind] ?? e.kind}</span> 出现在 (${e.x},${e.y})`; break;
+      case 'star_spawn': html = T('log.starSpawn', { x: e.x, y: e.y }); break;
+      case 'star_gone': html = T('log.starGone', { x: e.x, y: e.y }); break;
+      case 'item_spawn': html = T('log.itemSpawn', { item: ITEM_CN[e.kind] ?? e.kind, x: e.x, y: e.y }); break;
       case 'item_pick':
-        html = e.kind === 'medkit'
-          ? `${nm(e.who)} 拾取<span class="sk">急救包</span>，回血至 ${e.hp}`
-          : e.kind === 'clock'
-            ? `${nm(e.who)} 拾取<span class="sk">时钟</span>，冻住了对手`
-            : `${nm(e.who)} 拾取<span class="sk">${ITEM_CN[e.kind] ?? e.kind}</span>`;
+        html = T(
+          e.kind === 'medkit' ? 'log.itemPickMedkit' : e.kind === 'clock' ? 'log.itemPickClock' : 'log.itemPick',
+          { who: nm(e.who), item: ITEM_CN[e.kind] ?? e.kind, hp: e.hp },
+        );
         break;
-      case 'item_gone': html = `(${e.x},${e.y}) 的${ITEM_CN[e.kind] ?? e.kind}被<span class="dmg">毒圈</span>吞没`; break;
-      case 'zone_shrink': html = `<span class="dmg">毒圈收缩</span>（第 ${e.ring} 圈），安全区 (${e.x0},${e.y0})~(${e.x1},${e.y1})`; break;
-      case 'zone_hit': html = `${nm(e.target)} 在<span class="dmg">毒圈</span>中 -${e.dmg}（剩 ${e.hp}）`; break;
-      case 'slide': html = `${nm(e.who)} 在<span class="sk">冰面</span>滑到 (${e.x},${e.y})`; break;
-      case 'skill': html = `${nm(e.who)} 施放<span class="sk">${SKILL_CN[e.name] ?? e.name}</span>`; break;
-      case 'stun_hit': html = `${nm(e.target)} 被<span class="sk">眩晕</span> ${e.duration} 拍`; break;
-      case 'death': html = `${nm(e.who)} <span class="dmg">被击毁</span>`; break;
+      case 'item_gone': html = T('log.itemGone', { item: ITEM_CN[e.kind] ?? e.kind, x: e.x, y: e.y }); break;
+      case 'zone_shrink': html = T('log.zoneShrink', { ring: e.ring, x0: e.x0, y0: e.y0, x1: e.x1, y1: e.y1 }); break;
+      case 'zone_hit': html = T('log.zoneHit', { target: nm(e.target), dmg: e.dmg, hp: e.hp }); break;
+      case 'slide': html = T('log.slide', { who: nm(e.who), x: e.x, y: e.y }); break;
+      case 'skill': html = T('log.skillCast', { who: nm(e.who), skill: SKILL_CN[e.name] ?? e.name }); break;
+      case 'stun_hit': html = T('log.stunHit', { target: nm(e.target), dur: e.duration }); break;
+      case 'death': html = T('log.death', { who: nm(e.who) }); break;
       case 'end':
         html = e.winner == null
-          ? `平局（星 ${e.stars[0]}:${e.stars[1]}）`
-          : `${nm(e.winner)} <span class="win2">获胜</span>（${REASON_CN[e.reason] ?? e.reason}，星 ${e.stars[0]}:${e.stars[1]}）`;
+          ? T('log.endDraw', { a: e.stars[0], b: e.stars[1] })
+          : T('log.endWin', { who: nm(e.winner), reason: REASON_CN[e.reason] ?? e.reason, a: e.stars[0], b: e.stars[1] });
         break;
       default: break;
     }
@@ -2713,7 +3054,7 @@ function drawArena(map, f, names, shots, sparks, curT) {
     drawHpBar(px, py, f.hp[i] / RULES.hp, f.hp[i] <= 30 ? '#E05252' : '#3FA34D');
     // 名牌药丸（参照原作红/蓝名牌徽章）
     ctx.font = 'bold 10px "PingFang SC", Menlo, sans-serif';
-    const tag = `P${i + 1} ${names[i]}${cloaked ? ' 隐身中…' : ''} ★${f.held[i]}`;
+    const tag = `P${i + 1} ${names[i]}${cloaked ? T('ladder.cloakTag') : ''} ★${f.held[i]}`;
     const tw = ctx.measureText(tag).width + 12;
     const bx = Math.min(Math.max(px - tw / 2, 2), map.width * TSZ - tw - 2);
     const by = py + TSZ * 0.68;
@@ -2827,7 +3168,7 @@ function render() {
       facing: [0, Math.PI], dead: [false, false],
       field: previewMap.stars.slice(0, RULES.maxFieldStars ?? previewMap.stars.length),
       bombs: [], gone: new Set(), cracked: new Set(),
-    }, ['我的坦克 v' + curVersion, '对手'], null, null, 0);
+    }, [`${L.ui.myTank} v${curVersion}`, T('ui.opponent')], null, null, 0);
   }
 }
 
@@ -2853,16 +3194,16 @@ function updateVerdict(box) {
   const r = match.result;
   const names = match.names;
   if (r.winner === null) {
-    verdictMain.textContent = '◐ 平局';
+    verdictMain.textContent = T('verdict.draw');
     verdictMain.style.color = 'var(--muted)';
   } else {
     verdictMain.textContent = `● ${names[r.winner]} WIN`;
     verdictMain.style.color = r.winner === 0 ? 'var(--p1)' : 'var(--p2)';
   }
-  const how = REASON_CN[r.reason] ?? '平局';
-  verdictSub.textContent = `${how} @ t=${r.ticks - 1} · 星 ${r.stars[0]}:${r.stars[1]} · 用时 ${(r.ticks / BASE_TPS).toFixed(1)}s`;
-  verdictRef.textContent = `回放 · 战报 #${10000 + (match.seed % 90000)}`;
-  if (box && box.count > 0) showErr(`脚本运行时报错 ${box.count} 次（该拍已按待机处理）：${box.last}`);
+  const how = REASON_CN[r.reason] ?? T('verdict.drawWord');
+  verdictSub.textContent = T('verdict.sub', { how, t: r.ticks - 1, a: r.stars[0], b: r.stars[1], sec: (r.ticks / BASE_TPS).toFixed(1) });
+  verdictRef.textContent = T('verdict.ref', { id: 10000 + (match.seed % 90000) });
+  if (box && box.count > 0) showErr(T('err.runtime', { n: box.count, msg: box.last }));
 }
 
 function updateFooter() {
@@ -2877,7 +3218,7 @@ function startBattle() {
   try {
     fn = compileScript(editorEl.value);
   } catch (e) {
-    showErr(`脚本编译失败：${String((e && e.message) || e)}`);
+    showErr(T('err.compileFail', { msg: String((e && e.message) || e) }));
     return;
   }
   const box = { count: 0, last: '' };
@@ -2891,7 +3232,7 @@ function startBattle() {
   const opp = ROSTER.find((r) => r.key === oppKey) || ROSTER[0];
   // 地图与对局同源：预置图按选择取，随机图与 seed 同源；先取图再喂给 runMatch，保证渲染的就是对局用图
   const map = makeMap(seed);
-  const names = [`我的坦克 v${curVersion}`, `${opp.style}流`];
+  const names = [`${L.ui.myTank} v${curVersion}`, T('ladder.styleTag', { style: opp.style })];
   const result = runMatch({ seed, botA: guarded, botB: opp.fn, map });
   const tl = buildTimeline(map, result);
   match = { seedStr, seed, map, result, names, frames: tl.frames, shots: tl.shots, sparks: tl.sparks, entries: buildLog(result, names, seedStr) };
@@ -2914,7 +3255,7 @@ function computeLadder() {
     const box = { count: 0, last: '' };
     const gfn = guardWrap(fn, box);
     gfn.skill = userSkill();
-    parts.push({ key: '__user__', tank: `我的坦克 v${curVersion}`, style: '自定义', fn: gfn, me: true, elo: 1200, w: 0, d: 0, g: 0 });
+    parts.push({ key: '__user__', tank: `${L.ui.myTank} v${curVersion}`, style: T('ladder.userStyle'), fn: gfn, me: true, elo: 1200, w: 0, d: 0, g: 0 });
   } catch { /* 用户脚本编译失败：天梯只算内置四家 */ }
   const jobs = [];
   for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) jobs.push([i, j]);
@@ -2956,14 +3297,14 @@ function renderLadder(parts) {
   for (const r of ROSTER) {
     const p = parts.find((x) => x.key === r.key);
     const opt = oppSelect.querySelector(`option[value="${r.key}"]`);
-    if (p && opt) opt.textContent = `${r.style}流 (内置 · 技能：${SKILL_CN[r.fn.skill] ?? r.fn.skill} · ELO ${Math.round(p.elo)})`;
+    if (p && opt) opt.textContent = T('ladder.oppOption', { style: r.style, skill: SKILL_CN[r.fn.skill] ?? r.fn.skill, elo: Math.round(p.elo) });
   }
   const mine = parts.find((p) => p.me);
   rankChip.textContent = mine
-    ? `★ 我的坦克 v${curVersion} · ELO ${Math.round(mine.elo)}（#${parts.indexOf(mine) + 1}/${parts.length}）`
-    : '★ 天梯已更新';
+    ? T('ladder.rankChip', { name: `${L.ui.myTank} v${curVersion}`, elo: Math.round(mine.elo), rank: parts.indexOf(mine) + 1, total: parts.length })
+    : T('ladder.updated');
   const hint = document.getElementById('ladderHint');
-  if (hint) hint.textContent = `固定 seeds ${JSON.stringify(LADDER_SEEDS)} 双边循环赛 · 共 ${parts.length * (parts.length - 1) * LADDER_SEEDS.length} 局实算`;
+  if (hint) hint.textContent = T('ladder.hint', { seeds: JSON.stringify(LADDER_SEEDS), n: parts.length * (parts.length - 1) * LADDER_SEEDS.length });
 }
 
 function scheduleLadder() {
@@ -3011,7 +3352,7 @@ if (!editorEl.value.trim()) editorEl.value = DEFAULT_SCRIPT;
 if (!EVAL_OK) {
   const note = document.createElement('div');
   note.style.cssText = 'margin:6px 12px 0;padding:6px 8px;font-size:11px;line-height:1.5;color:#8b949e;border:1px solid #30363d;border-radius:6px;';
-  note.textContent = '线上托管版：宿主 CSP 禁 eval，默认脚本以内置等价策略运行；编辑自定义脚本请把本页另存为 .html 在本地打开。';
+  note.textContent = T('err.cspNote');
   errEl.parentNode.insertBefore(note, errEl);
 }
 updateVersionUi();
@@ -3020,7 +3361,7 @@ if (qp.get('seed')) pendingSeed = qp.get('seed').trim() || null; // ?seed= 回�
 if (qp.get('map') && mapSel && [...mapSel.options].some((o) => o.value === qp.get('map'))) {
   mapSel.value = qp.get('map'); // ?map=id 直达预置图（可分享/截图复现）
 }
-footSeed.textContent = pendingSeed ? `deterministic · seed=${pendingSeed}（回放）` : 'deterministic · seed=每局自动生成';
+footSeed.textContent = pendingSeed ? T('ui.footSeedReplay', { seed: pendingSeed }) : T('ui.footSeedAuto');
 previewMap = makeMap(seedFromString(pendingSeed || genSeed()));
 setupCanvas(previewMap);
 requestAnimationFrame(loop);

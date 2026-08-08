@@ -34,8 +34,9 @@ if (JSON.stringify(r1.events) !== JSON.stringify(r2.events)) fail('内联引擎�
 console.log(`② 内联引擎实跑 PASS：seed=42 抢星流 vs 蹲草流 → winner=${r1.winner} reason=${r1.reason} ticks=${r1.ticks} 星=${r1.stars.join(':')}（双跑逐字节一致）`);
 
 // ③ 默认脚本（产物内 DEFAULT_SCRIPT）对战一局，模拟浏览器 startBattle 口径
-const dm = full.match(/const DEFAULT_SCRIPT = `([\s\S]*?)`;/);
-if (!dm) fail('未找到 DEFAULT_SCRIPT');
+// i18n 后默认脚本住进语言字典（web/i18n.js script.default，zh 在前）；兼容旧字面量写法
+const dm = full.match(/const DEFAULT_SCRIPT = `([\s\S]*?)`;/) || full.match(/default: `([\s\S]*?)`,/);
+if (!dm) fail('未找到 DEFAULT_SCRIPT（字面量与字典 script.default 均未命中）');
 const userCode = dm[1].replace(/export\s+default\s+/g, '');
 const userFn = new Function(`"use strict";\n${userCode}\n;return decide;`)();
 function seedFromString(s) {
@@ -73,5 +74,20 @@ console.log('④ 自包含体检 PASS：无外链 script/link/href/src，零外�
     summary.push(`${key}:${acts}`);
   }
   console.log(`⑤ 内置 bot 全员体检 PASS：零异常、80 拍动作数 ${summary.join(' ')}`);
+}
+// ⑥ i18n 体检：单文件产物必须内联双语字典与语言切换器（防打包漏 i18n.js 导致英文态静默缺失）
+{
+  const must = [
+    ['langSel', '语言切换器 select'],
+    ['>English<', '英文语言选项'],
+    ['data-i18n', '静态文案 i18n 标注'],
+    ['agentank-lang', '语言偏好 localStorage 键'],
+    ['Frozen Lake', 'en 地图词条（字典内联证据）'],
+    ['冰湖', 'zh 地图词条（字典内联证据）'],
+  ];
+  for (const [needle, why] of must) {
+    if (!html.includes(needle)) fail(`⑥ i18n 体检：产物缺少「${needle}」（${why}）`);
+  }
+  console.log('⑥ i18n 体检 PASS：zh/en 字典内联、语言切换器与 data-i18n 标注齐全');
 }
 console.log('check-dist: ALL PASS');

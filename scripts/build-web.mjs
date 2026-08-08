@@ -21,6 +21,7 @@ const ORDER = [
   'bots/brawler.js',
   'bots/stealth.js',
   'bots/baseline.js',
+  'web/i18n.js',
 ];
 
 // 内联覆盖检查：被剥掉的相对 import 必须指向 ORDER 内文件（或被跳过的 index.js 桶），
