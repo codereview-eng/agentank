@@ -1,6 +1,6 @@
 // AgenTank 核心：tick 制确定性模拟。
 // 每 tick 结算顺序（测试锁死）：
-//   1 计时器递减 → 2 星星重生 → 2.5 缩圈（吞没圈外星星）→ 3 推进已有子弹 → 4 超载自动补射
+//   1 计时器递减 → 2 星星重生 → 2.5 缩圈（吞没圈外星星/道具）→ 2.6 道具刷新 → 3 推进已有子弹 → 4 超载自动补射
 //   → 5 视野更新 → 6 双方基于同一快照 decide → 7 按 0、1 顺序裁决动作
 //   → 8 持续效果（炸弹引信/中毒/毒圈伤害）
 // 终局判定链（超时与同拍双亡通用，杜绝平局）：
@@ -28,6 +28,18 @@ export const RULES = {
     every: 30,         // 之后每多少 tick 再收一圈（收到中心 1 格封顶）
     dmg: 5,            // 毒圈基础伤害/tick（无视护盾）
     dmgStep: 1,        // 每多收一圈，毒圈伤害递增量
+  },
+  items: {             // 场上道具：周期性刷新，开车压过即拾取（先到先得）；缩圈吞没圈外道具
+    start: 40,         // 首个道具刷新 tick
+    every: 45,         // 之后每多少 tick 再尝试刷一个
+    max: 2,            // 场上同时最多道具数
+    kinds: ['medkit', 'rapid', 'pierce', 'helmet', 'clock', 'boots'],
+    medkit: { heal: 30 },            // 急救包：+30 HP（封顶 hp 上限）
+    rapid:  { shots: 3 },            // 双发弹：接下来 3 次开火自动 2 连发（同向补射）
+    pierce: { shots: 3, bonus: 10 }, // 穿甲弹：接下来 3 发子弹伤害 +10 且一击摧毁土堆
+    helmet: {},                      // 头盔：挡下一次子弹/炸弹伤害（与护盾同槽，消耗即失效）
+    clock:  { dur: 6 },              // 时钟：拾取当拍冻结敌人 6 拍
+    boots:  { dur: 10 },             // 疾行靴：10 拍内移动每拍 2 格
   },
   skills: {
     shield:   { cd: 60 },                    // 挡下一次子弹/炸弹伤害，消耗即失效
@@ -156,6 +168,8 @@ function makeApi(state, i) {
       boosted: T.boost > 0,
       shielded: T.shield > 0,
       bulletInFlight: inFlight(),
+      rapidShots: T.rapidShots,   // 双发弹剩余充能
+      pierceShots: T.pierceShots, // 穿甲弹剩余充能
       facing: { dx: T.facing[0], dy: T.facing[1] },
     }),
     enemy: () => ({ x: T.lastSeen.x, y: T.lastSeen.y, visible }),
@@ -209,6 +223,9 @@ function makeApi(state, i) {
     })),
     // 寻路目标查询
     nearestStar: () => nearestOf(T, state.stars),
+    // 道具查询：场上道具对双方全程可见（含草丛中的）
+    items: () => state.items.map((s) => ({ x: s.x, y: s.y, kind: s.kind })),
+    nearestItem: (kind) => nearestOf(T, kind ? state.items.filter((s) => s.kind === kind) : state.items),
     nearestGrass: () => {
       const cells = [];
       for (let y = 1; y < state.map.height - 1; y++) {
@@ -256,6 +273,82 @@ function pickupStar(state, i, ev) {
   if (state.stars.length === 0) state.starRespawnAt = state.t + state.R.starRespawn;
 }
 
+// ===== 场上道具 =====
+// 开车压过即拾取（先到先得），效果立即生效；kind 语义见 RULES.items 注释。
+function pickupItem(state, i, ev) {
+  const T = state.tanks[i];
+  const idx = state.items.findIndex((s) => s.x === T.x && s.y === T.y);
+  if (idx === -1) return;
+  const R = state.R;
+  const it = state.items.splice(idx, 1)[0];
+  const e = { t: state.t, type: 'item_pick', who: i, kind: it.kind, x: it.x, y: it.y };
+  switch (it.kind) {
+    case 'medkit':
+      T.hp = Math.min(R.hp, T.hp + R.items.medkit.heal);
+      e.hp = T.hp;
+      break;
+    case 'rapid':
+      T.rapidShots += R.items.rapid.shots;
+      break;
+    case 'pierce':
+      T.pierceShots += R.items.pierce.shots;
+      break;
+    case 'helmet':
+      T.shield = 1; // 与护盾技能同槽：挡下一次伤害，消耗即失效
+      break;
+    case 'clock': { // 拾取当拍冻结敌人（复用 freeze 渲染/战报口径，source 标记来源）
+      const E = state.tanks[1 - i];
+      E.freeze = Math.max(E.freeze, R.items.clock.dur);
+      ev(e);
+      ev({ t: state.t, type: 'freeze_hit', who: i, target: E.i, duration: R.items.clock.dur, source: 'clock' });
+      return;
+    }
+    case 'boots':
+      T.boost = Math.max(T.boost, R.items.boots.dur);
+      break;
+    default:
+      break;
+  }
+  ev(e);
+}
+
+// 道具落点合法性：可走格 + 安全区内 + 不叠星星/道具（随机刷新另避坦克，定点投放允许压在车位上→当拍即拾取）
+function legalItemCell(state, x, y) {
+  return isWalkable(state.map, x, y) && inZone(state, x, y)
+    && !state.stars.some((s) => s.x === x && s.y === y)
+    && !state.items.some((s) => s.x === x && s.y === y);
+}
+
+function spawnItem(state, ev) {
+  const R = state.R;
+  let p = null;
+  if (R.items.forceAt) { // 定点投放（测试/调试用）：非法落点按曼哈顿距离重定向到最近合法空格
+    const fx = R.items.forceAt.x | 0;
+    const fy = R.items.forceAt.y | 0;
+    if (legalItemCell(state, fx, fy)) p = { x: fx, y: fy };
+    else {
+      let best = null;
+      let bd = Infinity;
+      for (let y = 1; y < state.map.height - 1; y++) {
+        for (let x = 1; x < state.map.width - 1; x++) {
+          if (!legalItemCell(state, x, y)) continue;
+          if (state.tanks.some((T) => T.x === x && T.y === y)) continue;
+          const d = Math.abs(x - fx) + Math.abs(y - fy);
+          if (d < bd) { bd = d; best = { x, y }; }
+        }
+      }
+      p = best;
+    }
+  } else {
+    p = randomFreeCell(state);
+  }
+  if (!p) return;
+  const kind = R.items.kinds[randInt(state.rng, R.items.kinds.length)];
+  state.items.push({ x: p.x, y: p.y, kind });
+  ev({ t: state.t, type: 'item_spawn', kind, x: p.x, y: p.y });
+  for (const T of state.tanks) if (T.hp > 0) pickupItem(state, T.i, ev); // 投放可能正落在车位：当拍即拾取
+}
+
 function maybeGoal(state, i, tx, ty, ev) {
   const T = state.tanks[i];
   const k = tx + ',' + ty;
@@ -274,26 +367,34 @@ function maybeInvertDir(T, dir) {
 }
 
 // 出膛：生成飞行子弹实体 + fire 事件；开火打破隐身并暴露位置
+// 穿甲弹充能时：本发子弹带 pierce 标记与伤害加成（一击摧毁土堆）
 function spawnBullet(state, i, dx, dy, ev) {
   const T = state.tanks[i];
   const E = state.tanks[1 - i];
   if (T.cloak > 0) T.cloak = 0;
-  state.bullets.push({ owner: i, x: T.x, y: T.y, dx, dy });
+  const b = { owner: i, x: T.x, y: T.y, dx, dy };
+  if (T.pierceShots > 0) {
+    T.pierceShots--;
+    b.pierce = true;
+    b.dmg = state.R.damage + state.R.items.pierce.bonus;
+  }
+  state.bullets.push(b);
   ev({ t: state.t, type: 'fire', who: i, x: T.x, y: T.y, dx, dy });
   E.lastSeen = { x: T.x, y: T.y };
 }
 
-// 子弹伤害入口（护盾优先消耗）
-function damageByBullet(state, owner, K, ev) {
+// 子弹伤害入口（护盾优先消耗）；穿甲弹带伤害加成
+function damageByBullet(state, b, K, ev) {
   const R = state.R;
   if (K.shield > 0) {
     K.shield = 0;
     ev({ t: state.t, type: 'shield_block', who: K.i, source: 'bullet' });
     return;
   }
-  K.hp -= R.damage;
-  state.tanks[owner].dmgDealt += R.damage;
-  ev({ t: state.t, type: 'hit', who: owner, target: K.i, dmg: R.damage, hp: K.hp, x: K.x, y: K.y });
+  const dmg = b.dmg ?? R.damage;
+  K.hp -= dmg;
+  state.tanks[b.owner].dmgDealt += dmg;
+  ev({ t: state.t, type: 'hit', who: b.owner, target: K.i, dmg, hp: K.hp, x: K.x, y: K.y });
 }
 
 // 子弹进入某格的结算；返回 true 表示子弹终结
@@ -311,7 +412,7 @@ function resolveBulletCell(state, b, ev) {
   }
   if (tile === TILE.DIRT) {
     const key = b.x + ',' + b.y;
-    const hp = (state.moundHp.get(key) ?? state.R.moundHp) - 1;
+    const hp = b.pierce ? 0 : (state.moundHp.get(key) ?? state.R.moundHp) - 1; // 穿甲弹一击摧毁土堆
     ev({ t, type: 'mound_hit', x: b.x, y: b.y, hp: Math.max(0, hp) });
     if (hp <= 0) {
       state.moundHp.delete(key);
@@ -326,7 +427,7 @@ function resolveBulletCell(state, b, ev) {
   // 子弹不伤及发射者本人（穿过自身）：避免“超载补射 + 同向前进”走进自己弹道的退化自伤
   const K = state.tanks.find((T) => T.i !== b.owner && T.hp > 0 && T.x === b.x && T.y === b.y);
   if (K) {
-    damageByBullet(state, b.owner, K, ev);
+    damageByBullet(state, b, K, ev);
     ev({ t, type: 'bullet_end', who: b.owner, x: b.x, y: b.y, reason: 'hit' });
     return true;
   }
@@ -504,6 +605,7 @@ function slideOnIce(state, i, dir, ev) {
     T.y = ny;
     ev({ t: state.t, type: 'slide', who: i, x: nx, y: ny });
     pickupStar(state, i, ev);
+    pickupItem(state, i, ev);
   }
 }
 
@@ -522,6 +624,7 @@ function moveStep(state, i, tx, ty, ev) {
   T.y = ny;
   ev({ t: state.t, type: 'move', who: i, x: T.x, y: T.y });
   pickupStar(state, i, ev);
+  pickupItem(state, i, ev);
   slideOnIce(state, i, dir, ev);
   return true;
 }
@@ -567,6 +670,7 @@ function applyAction(state, i, a, ev) {
         T.y = ny;
         ev({ t, type: 'move', who: i, x: T.x, y: T.y });
         pickupStar(state, i, ev);
+        pickupItem(state, i, ev);
         slideOnIce(state, i, dir, ev);
       }
       break;
@@ -587,6 +691,9 @@ function applyAction(state, i, a, ev) {
       spawnBullet(state, i, dir[0], dir[1], ev);
       if (T.overloadArmed) { // 超载：登记 1 拍后的同向自动补射
         T.overloadArmed = false;
+        T.pendingShot = { dx: dir[0], dy: dir[1], delay: 1 };
+      } else if (T.rapidShots > 0) { // 双发弹：每次手动开火消耗 1 充能，自动补射第二发
+        T.rapidShots--;
         T.pendingShot = { dx: dir[0], dy: dir[1], delay: 1 };
       }
       break;
@@ -626,6 +733,7 @@ function randomFreeCell(state) {
     if (!inZone(state, x, y)) continue; // 星星只在安全区内重生
     if (state.tanks.some((T) => T.x === x && T.y === y)) continue;
     if (state.stars.some((s) => s.x === x && s.y === y)) continue;
+    if (state.items.some((s) => s.x === x && s.y === y)) continue;
     return { x, y };
   }
   return null;
@@ -667,6 +775,7 @@ export function runMatch(opts = {}) {
     ...(opts.rules || {}),
     skills: { ...RULES.skills, ...((opts.rules || {}).skills || {}) },
     zone: { ...RULES.zone, ...((opts.rules || {}).zone || {}) },
+    items: { ...RULES.items, ...((opts.rules || {}).items || {}) },
   };
   if (opts.maxTicks != null) R.maxTicks = opts.maxTicks;
   // 技能 8 选 1：显式参数 > bot 自带偏好（bot.skill）> 默认 A=teleport、B=cloak
@@ -684,6 +793,8 @@ export function runMatch(opts = {}) {
     t: 0,
     stars: m.stars.slice(0, R.maxFieldStars).map((s) => ({ x: s.x, y: s.y })), // 单星：初始截断
     starRespawnAt: null,
+    items: [],
+    itemSpawnAt: R.items.start,
     zoneRing: 0,
     bullets: [],
     bombs: [],
@@ -707,6 +818,8 @@ export function runMatch(opts = {}) {
       poison: 0,
       boost: 0,
       shield: 0,
+      rapidShots: 0,
+      pierceShots: 0,
       overloadArmed: false,
       pendingShot: null,
       deadAnnounced: false,
@@ -749,6 +862,17 @@ export function runMatch(opts = {}) {
         if (state.starRespawnAt == null) state.starRespawnAt = t + R.starRespawn;
       }
       state.stars = kept;
+      const keptItems = [];
+      for (const s of state.items) {
+        if (inZone(state, s.x, s.y)) { keptItems.push(s); continue; }
+        ev({ t, type: 'item_gone', x: s.x, y: s.y, kind: s.kind }); // 圈外道具被毒圈吞没，不补偿重生
+      }
+      state.items = keptItems;
+    }
+    // 2.6 道具刷新：t≥items.start 起每 items.every 拍尝试刷一个（场上封顶 items.max）
+    if (t >= state.itemSpawnAt) {
+      if (state.items.length < R.items.max) spawnItem(state, ev);
+      state.itemSpawnAt = t + R.items.every;
     }
     // 3. 推进已有子弹（先于双方动作）
     advanceBullets(state, ev);

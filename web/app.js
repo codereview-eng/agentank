@@ -42,6 +42,11 @@ const REASON_CN = {
   kill: '击杀', stars: '星数', hp: '血量判定',
   damage: '输出判定', center: '圈心判定', coin: '种子掷签',
 };
+// 场上道具文案
+const ITEM_CN = {
+  medkit: '急救包', rapid: '双发弹', pierce: '穿甲弹',
+  helmet: '头盔', clock: '时钟', boots: '疾行靴',
+};
 const skillSel = $id('skillSel');
 const userSkill = () => (skillSel ? skillSel.value : 'teleport');
 
@@ -205,6 +210,7 @@ function buildTimeline(map, result) {
   const dead = [false, false];
   // 单星规则：引擎只保留地图声明的第一颗星，渲染同口径截断
   let field = map.stars.slice(0, RULES.maxFieldStars ?? map.stars.length).map((s) => ({ x: s.x, y: s.y }));
+  let items = [];              // 在场道具 [{x,y,kind}]
   let bombs = [];              // 在场炸弹 [{x,y,t0}]
   let zone = 0;                // 已收缩圈数（安全区 [1+zone, W-2-zone]）
   let gone = new Set();        // 已摧毁土堆 "x,y"
@@ -239,6 +245,17 @@ function buildTimeline(map, result) {
           break;
         case 'star_gone':
           field = field.filter((s) => !(s.x === e.x && s.y === e.y));
+          break;
+        case 'item_spawn':
+          items = items.concat([{ x: e.x, y: e.y, kind: e.kind }]);
+          break;
+        case 'item_pick':
+          items = items.filter((s) => !(s.x === e.x && s.y === e.y));
+          if (e.kind === 'medkit') hp[e.who] = e.hp; // 急救包回血
+          sparks.push({ t, x: e.x, y: e.y, kind: 'tp' });
+          break;
+        case 'item_gone':
+          items = items.filter((s) => !(s.x === e.x && s.y === e.y));
           break;
         case 'zone_shrink':
           zone = e.ring;
@@ -320,7 +337,7 @@ function buildTimeline(map, result) {
       cloak: [...cloakLeft], stun: [...stunLeft],
       frozen: [...frozenLeft], poison: [...poisonLeft], shield: [...shieldOn],
       facing: [...facing], dead: [...dead], zone,
-      field, bombs, gone, cracked, // 均为 copy-on-write 新引用，即本 tick 快照
+      field, items, bombs, gone, cracked, // 均为 copy-on-write 新引用，即本 tick 快照
     });
   }
   return { frames, shots, sparks };
@@ -371,6 +388,15 @@ function buildLog(result, names, seedStr) {
         break;
       case 'star_spawn': html = `<span class="st">新星星</span>出现在 (${e.x},${e.y})`; break;
       case 'star_gone': html = `(${e.x},${e.y}) 的星星被<span class="dmg">毒圈</span>吞没`; break;
+      case 'item_spawn': html = `道具 <span class="sk">${ITEM_CN[e.kind] ?? e.kind}</span> 出现在 (${e.x},${e.y})`; break;
+      case 'item_pick':
+        html = e.kind === 'medkit'
+          ? `${nm(e.who)} 拾取<span class="sk">急救包</span>，回血至 ${e.hp}`
+          : e.kind === 'clock'
+            ? `${nm(e.who)} 拾取<span class="sk">时钟</span>，冻住了对手`
+            : `${nm(e.who)} 拾取<span class="sk">${ITEM_CN[e.kind] ?? e.kind}</span>`;
+        break;
+      case 'item_gone': html = `(${e.x},${e.y}) 的${ITEM_CN[e.kind] ?? e.kind}被<span class="dmg">毒圈</span>吞没`; break;
       case 'zone_shrink': html = `<span class="dmg">毒圈收缩</span>（第 ${e.ring} 圈），安全区 (${e.x0},${e.y0})~(${e.x1},${e.y1})`; break;
       case 'zone_hit': html = `${nm(e.target)} 在<span class="dmg">毒圈</span>中 -${e.dmg}（剩 ${e.hp}）`; break;
       case 'slide': html = `${nm(e.who)} 在<span class="sk">冰面</span>滑到 (${e.x},${e.y})`; break;
@@ -410,6 +436,62 @@ function rrect(x, y, w, h, r) {
   ctx.arcTo(x, y + h, x, y, r);
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
+}
+
+// 场上道具徽章：白底圆牌 + 逐 kind 简笔图标（急救包/双发弹/穿甲弹/头盔/时钟/疾行靴）
+function drawItemBadge(cx, cy, kind) {
+  const r = TSZ * 0.36;
+  ctx.fillStyle = 'rgba(255,252,240,0.95)';
+  ctx.strokeStyle = 'rgba(60,50,30,0.8)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill(); ctx.stroke();
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  switch (kind) {
+    case 'medkit': // 红十字
+      ctx.strokeStyle = '#c0392b';
+      ctx.beginPath();
+      ctx.moveTo(cx - r * 0.5, cy); ctx.lineTo(cx + r * 0.5, cy);
+      ctx.moveTo(cx, cy - r * 0.5); ctx.lineTo(cx, cy + r * 0.5);
+      ctx.stroke();
+      break;
+    case 'rapid': // 双弹头
+      ctx.fillStyle = '#8c2a55';
+      ctx.beginPath(); ctx.arc(cx - r * 0.3, cy, r * 0.24, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + r * 0.3, cy, r * 0.24, 0, 7); ctx.fill();
+      break;
+    case 'pierce': // 穿甲箭头
+      ctx.strokeStyle = '#4a3a86';
+      ctx.beginPath();
+      ctx.moveTo(cx - r * 0.45, cy + r * 0.35);
+      ctx.lineTo(cx, cy - r * 0.45);
+      ctx.lineTo(cx + r * 0.45, cy + r * 0.35);
+      ctx.stroke();
+      break;
+    case 'helmet': // 头盔穹顶
+      ctx.strokeStyle = '#7f8c8d';
+      ctx.beginPath(); ctx.arc(cx, cy + r * 0.15, r * 0.45, Math.PI, 0); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx - r * 0.5, cy + r * 0.2); ctx.lineTo(cx + r * 0.5, cy + r * 0.2); ctx.stroke();
+      break;
+    case 'clock': // 表盘 + 指针
+      ctx.strokeStyle = '#2c6e9e';
+      ctx.beginPath(); ctx.arc(cx, cy, r * 0.5, 0, 7); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - r * 0.38);
+      ctx.moveTo(cx, cy); ctx.lineTo(cx + r * 0.28, cy);
+      ctx.stroke();
+      break;
+    case 'boots': // 疾行双箭羽
+      ctx.strokeStyle = '#3f621e';
+      ctx.beginPath();
+      ctx.moveTo(cx - r * 0.45, cy - r * 0.3); ctx.lineTo(cx + r * 0.05, cy); ctx.lineTo(cx - r * 0.45, cy + r * 0.3);
+      ctx.moveTo(cx - r * 0.05, cy - r * 0.3); ctx.lineTo(cx + r * 0.45, cy); ctx.lineTo(cx - r * 0.05, cy + r * 0.3);
+      ctx.stroke();
+      break;
+    default:
+      break;
+  }
+  ctx.lineCap = 'butt';
 }
 
 function starPath(cx, cy, r) {
@@ -728,6 +810,7 @@ function drawArena(map, f, names, shots, sparks, curT) {
   }
   // 星星
   for (const s of f.field) drawStarShape(s.x * TSZ + TSZ / 2, s.y * TSZ + TSZ / 2, TSZ * 0.34, COLOR.star);
+  for (const it of f.items || []) drawItemBadge(it.x * TSZ + TSZ / 2, it.y * TSZ + TSZ / 2, it.kind); // 场上道具
   // 弹道（逐 tick 插值飞行：出膛→终点按 2 格/tick 推进，终结后拖尾渐隐 2 拍）
   if (shots) {
     for (const s of shots) {

@@ -310,6 +310,38 @@ function sectionMechanics() {
     return '星星避圈重生 + 传送重定向进安全区';
   });
 
+  add('场上道具（刷新时刻表 + 拾取效果 + 缩圈吞没）', () => {
+    const mk = () => mapFromAscii([
+      '#########', '#A......#', '#.......#', '#.......#', '#.......#',
+      '#.......#', '#.......#', '#......B#', '#########',
+    ]);
+    // 刷新时刻表 + 封顶
+    const r = runMatch({
+      seed: 1, map: mk(), botA: idle, botB: idle,
+      rules: { zone: { start: 9999 }, items: { start: 3, every: 4, max: 2 } }, maxTicks: 30,
+    });
+    const spawns = r.events.filter((e) => e.type === 'item_spawn');
+    assert(spawns.length === 2 && spawns[0].t === 3 && spawns[1].t === 7, '刷新应按 start/every 且封顶 max');
+    // 急救包拾取回血（forceAt 定点投放在车位上 → 当拍拾取）
+    const r2 = runMatch({
+      seed: 1, map: mapFromAscii(['##########', '#A......B#', '##########']), botA: idle,
+      botB: (api) => (api.canFire() ? api.fireAt(api.enemy()) : null),
+      rules: { zone: { start: 9999 }, items: { start: 12, every: 100, max: 1, kinds: ['medkit'], forceAt: { x: 1, y: 1 } } },
+      maxTicks: 20,
+    });
+    const pick = r2.events.find((e) => e.type === 'item_pick' && e.kind === 'medkit');
+    assert(pick && pick.hp > 80, '受伤后拾取急救包应回血');
+    // 缩圈吞没圈外道具
+    const r3 = runMatch({
+      seed: 1, map: mk(), botA: idle, botB: idle,
+      rules: { zone: { start: 6, every: 100, dmg: 0, dmgStep: 0 }, items: { start: 2, every: 100, max: 1, kinds: ['helmet'], forceAt: { x: 1, y: 4 } } },
+      maxTicks: 12,
+    });
+    const gone = r3.events.find((e) => e.type === 'item_gone');
+    assert(gone && gone.t === 6, '收圈当拍应吞没圈外道具');
+    return `刷新 t=3/7 封顶 2；急救包回血至 ${pick.hp}；item_gone@t6`;
+  });
+
   add('单发在飞（在飞期间 canFire=false、me().bulletInFlight=true）', () => {
     const map = mapFromAscii(['############', '#A........B#', '############']);
     const log = [];

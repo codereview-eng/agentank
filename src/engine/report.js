@@ -5,6 +5,11 @@ const SKILL_NAMES = {
   cloak: '隐身', poison: '剧毒', teleport: '传送', boost: '疾驰',
 };
 
+const ITEM_NAMES = {
+  medkit: '急救包', rapid: '双发弹', pierce: '穿甲弹',
+  helmet: '头盔', clock: '时钟', boots: '疾行靴',
+};
+
 export function renderText(result, names = ['甲', '乙']) {
   const nm = (i) => names[i] ?? `P${i}`;
   const lines = [];
@@ -65,6 +70,19 @@ export function renderText(result, names = ['甲', '乙']) {
         break;
       case 'star_gone':
         lines.push(`${t} (${e.x},${e.y}) 的星星被毒圈吞没`);
+        break;
+      case 'item_spawn':
+        lines.push(`${t} 道具「${ITEM_NAMES[e.kind] ?? e.kind}」出现在(${e.x},${e.y})`);
+        break;
+      case 'item_pick': {
+        const n = ITEM_NAMES[e.kind] ?? e.kind;
+        if (e.kind === 'medkit') lines.push(`${t} ${nm(e.who)} 拾取急救包，回血至 ${e.hp}`);
+        else if (e.kind === 'clock') lines.push(`${t} ${nm(e.who)} 拾取时钟，冻住了对手`);
+        else lines.push(`${t} ${nm(e.who)} 拾取${n}`);
+        break;
+      }
+      case 'item_gone':
+        lines.push(`${t} (${e.x},${e.y}) 的${ITEM_NAMES[e.kind] ?? e.kind}被毒圈吞没`);
         break;
       case 'zone_shrink':
         lines.push(`${t} 毒圈收缩（第${e.ring}圈），安全区 (${e.x0},${e.y0})~(${e.x1},${e.y1})`);

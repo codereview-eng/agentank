@@ -112,6 +112,11 @@
           "detail": "星星避圈重生 + 传送重定向进安全区"
         },
         {
+          "name": "场上道具（刷新时刻表 + 拾取效果 + 缩圈吞没）",
+          "pass": true,
+          "detail": "刷新 t=3/7 封顶 2；急救包回血至 90；item_gone@t6"
+        },
+        {
           "name": "单发在飞（在飞期间 canFire=false、me().bulletInFlight=true）",
           "pass": true,
           "detail": "t1 在飞（bulletInFlight=true、canFire=false）"
@@ -151,17 +156,17 @@
         {
           "name": "同 seed=7 两次重放逐字节相等（蹲草流 vs 隐身偷袭流）",
           "pass": true,
-          "detail": "events 142 条，序列化 7454 字节，逐字节相等"
+          "detail": "events 143 条，序列化 7512 字节，逐字节相等"
         },
         {
           "name": "同 seed=101 两次重放逐字节相等（隐身偷袭流 vs 基线）",
           "pass": true,
-          "detail": "events 370 条，序列化 18448 字节，逐字节相等"
+          "detail": "events 372 条，序列化 18562 字节，逐字节相等"
         },
         {
           "name": "同 seed=20260805 两次重放逐字节相等（贴脸流 vs 蹲草流）",
           "pass": true,
-          "detail": "events 121 条，序列化 6750 字节，逐字节相等"
+          "detail": "events 122 条，序列化 6807 字节，逐字节相等"
         },
         {
           "name": "异 seed（42 vs 43）事件流必不同",
@@ -198,7 +203,7 @@
         {
           "name": "流派间存在明显非 50% 对局（|得分-5|≥1.5）",
           "pass": true,
-          "detail": "循环赛 蹲草流 vs 抢星流=1/10；蹲草流 vs 贴脸流=7/10；蹲草流 vs 隐身偷袭流=2/10；抢星流 vs 贴脸流=3/10；抢星流 vs 隐身偷袭流=8/10；贴脸流 vs 隐身偷袭流=6/10；偏离对局数=5"
+          "detail": "循环赛 蹲草流 vs 抢星流=4/10；蹲草流 vs 贴脸流=7/10；蹲草流 vs 隐身偷袭流=2/10；抢星流 vs 贴脸流=4/10；抢星流 vs 隐身偷袭流=6/10；贴脸流 vs 隐身偷袭流=6/10；偏离对局数=2"
         }
       ]
     },
@@ -222,7 +227,7 @@
         {
           "name": "100 局（随机 seeds、四组对阵轮换、默认地图）平均单局 <50ms",
           "pass": true,
-          "detail": "总耗时 553.47ms，平均 5.53ms/局，共 10088 ticks"
+          "detail": "总耗时 428.72ms，平均 4.29ms/局，共 10056 ticks"
         }
       ]
     },
@@ -239,11 +244,11 @@
       ]
     }
   ],
-  "generatedAt": "2026-08-07T16:51:25.240Z",
+  "generatedAt": "2026-08-08T05:20:37.158Z",
   "engineTestSummary": {
-    "pass": 75,
+    "pass": 87,
     "fail": 0,
-    "tests": 75,
+    "tests": 87,
     "ok": true
   }
 }

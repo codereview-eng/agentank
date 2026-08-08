@@ -29,3 +29,8 @@
 - RULES.zone：start 240 / every 30 / dmg 5 / dmgStep 1；安全区 [1+ring, w-2-ring]，收到中心 1 格封顶；毒圈伤害无视护盾。
 - 新事件：zone_shrink {ring,x0,y0,x1,y1}、zone_hit {target,dmg,hp}、star_gone {x,y}；星星/传送/safestCorner 全部避圈。
 - 平局已根治：end.reason 新增 hp/damage/center/coin（击杀→星数→HP→输出→圈心→种子掷签），winner 永不为 null；旧战报 draw 仅回放兼容。
+
+## v12 场上道具（2026-08-08）
+- RULES.items：start 40 / every 45 / max 2；kinds 六件套 medkit(+30HP)/rapid(3 次双发)/pierce(3 发 +10 伤且一击毁土堆)/helmet(挡一次伤害，同护盾槽)/clock(冻敌 6 拍)/boots(10 拍每拍 2 格)。
+- 新事件：item_spawn {kind,x,y}、item_pick {who,kind,x,y(,hp)}、item_gone {x,y,kind}；clock 复用 freeze_hit 加 source:"clock"；hit.dmg 随穿甲弹可变。
+- api：items()/nearestItem(kind?)，me() 增 rapidShots/pierceShots；压过即拾取（move/slide/patrol 同口径），随机落点走 randomFreeCell（避星/避道具/避圈），rules.items.forceAt 定点投放供测试。
