@@ -47,3 +47,10 @@
 - runMatch({content: pack})：skillDefs/itemDefs = 内置 + 内容包（castSkill/pickupItem 按 effect.kind 分发）；战报 result.content 嵌整包 → 同 seed+同 pack 逐字节重现。
 - web：创作工坊 details 面板（localStorage agentank-workshop）；下拉三来源合并带 [私有]/[已分享]/[官方] 徽标；深链 ?pack=/&script=/&skill=/&opp=（分享本局=串全嵌）。
 - 坑：build-web 剥 import 是单行正则，app.js import 必须写单行；check-dist ⑦ 工坊体检 + makeEngine 暴露面记得加新符号。
+
+## play 公网部署通道勘误（2026-08-10）
+- 旧结论作废：play.run.ceo 的 /g/<publicId>（project-service 匿名快照托管）是旧通道，不用于游戏部署。
+- 新通道 = gamesrvd（run-solo-company services/gamesrvd）：单进程零依赖 + node:sqlite，每游戏一个目录契约（schema.json + game.sqlite + files/ + web/），per-slug 子域 https://play-<slug>.run.ceo/（通配 vhost 具名捕获 rewrite，旧路径 301）。
+- 能力面（对齐 base44）：entities（REST CRUD/行级权限/append-only schema）与 files（HMAC 签名直链）已落地；auth=gateway game token 售票口+逐游戏匿名门槛（schema.json auth.required，缺省匿名可玩）；llm/connectors 仍 501 显式空壳。
+- 游戏内容部署走服务器侧 deploy.mjs（版本目录+原子 symlink+部署期 brotli/gzip 预压缩，rollback 一条命令），新 slug 免重启即生效；agent 只做「本地彩排+交接包+精确手工命令」，服务器状态改动一律用户手工执行。
+- 此面 nginx 只注 frame-ancestors CSP，不禁 eval —— AgenTank 在线版自定义脚本可直接编辑（v13 的 CSP 降级模式不会触发）。
