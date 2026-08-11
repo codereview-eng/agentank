@@ -3,6 +3,7 @@
 import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS, presetMap, validateContent, makePack, serializePack, parsePack, promoteStage, resolvePackMap, compileBot, OFFICIAL_CONTENT } from '../src/engine/index.js';
 import { bots } from '../bots/index.js';
 import { LOCALES, LANGS, fmt, resolveLang } from './i18n.js';
+import { initPlay } from './play.js';
 
 // ---------- i18n：?lang= > localStorage > 浏览器语言 > zh ----------
 const storedLang = (() => { try { return localStorage.getItem('agentank-lang'); } catch { return null; } })();
@@ -1412,3 +1413,16 @@ if (qp.get('autoplay') === '1') {
     setPlaying(false);
   }
 }
+
+// ---------- Play 用户支持（仅 play 部署环境激活；file:/匿名/SDK 不可用时零回归） ----------
+initPlay({
+  T, L,
+  editorGet: () => editorEl.value,
+  editorSet: (code) => { editorEl.value = code; },
+  compileScript, guardWrap,
+  userSkill, userMapKey, makeMap,
+  defaultScript: DEFAULT_SCRIPT,
+  ROSTER, LADDER_SEEDS,
+  runMatch,
+  getPack: () => PACK,
+});
