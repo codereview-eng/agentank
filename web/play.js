@@ -86,6 +86,55 @@ export function entityFields(row) {
   return {};
 }
 
+// ---------- Agent Key（纯函数可测）：gated 判定 / 列表行 / 限额 / PlayError 映射 ----------
+export const AGENT_KEY_MAX = 3; // 每 slug 限 3 把有效 key（与平台 #8355 对齐）
+
+export function agentKeysGate(opts) {
+  const o = opts || {};
+  const api = o.api;
+  return Boolean(o.user && api
+    && typeof api.create === 'function'
+    && typeof api.list === 'function'
+    && typeof api.revoke === 'function');
+}
+
+function fmtTs(v) {
+  if (!v) return '—';
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? String(v) : d.toISOString().replace('T', ' ').slice(0, 16);
+}
+
+export function agentKeyRows(keys) {
+  if (!Array.isArray(keys)) return [];
+  return keys.map((k) => ({
+    id: String((k && k.id) || ''),
+    statusKey: (k && k.status) === 'active' ? 'play.akStActive' : 'play.akStRevoked',
+    revocable: (k && k.status) === 'active',
+    created: fmtTs(k && k.created_at),
+    lastUsed: fmtTs(k && k.last_used_at),
+  }));
+}
+
+export function agentKeyLimitReached(keys, max = AGENT_KEY_MAX) {
+  if (!Array.isArray(keys)) return false;
+  return keys.filter((k) => k && k.status === 'active').length >= max;
+}
+
+// PlayError {code,message,hint}（+429 携 resetsAtMs）→ {key: i18n 词条, vars}
+export function mapAgentKeyError(e, nowMs = Date.now()) {
+  const code = (e && e.code) || 'UNKNOWN';
+  if (code === 'AUTH_REQUIRED') return { key: 'play.akErrAuth', vars: {} };
+  if (code === 'AGENT_KEY_REVOKED') return { key: 'play.akErrRevoked', vars: {} };
+  if (code === 'QUOTA_EXCEEDED') return { key: 'play.akErrQuota', vars: {} };
+  if (code === 'RATE_LIMITED') {
+    const at = Number(e && (e.resetsAtMs ?? (e.quota && e.quota.resetsAtMs))) || 0;
+    return { key: 'play.akErrRate', vars: { secs: Math.max(0, Math.ceil((at - nowMs) / 1000)) } };
+  }
+  let msg = String((e && e.message) || e || '');
+  if (e && e.hint) msg += ` (${e.hint})`;
+  return { key: 'play.akErrGeneric', vars: { code, msg } };
+}
+
 // ---------- 运行时接线（浏览器专用；node --test 下不触发） ----------
 export function initPlay(ctx) {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
@@ -138,6 +187,7 @@ async function bootPlay(ctx) {
   if (panel) panel.style.display = '';
   if (chBox) chBox.style.display = '';
   const status = (msg) => { if (statusEl) statusEl.textContent = msg; };
+  bootAgentKeys(play, T); // Agent Key 管理：登录态 + agentKeys API 面齐备才亮，独立于 Tank/BR 实体
   const Tank = play.db && play.db.Tank;
   const BR = play.db && play.db.BattleResult;
   if (!Tank || !BR) { status(T('play.noEntity')); return; }
@@ -209,6 +259,77 @@ async function bootPlay(ctx) {
       const s = summarizeChallenge(rows, me, ctx.ROSTER.map(() => 1200));
       renderChallenge(ctx, s, chBody, chSum);
     } finally { running = false; }
+  });
+}
+
+// Agent Key 管理：生成（明文一次展示+复制）/ 列表 / 吊销；错误统一走 mapAgentKeyError
+function bootAgentKeys(play, T) {
+  const $ = (id) => document.getElementById(id);
+  const box = $('playAgentKeys');
+  const api = play.agentKeys;
+  if (!box || !agentKeysGate({ user: play.user, api })) return; // 未登录/SDK 无此面：保持 display:none，零回归
+  box.style.display = '';
+  const createBtn = $('akCreateBtn'), newBox = $('akNewKey'), newText = $('akNewKeyText');
+  const copyBtn = $('akCopyBtn'), msgEl = $('akMsg'), body = $('akListBody');
+  const msg = (t) => { if (msgEl) msgEl.textContent = t; };
+  const showErr = (e) => { const m = mapAgentKeyError(e); msg(T(m.key, m.vars)); };
+  let keys = [];
+  const refresh = async () => { keys = (await api.list()) || []; render(); };
+  const render = () => {
+    if (!body) return;
+    body.innerHTML = '';
+    const rows = agentKeyRows(keys);
+    if (!rows.length) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 5; td.style.color = 'var(--dim)'; td.textContent = T('play.akEmpty');
+      tr.appendChild(td); body.appendChild(tr);
+    }
+    for (const r of rows) {
+      const tr = document.createElement('tr');
+      const td = (t) => { const el = document.createElement('td'); el.textContent = t; return el; };
+      tr.appendChild(td(r.id));
+      tr.appendChild(td(T(r.statusKey)));
+      tr.appendChild(td(r.created));
+      tr.appendChild(td(r.lastUsed));
+      const act = document.createElement('td');
+      if (r.revocable) {
+        const b = document.createElement('button');
+        b.className = 'btn ghost';
+        b.style.cssText = 'padding:2px 8px;font-size:11px';
+        b.textContent = T('play.akRevoke');
+        b.addEventListener('click', async () => {
+          try { await api.revoke(r.id); msg(''); await refresh(); } catch (e) { showErr(e); }
+        });
+        act.appendChild(b);
+      }
+      tr.appendChild(act);
+      body.appendChild(tr);
+    }
+    if (createBtn) {
+      const full = agentKeyLimitReached(keys);
+      createBtn.disabled = full;
+      if (full) msg(T('play.akLimit'));
+    }
+  };
+  refresh().catch(showErr);
+  if (createBtn) createBtn.addEventListener('click', async () => {
+    try {
+      const r = await api.create(); // 明文 key 只回一次：立即展示，永不回写云端
+      if (newBox && newText && r && r.key) {
+        newText.textContent = r.key;
+        newBox.style.display = '';
+        if (copyBtn) copyBtn.textContent = T('play.akCopy');
+      }
+      msg('');
+      await refresh();
+    } catch (e) { showErr(e); }
+  });
+  if (copyBtn) copyBtn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(newText ? newText.textContent : '');
+      copyBtn.textContent = T('play.akCopied');
+    } catch { /* 剪贴板不可用：明文仍在页面上可手动复制 */ }
   });
 }
 
