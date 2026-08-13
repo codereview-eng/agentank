@@ -66,11 +66,27 @@ export const LOCALES = {
       mapOption: '{name}（{desc}）',
       seed: '种子',
       battle: '开 战',
-      save: '保存为新版本（当前 v{v} · 共 {n} 版）',
+      save: '保存「{name}」为新版本（→ v{v}）',
+      saveFirst: '保存为我的第一台坦克（v1）',
+      tankN: '坦克{n}',
+      garage: '我的车库',
+      garageCount: '我的车库（{n} 台）',
+      garageEmpty: '还没有坦克：点「新建坦克」，或直接「保存」把当前脚本存为第一台',
+      garageActive: '出战中',
+      garageUse: '出战',
+      garageRename: '重命名',
+      garageNew: '新建坦克',
+      garageNewPrompt: '给新坦克起个名字（同一账号内不能重名）：',
+      garageRenamePrompt: '新名字（同一账号内不能重名）：',
+      garageNameDup: '已有同名坦克「{name}」，请换个名字',
       liveLog: '实时战报',
       ladder: '天梯 · 内置流派',
       thTank: '坦克', thStyle: '流派', thElo: 'ELO', thWin: '胜率',
       skillOption: '{skill}（8 选 1）',
+      skillMismatch: '当前装备「{skill}」，代码里点名的「{calls}」不会生效（装备以下拉框为准）',
+      skillMismatchBtn: '换成通用模板',
+      skillMismatchDone: '已换成通用模板',
+      skillMismatchDoneSaved: '已换成通用模板；原代码已存为 v{v}，刷新页面可找回',
       langLabel: '语言',
       workshop: '创作工坊 · 地图/技能/道具/流派',
       wsHint: '三阶段：私有（仅自己可见可测）→ 分享（生成串/链接，凭战报确定性重现整场战斗）→ 官方收录（与内置同权）',
@@ -85,6 +101,9 @@ export const LOCALES = {
       wsShared: '分享串/链接已生成并复制',
       wsSaved: '已保存为私有内容（阶段1）',
       wsImported: '已导入分享内容（阶段2）',
+      wsLoginFirst: '工坊内容存在你的账号云端：请先登录',
+      wsCloudFail: '工坊云端操作失败：{msg}',
+      wsMigrated: '已把本机旧工坊内容迁移到云端（{n} 条）',
       wsMine: '我的内容',
       wsOfficial: '官方收录',
       wsEmpty: '还没有内容：选类型 → 填模板 → 保存',
@@ -107,7 +126,19 @@ export const LOCALES = {
     },
     play: {
       login: '登录',
+      logout: '登出',
       user: '👤 {name}',
+      garageLoaded: '已载入你的车库（{n} 台），出战：{name} v{v}',
+      garageEmptyCloud: '云端还没有坦克：点「新建坦克」或直接「保存」建第一台',
+      bridgeFound: '🎉 检测到你本地的 {n} 台匿名坦克：{names}',
+      bridgeUploadBtn: '一键全部存入云端',
+      bridgeUploaded: '已入库 {n} 台（各存为 v1）',
+      bridgeConflict: '本地的「{name}」与云端 v{v} 不同：',
+      bridgeUseLocal: '用本地，存为 v{v}',
+      bridgeUseCloud: '用云端 v{v}',
+      bridgeArchived: '已处理：另一份进了本地存档，零丢失',
+      bridgeDone: '衔接完成：本地匿名坦克已清零，云端是坦克唯一的家',
+      bridgeCloseBtn: '知道了',
       panelTitle: '我的坦克（云端）',
       createTank: '生成我的坦克',
       saveTank: '保存我的坦克（v{v}）',
@@ -217,7 +248,7 @@ export const LOCALES = {
       cspNote: '线上托管版：宿主 CSP 禁 eval，默认脚本以内置等价策略运行；编辑自定义脚本请把本页另存为 .html 在本地打开。',
     },
     script: {
-      default: `// 你的战术：优先吃星，残血传送跑路
+      default: `// 你的战术：优先吃星，残血放技能保命
 export default function decide(api) {
   const me = api.me();
   const star = api.nearestStar();
@@ -226,9 +257,9 @@ export default function decide(api) {
   if (api.enemyVisible() && api.canFire())
     return api.fireAt(api.enemy());
 
-  // 残血：传送去安全角落
-  if (me.hp < 30 && api.ready('teleport'))
-    return api.teleport(api.safestCorner());
+  // 残血：施放所装备技能（8 选 1 通吃；传送用坐标，其它技能忽略坐标）
+  if (me.hp < 30 && api.ready())
+    return api.useSkill(api.safestCorner());
 
   // 默认：抢最近的星
   return star ? api.moveTo(star)
@@ -283,11 +314,27 @@ export default function decide(api) {
       mapOption: '{name} ({desc})',
       seed: 'Seed',
       battle: 'BATTLE',
-      save: 'Save as new version (v{v} · {n} total)',
+      save: 'Save "{name}" as new version (→ v{v})',
+      saveFirst: 'Save as my first tank (v1)',
+      tankN: 'Tank {n}',
+      garage: 'My Garage',
+      garageCount: 'My Garage ({n} tanks)',
+      garageEmpty: 'No tanks yet: click "New tank", or just "Save" to store the current script as your first one',
+      garageActive: 'deployed',
+      garageUse: 'deploy',
+      garageRename: 'rename',
+      garageNew: 'New tank',
+      garageNewPrompt: 'Name the new tank (must be unique in your account):',
+      garageRenamePrompt: 'New name (must be unique in your account):',
+      garageNameDup: 'A tank named "{name}" already exists; pick another name',
       liveLog: 'Live Battle Log',
       ladder: 'Ladder · Built-in Styles',
       thTank: 'Tank', thStyle: 'Style', thElo: 'ELO', thWin: 'Win%',
       skillOption: '{skill} (pick 1 of 8)',
+      skillMismatch: 'Equipped "{skill}", but the code explicitly calls "{calls}" which will not fire (the dropdown decides the equipment)',
+      skillMismatchBtn: 'Switch to generic template',
+      skillMismatchDone: 'Switched to the generic template',
+      skillMismatchDoneSaved: 'Switched; your previous code was saved as v{v} (reload the page to restore)',
       langLabel: 'Lang',
       workshop: 'Workshop · maps/skills/items/styles',
       wsHint: '3 stages: private (only you) → shared (string/link, byte-exact replay from the report) → official (same rights as built-ins)',
@@ -302,6 +349,9 @@ export default function decide(api) {
       wsShared: 'Share string/link generated & copied',
       wsSaved: 'Saved as private (stage 1)',
       wsImported: 'Imported shared content (stage 2)',
+      wsLoginFirst: 'Workshop content lives in your account cloud: sign in first',
+      wsCloudFail: 'Workshop cloud operation failed: {msg}',
+      wsMigrated: 'Migrated legacy local workshop content to cloud ({n} items)',
       wsMine: 'My content',
       wsOfficial: 'Official adopted',
       wsEmpty: 'Nothing yet: pick a type → fill template → save',
@@ -324,7 +374,19 @@ export default function decide(api) {
     },
     play: {
       login: 'Sign in',
+      logout: 'Sign out',
       user: '👤 {name}',
+      garageLoaded: 'Garage loaded ({n} tanks), deployed: {name} v{v}',
+      garageEmptyCloud: 'No cloud tanks yet: click "New tank" or just "Save" to create the first one',
+      bridgeFound: '🎉 Found {n} local anonymous tank(s): {names}',
+      bridgeUploadBtn: 'Save all to cloud',
+      bridgeUploaded: 'Stored {n} tank(s) (each saved as v1)',
+      bridgeConflict: 'Local "{name}" differs from cloud v{v}:',
+      bridgeUseLocal: 'Use local, save as v{v}',
+      bridgeUseCloud: 'Use cloud v{v}',
+      bridgeArchived: 'Done: the other copy went to the local archive, nothing lost',
+      bridgeDone: 'Bridging complete: local anonymous tanks cleared; the cloud is now their only home',
+      bridgeCloseBtn: 'OK',
       panelTitle: 'My Tank (cloud)',
       createTank: 'Create my tank',
       saveTank: 'Save my tank (v{v})',
@@ -434,7 +496,7 @@ export default function decide(api) {
       cspNote: 'Hosted build: host CSP forbids eval, the default script runs via a built-in equivalent strategy; to edit custom scripts save this page as .html and open locally.',
     },
     script: {
-      default: `// Your tactics: grab stars first, teleport away when low
+      default: `// Your tactics: grab stars first, cast your skill when low
 export default function decide(api) {
   const me = api.me();
   const star = api.nearestStar();
@@ -443,9 +505,9 @@ export default function decide(api) {
   if (api.enemyVisible() && api.canFire())
     return api.fireAt(api.enemy());
 
-  // low HP: teleport to the safest corner
-  if (me.hp < 30 && api.ready('teleport'))
-    return api.teleport(api.safestCorner());
+  // low HP: cast the equipped skill (works for all 8; teleport uses the point, others ignore it)
+  if (me.hp < 30 && api.ready())
+    return api.useSkill(api.safestCorner());
 
   // default: chase the nearest star
   return star ? api.moveTo(star)

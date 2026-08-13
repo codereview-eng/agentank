@@ -49,6 +49,9 @@ main{flex:1; display:grid; grid-template-columns:340px 1fr 300px; gap:12px; padd
 }
 .err{display:none; color:var(--bad); font-size:12px; padding:8px 14px; border-top:1px solid var(--line); background:#2A1518; white-space:pre-wrap}
 .err.show{display:block}
+.skillhint{display:none; color:#E8B44A; font-size:12px; padding:8px 14px; border-top:1px solid var(--line); background:#2A2314; white-space:pre-wrap}
+.skillhint.show{display:flex; align-items:center; gap:8px; justify-content:space-between}
+.skillhint button{flex:none; background:transparent; border:1px solid currentColor; color:inherit; border-radius:6px; padding:3px 8px; font-size:12px; cursor:pointer}
 .ctrl{padding:12px 14px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:10px}
 .row{display:flex; gap:8px; align-items:center}
 select,input{
@@ -117,6 +120,7 @@ footer .mono{color:var(--muted)}
     <span class="chip" data-i18n="ui.season">赛季 S1</span>
     <span class="chip" id="playUserChip" style="display:none"></span>
     <button class="chip" id="playLoginBtn" style="display:none;background:transparent;border-color:var(--line);color:var(--muted);cursor:pointer" data-i18n="play.login">登录</button>
+    <button class="chip" id="playLogoutBtn" style="display:none;background:transparent;border-color:var(--line);color:var(--muted);cursor:pointer" data-i18n="play.logout">登出</button>
     <span class="chip">v0.1.0</span>
     <select id="langSel" class="chip" style="background:transparent;border-color:var(--line);color:var(--muted);padding:2px 8px;font-size:12px" aria-label="language">
       <option value="zh">中文</option>
@@ -130,6 +134,8 @@ footer .mono{color:var(--muted)}
     <h2><span class="dot"></span><span id="editorTitle">策略脚本 · 我的坦克 v1</span></h2>
     <textarea id="editor" spellcheck="false"></textarea>
     <div class="err" id="scriptErr"></div>
+    <div class="skillhint" id="skillHint"><span id="skillHintText"></span><button id="skillHintBtn" type="button"></button></div>
+    <div class="skillhint" id="bridgeHint"><span id="bridgeText"></span><span id="bridgeBtns" style="display:flex;gap:6px;flex:none"></span></div>
     <div class="ctrl">
       <div class="row"><label data-i18n="ui.opponent">对手</label>
         <select id="opp">
@@ -157,7 +163,13 @@ footer .mono{color:var(--muted)}
         </select>
       </div>
       <button class="btn" id="battleBtn" data-i18n="ui.battle">开 战</button>
-      <button class="btn ghost" id="saveBtn">保存为新版本（当前 v1 · 共 1 版）</button>
+      <button class="btn ghost" id="saveBtn">保存为新版本</button>
+      <details id="garage" open style="margin-top:10px;border:1px solid var(--line);border-radius:8px;padding:8px">
+        <summary style="cursor:pointer;font-size:12px;color:var(--muted)"><span id="garageTitle" data-i18n="ui.garage">我的车库</span></summary>
+        <div id="garageMsg" style="font-size:11px;color:var(--dim);margin:4px 0;min-height:14px"></div>
+        <div id="garageList" style="margin-top:2px"></div>
+        <button class="btn ghost" id="garageNewBtn" data-i18n="ui.garageNew" style="margin-top:6px;padding:4px 10px;font-size:11px">新建坦克</button>
+      </details>
       <details id="workshop" style="margin-top:10px;border:1px solid var(--line);border-radius:8px;padding:8px">
         <summary data-i18n="ui.workshop" style="cursor:pointer;font-size:12px;color:var(--muted)">创作工坊 · 地图/技能/道具/流派</summary>
         <div data-i18n="ui.wsHint" style="font-size:11px;color:var(--dim);margin:6px 0;line-height:1.5">三阶段：私有 → 分享 → 官方收录</div>
@@ -185,7 +197,6 @@ footer .mono{color:var(--muted)}
         <summary data-i18n="play.panelTitle" style="cursor:pointer;font-size:12px;color:var(--muted)">我的坦克（云端）</summary>
         <div id="playStatus" style="font-size:11px;color:var(--dim);margin:6px 0"></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn" id="playSaveBtn" style="padding:4px 10px;font-size:11px" data-i18n="play.createTank">生成我的坦克</button>
           <button class="btn ghost" id="playFillBtn" style="padding:4px 10px;font-size:11px" data-i18n="play.fill">回填默认流派代码</button>
           <button class="btn ghost" id="playChallengeBtn" style="padding:4px 10px;font-size:11px" data-i18n="play.challenge">参加挑战赛</button>
         </div>
@@ -2226,11 +2237,27 @@ const LOCALES = {
       mapOption: '{name}（{desc}）',
       seed: '种子',
       battle: '开 战',
-      save: '保存为新版本（当前 v{v} · 共 {n} 版）',
+      save: '保存「{name}」为新版本（→ v{v}）',
+      saveFirst: '保存为我的第一台坦克（v1）',
+      tankN: '坦克{n}',
+      garage: '我的车库',
+      garageCount: '我的车库（{n} 台）',
+      garageEmpty: '还没有坦克：点「新建坦克」，或直接「保存」把当前脚本存为第一台',
+      garageActive: '出战中',
+      garageUse: '出战',
+      garageRename: '重命名',
+      garageNew: '新建坦克',
+      garageNewPrompt: '给新坦克起个名字（同一账号内不能重名）：',
+      garageRenamePrompt: '新名字（同一账号内不能重名）：',
+      garageNameDup: '已有同名坦克「{name}」，请换个名字',
       liveLog: '实时战报',
       ladder: '天梯 · 内置流派',
       thTank: '坦克', thStyle: '流派', thElo: 'ELO', thWin: '胜率',
       skillOption: '{skill}（8 选 1）',
+      skillMismatch: '当前装备「{skill}」，代码里点名的「{calls}」不会生效（装备以下拉框为准）',
+      skillMismatchBtn: '换成通用模板',
+      skillMismatchDone: '已换成通用模板',
+      skillMismatchDoneSaved: '已换成通用模板；原代码已存为 v{v}，刷新页面可找回',
       langLabel: '语言',
       workshop: '创作工坊 · 地图/技能/道具/流派',
       wsHint: '三阶段：私有（仅自己可见可测）→ 分享（生成串/链接，凭战报确定性重现整场战斗）→ 官方收录（与内置同权）',
@@ -2245,6 +2272,9 @@ const LOCALES = {
       wsShared: '分享串/链接已生成并复制',
       wsSaved: '已保存为私有内容（阶段1）',
       wsImported: '已导入分享内容（阶段2）',
+      wsLoginFirst: '工坊内容存在你的账号云端：请先登录',
+      wsCloudFail: '工坊云端操作失败：{msg}',
+      wsMigrated: '已把本机旧工坊内容迁移到云端（{n} 条）',
       wsMine: '我的内容',
       wsOfficial: '官方收录',
       wsEmpty: '还没有内容：选类型 → 填模板 → 保存',
@@ -2267,7 +2297,19 @@ const LOCALES = {
     },
     play: {
       login: '登录',
+      logout: '登出',
       user: '👤 {name}',
+      garageLoaded: '已载入你的车库（{n} 台），出战：{name} v{v}',
+      garageEmptyCloud: '云端还没有坦克：点「新建坦克」或直接「保存」建第一台',
+      bridgeFound: '🎉 检测到你本地的 {n} 台匿名坦克：{names}',
+      bridgeUploadBtn: '一键全部存入云端',
+      bridgeUploaded: '已入库 {n} 台（各存为 v1）',
+      bridgeConflict: '本地的「{name}」与云端 v{v} 不同：',
+      bridgeUseLocal: '用本地，存为 v{v}',
+      bridgeUseCloud: '用云端 v{v}',
+      bridgeArchived: '已处理：另一份进了本地存档，零丢失',
+      bridgeDone: '衔接完成：本地匿名坦克已清零，云端是坦克唯一的家',
+      bridgeCloseBtn: '知道了',
       panelTitle: '我的坦克（云端）',
       createTank: '生成我的坦克',
       saveTank: '保存我的坦克（v{v}）',
@@ -2377,7 +2419,7 @@ const LOCALES = {
       cspNote: '线上托管版：宿主 CSP 禁 eval，默认脚本以内置等价策略运行；编辑自定义脚本请把本页另存为 .html 在本地打开。',
     },
     script: {
-      default: `// 你的战术：优先吃星，残血传送跑路
+      default: `// 你的战术：优先吃星，残血放技能保命
 function decide(api) {
   const me = api.me();
   const star = api.nearestStar();
@@ -2386,9 +2428,9 @@ function decide(api) {
   if (api.enemyVisible() && api.canFire())
     return api.fireAt(api.enemy());
 
-  // 残血：传送去安全角落
-  if (me.hp < 30 && api.ready('teleport'))
-    return api.teleport(api.safestCorner());
+  // 残血：施放所装备技能（8 选 1 通吃；传送用坐标，其它技能忽略坐标）
+  if (me.hp < 30 && api.ready())
+    return api.useSkill(api.safestCorner());
 
   // 默认：抢最近的星
   return star ? api.moveTo(star)
@@ -2443,11 +2485,27 @@ function decide(api) {
       mapOption: '{name} ({desc})',
       seed: 'Seed',
       battle: 'BATTLE',
-      save: 'Save as new version (v{v} · {n} total)',
+      save: 'Save "{name}" as new version (→ v{v})',
+      saveFirst: 'Save as my first tank (v1)',
+      tankN: 'Tank {n}',
+      garage: 'My Garage',
+      garageCount: 'My Garage ({n} tanks)',
+      garageEmpty: 'No tanks yet: click "New tank", or just "Save" to store the current script as your first one',
+      garageActive: 'deployed',
+      garageUse: 'deploy',
+      garageRename: 'rename',
+      garageNew: 'New tank',
+      garageNewPrompt: 'Name the new tank (must be unique in your account):',
+      garageRenamePrompt: 'New name (must be unique in your account):',
+      garageNameDup: 'A tank named "{name}" already exists; pick another name',
       liveLog: 'Live Battle Log',
       ladder: 'Ladder · Built-in Styles',
       thTank: 'Tank', thStyle: 'Style', thElo: 'ELO', thWin: 'Win%',
       skillOption: '{skill} (pick 1 of 8)',
+      skillMismatch: 'Equipped "{skill}", but the code explicitly calls "{calls}" which will not fire (the dropdown decides the equipment)',
+      skillMismatchBtn: 'Switch to generic template',
+      skillMismatchDone: 'Switched to the generic template',
+      skillMismatchDoneSaved: 'Switched; your previous code was saved as v{v} (reload the page to restore)',
       langLabel: 'Lang',
       workshop: 'Workshop · maps/skills/items/styles',
       wsHint: '3 stages: private (only you) → shared (string/link, byte-exact replay from the report) → official (same rights as built-ins)',
@@ -2462,6 +2520,9 @@ function decide(api) {
       wsShared: 'Share string/link generated & copied',
       wsSaved: 'Saved as private (stage 1)',
       wsImported: 'Imported shared content (stage 2)',
+      wsLoginFirst: 'Workshop content lives in your account cloud: sign in first',
+      wsCloudFail: 'Workshop cloud operation failed: {msg}',
+      wsMigrated: 'Migrated legacy local workshop content to cloud ({n} items)',
       wsMine: 'My content',
       wsOfficial: 'Official adopted',
       wsEmpty: 'Nothing yet: pick a type → fill template → save',
@@ -2484,7 +2545,19 @@ function decide(api) {
     },
     play: {
       login: 'Sign in',
+      logout: 'Sign out',
       user: '👤 {name}',
+      garageLoaded: 'Garage loaded ({n} tanks), deployed: {name} v{v}',
+      garageEmptyCloud: 'No cloud tanks yet: click "New tank" or just "Save" to create the first one',
+      bridgeFound: '🎉 Found {n} local anonymous tank(s): {names}',
+      bridgeUploadBtn: 'Save all to cloud',
+      bridgeUploaded: 'Stored {n} tank(s) (each saved as v1)',
+      bridgeConflict: 'Local "{name}" differs from cloud v{v}:',
+      bridgeUseLocal: 'Use local, save as v{v}',
+      bridgeUseCloud: 'Use cloud v{v}',
+      bridgeArchived: 'Done: the other copy went to the local archive, nothing lost',
+      bridgeDone: 'Bridging complete: local anonymous tanks cleared; the cloud is now their only home',
+      bridgeCloseBtn: 'OK',
       panelTitle: 'My Tank (cloud)',
       createTank: 'Create my tank',
       saveTank: 'Save my tank (v{v})',
@@ -2594,7 +2667,7 @@ function decide(api) {
       cspNote: 'Hosted build: host CSP forbids eval, the default script runs via a built-in equivalent strategy; to edit custom scripts save this page as .html and open locally.',
     },
     script: {
-      default: `// Your tactics: grab stars first, teleport away when low
+      default: `// Your tactics: grab stars first, cast your skill when low
 function decide(api) {
   const me = api.me();
   const star = api.nearestStar();
@@ -2603,9 +2676,9 @@ function decide(api) {
   if (api.enemyVisible() && api.canFire())
     return api.fireAt(api.enemy());
 
-  // low HP: teleport to the safest corner
-  if (me.hp < 30 && api.ready('teleport'))
-    return api.teleport(api.safestCorner());
+  // low HP: cast the equipped skill (works for all 8; teleport uses the point, others ignore it)
+  if (me.hp < 30 && api.ready())
+    return api.useSkill(api.safestCorner());
 
   // default: chase the nearest star
   return star ? api.moveTo(star)
@@ -2648,6 +2721,91 @@ function buildTankPayload(opts) {
 function nextTankVersion(tank) {
   const v = Number(tank && tank.version);
   return (Number.isFinite(v) && v > 0 ? v : 0) + 1;
+}
+
+// ---------- 车库（多坦克）纯函数：行分组 / 本地存档迁移 / 登录时刻衔接 ----------
+// 云端 Tank 行 → 车库：每行一台坦克，按 name 分组（同名取最高 version 兜底脏数据），
+// is_active=出战坦克（多台标 active 的历史数据取最后一台；全未标取最新入库的）。
+function garageFromRows(rows) {
+  const byName = new Map();
+  for (const raw of rows || []) {
+    const r = entityFields(raw);
+    if (!r || typeof r.name !== 'string' || !r.name) continue;
+    const t = {
+      id: r.id,
+      name: r.name,
+      code: String(r.code || ''),
+      skill: String(r.skill || ''),
+      v: Number(r.version) > 0 ? Number(r.version) : 1,
+      active: r.is_active === true,
+    };
+    const prev = byName.get(t.name);
+    if (!prev || t.v >= prev.v) byName.set(t.name, t);
+  }
+  const tanks = [...byName.values()];
+  let active = null;
+  for (const t of tanks) if (t.active) active = t;
+  if (!active && tanks.length) active = tanks[tanks.length - 1];
+  return { tanks, active };
+}
+
+// 本地匿名存档迁移：旧单份 {code,v,n} → 一台默认名坦克（「坦克1」）；
+// 新格式 {tanks:[{name,code,skill,v}],cur} 校验透传；坏存量按空处理。
+function migrateLocalSave(raw, defaultName) {
+  let s = null;
+  try { s = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { /* 坏存量：按空处理 */ }
+  if (!s || typeof s !== 'object') return { tanks: [], cur: null };
+  if (Array.isArray(s.tanks)) {
+    const tanks = s.tanks
+      .filter((t) => t && typeof t.name === 'string' && t.name && typeof t.code === 'string')
+      .map((t) => ({ name: t.name, code: t.code, skill: String(t.skill || ''), v: Number(t.v) > 0 ? Number(t.v) : 1 }));
+    const cur = tanks.some((t) => t.name === s.cur) ? s.cur : (tanks.length ? tanks[0].name : null);
+    return { tanks, cur };
+  }
+  if (typeof s.code === 'string' && s.code.trim()) {
+    return {
+      tanks: [{ name: String(defaultName), code: s.code, skill: '', v: Number(s.v) > 0 ? Number(s.v) : 1 }],
+      cur: String(defaultName),
+    };
+  }
+  return { tanks: [], cur: null };
+}
+
+// 本地保存：同名递增 v、新名 v1；返回新 store（不改入参）与本次落点版本
+function upsertLocalTank(store, t) {
+  const tanks = (store && Array.isArray(store.tanks) ? store.tanks : []).slice();
+  const i = tanks.findIndex((x) => x && x.name === t.name);
+  const v = i >= 0 ? (Number(tanks[i].v) > 0 ? Number(tanks[i].v) : 0) + 1 : 1;
+  const entry = { name: String(t.name), code: String(t.code || ''), skill: String(t.skill || ''), v };
+  if (i >= 0) tanks[i] = entry; else tanks.push(entry);
+  return { tanks, cur: entry.name, v };
+}
+
+// 登录时刻逐台按名字衔接（方案 v2 三分支）：云端无同名→upload（一键入库）、
+// 同名且代码相同→synced（静默跳过）、同名且代码不同→conflict（二选一横幅）
+function reconcileLogin(localTanks, cloudTanks) {
+  const cloudByName = new Map((cloudTanks || []).map((t) => [t.name, t]));
+  const upload = [];
+  const conflicts = [];
+  const synced = [];
+  for (const lt of localTanks || []) {
+    if (!lt || !lt.name) continue;
+    const c = cloudByName.get(lt.name);
+    if (!c) upload.push(lt);
+    else if (String(c.code || '') === String(lt.code || '')) synced.push(lt.name);
+    else conflicts.push({ local: lt, cloud: c });
+  }
+  return { upload, conflicts, synced };
+}
+
+// 默认命名：mk(n) 生成候选名（坦克1/坦克2/…），找最小未占用编号
+function nextTankName(existing, mk) {
+  const set = new Set(existing || []);
+  for (let n = 1; n <= set.size + 1; n++) {
+    const c = mk(n);
+    if (!set.has(c)) return c;
+  }
+  return mk(set.size + 1);
 }
 
 // BattleResult 实体 payload（与 spike schema 对齐：seed/map/opponent/winner/reason/ticks/stars_a/stars_b/elo/player）
@@ -2754,6 +2912,48 @@ function mapAgentKeyError(e, nowMs = Date.now()) {
 }
 
 // ---------- 运行时接线（浏览器专用；node --test 下不触发） ----------
+// ---------- 装备/代码不符检测（纯函数可测） ----------
+// 装备由下拉框决定、代码只决定何时施放；旧入口（api.teleport/cloak/stun）与 api.ready('技能名')
+// 在装备不符时引擎按 no-op/false 处理——这里找出代码显式点名、但换装备后不会生效的技能。
+const SKILL_IDS = ['shield', 'freeze', 'stun', 'overload', 'cloak', 'poison', 'teleport', 'boost'];
+function skillCodeMismatch(code, equipped) {
+  const src = String(code || '')
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, ''); // 注释里的点名不算调用
+  const hits = new Set();
+  for (const name of ['teleport', 'cloak', 'stun']) { // 引擎旧入口：仅装备一致时生效
+    if (name !== equipped && new RegExp(`api\\s*\\.\\s*${name}\\s*\\(`).test(src)) hits.add(name);
+  }
+  const re = /api\s*\.\s*ready\s*\(\s*['"]([a-z]+)['"]\s*\)/g; // ready('技能名')：与装备不一致恒 false
+  let m;
+  while ((m = re.exec(src))) {
+    if (SKILL_IDS.includes(m[1]) && m[1] !== equipped) hits.add(m[1]);
+  }
+  return [...hits];
+}
+
+// ---------- Workshop 云端存取（纯函数可测）：工坊条目 ↔ 实体行 ----------
+function buildWorkshopPayload(entry) {
+  return {
+    type: String(entry.type),
+    slug: String(entry.id),
+    name: String(entry.name || entry.id),
+    def: JSON.stringify(entry),
+    stage: entry.stage === 'shared' ? 'shared' : 'private',
+    is_active: true,
+  };
+}
+function parseWorkshopRow(row) {
+  const f = entityFields(row);
+  if (!f || f.is_active === false) return null;
+  try {
+    const entry = JSON.parse(f.def);
+    if (!entry || !entry.type || !entry.id) return null;
+    entry.stage = f.stage === 'shared' ? 'shared' : 'private';
+    return { rowId: f.id ?? (row && row.id), entry };
+  } catch { return null; }
+}
+
 function initPlay(ctx) {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
   const dec = sdkInjectDecision(window.location);
@@ -2781,7 +2981,7 @@ async function bootPlay(ctx) {
   const $ = (id) => document.getElementById(id);
   const chip = $('playUserChip'), loginBtn = $('playLoginBtn');
   const panel = $('playPanel'), statusEl = $('playStatus');
-  const saveBtn = $('playSaveBtn'), fillBtn = $('playFillBtn'), challengeBtn = $('playChallengeBtn');
+  const fillBtn = $('playFillBtn'), challengeBtn = $('playChallengeBtn');
   const chBox = $('playChallenge'), chBody = $('playChallengeBody'), chSum = $('playChallengeSummary');
   let play;
   try { play = await Play.init(); } catch (e) { console.log('Play.init failed:', e && e.message); return; }
@@ -2806,41 +3006,61 @@ async function bootPlay(ctx) {
   if (chBox) chBox.style.display = '';
   const status = (msg) => { if (statusEl) statusEl.textContent = msg; };
   bootAgentKeys(play, T); // Agent Key 管理：登录态 + agentKeys API 面齐备才亮，独立于 Tank/BR 实体
+
+  // 创作工坊：私有内容只存服务器端（Workshop 实体，owner 隔离）；登录后接管 app.js 工坊持久层
+  const Workshop = play.db && play.db.Workshop;
+  if (Workshop && typeof ctx.workshopConnect === 'function') {
+    try {
+      const idBySlug = new Map(); // `${type}:${slug}` -> 云端行 id
+      const entries = [];
+      for (const row of (await Workshop.list()) || []) {
+        const p = parseWorkshopRow(row);
+        if (!p) continue;
+        idBySlug.set(`${p.entry.type}:${p.entry.id}`, p.rowId);
+        entries.push(p.entry);
+      }
+      const save = async (entry) => {
+        const key = `${entry.type}:${entry.id}`;
+        const payload = buildWorkshopPayload(entry);
+        const rid = idBySlug.get(key);
+        if (rid) await Workshop.update(rid, payload);
+        else { const r = await Workshop.create(payload); if (r && r.id) idBySlug.set(key, r.id); }
+      };
+      const remove = async (entry) => { // 删除 = 置 is_active:false（与 Tank 同款软删）
+        const rid = idBySlug.get(`${entry.type}:${entry.id}`);
+        if (rid) await Workshop.update(rid, { is_active: false });
+      };
+      await ctx.workshopConnect({ entries, save, remove });
+    } catch (e) { console.log('workshop cloud failed:', e && e.message); }
+  }
+
   const Tank = play.db && play.db.Tank;
   const BR = play.db && play.db.BattleResult;
   if (!Tank || !BR) { status(T('play.noEntity')); return; }
 
-  // 我的坦克：登录后拉取云端最新，灌进编辑器（自测=复用现有开战链路）
-  let myTank = null;
-  const refreshTank = async () => {
-    const rows = ((await Tank.list()) || []).map(entityFields).filter((r) => r.is_active !== false);
-    myTank = rows.length ? rows[rows.length - 1] : null;
-  };
-  try { await refreshTank(); } catch (e) { status(T('play.loadFail', { msg: String(e && e.message || e) })); }
-  const syncUi = () => {
-    if (saveBtn) saveBtn.textContent = myTank ? T('play.saveTank', { v: nextTankVersion(myTank) }) : T('play.createTank');
-    if (myTank) status(T('play.loaded', { v: myTank.version }));
-    else status(T('play.none'));
-  };
-  if (myTank && myTank.code) ctx.editorSet(String(myTank.code));
-  syncUi();
-
-  // 生成/保存我的坦克（保存前走现有 compileScript 校验；version 递增 update）
-  if (saveBtn) saveBtn.addEventListener('click', async () => {
-    const code = ctx.editorGet();
-    try { ctx.compileScript(code); } catch (e) { status(T('play.compileFail', { msg: String(e && e.message || e) })); return; }
-    const payload = buildTankPayload({
-      name: T('play.tankName'), code, skill: ctx.userSkill(),
-      version: myTank ? nextTankVersion(myTank) : 1,
-    });
+  // 车库（云端）：Tank 每行一台坦克（name 分组、version 原地递增、is_active=出战）。
+  // 登录时刻逐台衔接（方案 v2 三分支）与车库 UI 全部由 app.js 车库模块接管，这里只递云端 CRUD。
+  if (typeof ctx.garageConnect === 'function') {
     try {
-      if (myTank) await Tank.update(myTank.id, payload);
-      else await Tank.create(payload);
-      await refreshTank();
-      status(T('play.saved', { v: payload.version }));
-      if (saveBtn) saveBtn.textContent = T('play.saveTank', { v: nextTankVersion(myTank) });
-    } catch (e) { status(T('play.saveFail', { msg: String(e && e.message || e) })); }
-  });
+      await ctx.garageConnect({
+        list: async () => garageFromRows((await Tank.list()) || []),
+        create: (payload) => Tank.create(payload),
+        update: (id, patch) => Tank.update(id, patch),
+      });
+    } catch (e) { status(T('play.loadFail', { msg: String(e && e.message || e) })); }
+  }
+
+  // 登出（SDK 支持时才露出）：清车库/编辑器回默认模板，防同一浏览器下一人看到上一人代码
+  const logoutBtn = $('playLogoutBtn');
+  if (logoutBtn && typeof play.logout === 'function') {
+    logoutBtn.style.display = '';
+    logoutBtn.textContent = T('play.logout');
+    logoutBtn.addEventListener('click', async () => {
+      if (typeof ctx.resetForLogout === 'function') ctx.resetForLogout();
+      try { await play.logout(); } catch { /* 忽略 */ }
+      location.reload(); // 干净回到匿名态
+    });
+  }
 
   // 一键回填默认流派代码（只改编辑器，不写云端）
   if (fillBtn) fillBtn.addEventListener('click', () => { ctx.editorSet(ctx.defaultScript); status(T('play.filled')); });
@@ -3096,14 +3316,22 @@ for (const r of ROSTER) {
 }
 
 // ---------- 创作工坊（UGC 三阶段：私有 → 分享 → 官方收录） ----------
-// 阶段1：内容存本机 localStorage，仅自己可见可测；
+// 阶段1：内容存服务器端账号名下（Workshop 实体，登录后 CRUD），仅自己可见可测；未登录只能内存暂存；
 // 阶段2：生成分享串/链接（内容包整包嵌进战报参数），任何人打开即确定性重现整场战斗；
 // 阶段3：官方收录进 OFFICIAL_CONTENT（引擎侧列表），与内置地图/技能/道具/流派同权使用。
-const WS_KEY = 'agentank-workshop';
+const WS_KEY = 'agentank-workshop'; // 旧本机存档 key：只用于登录后一次性迁移上云，不再写入
 const b64e = (s) => btoa(unescape(encodeURIComponent(s)));
 const b64d = (s) => decodeURIComponent(escape(atob(s)));
-let wsEntries = (() => { try { return JSON.parse(localStorage.getItem(WS_KEY) || '[]'); } catch { return []; } })();
-const wsPersist = () => { try { localStorage.setItem(WS_KEY, JSON.stringify(wsEntries)); } catch { /* 忽略 */ } };
+// 工坊内容只存服务器端（Workshop 实体，登录后由 play.js 注入云端后端）；
+// 未登录仅内存暂存（?pack= 导入照样能玩，刷新即丢），保存/删除的持久化只发生在云端。
+let wsEntries = [];
+let wsCloud = null; // { save(entry), remove(entry) }；null = 未登录
+let wsCloudFail = null; // 云端写失败的 UI 提示（工坊块内赋值：showWs 在块里）
+const wsPersist = (entry, removed) => { // 单条变更上云；未登录时为内存态，静默跳过
+  if (!wsCloud || !entry) return;
+  (removed ? wsCloud.remove(entry) : wsCloud.save(entry))
+    .catch((e) => wsCloudFail?.(String((e && e.message) || e)));
+};
 // 活动内容包 = 官方收录 + 我的/导入（type:id 去重，官方优先不可被顶替；坏存量跳过不拖垮整包）
 function buildPack() {
   const seen = new Set();
@@ -3149,6 +3377,7 @@ const WS_TPL = {
   bot: { type: 'bot', id: 'mybot', name: LANG === 'zh' ? '我的流派' : 'My Style', skill: 'shield', code: 'export default function decide(api) {\n  if (api.enemyVisible() && api.canFire()) return api.fireAt(api.enemy());\n  return api.patrol();\n}' },
 };
 let wsImportPack = null; // ?pack= 深链复用（在下方工坊模块内赋值）
+let wsConnectCloud = null; // 登录后由 play.js 调用：注入云端 CRUD、灌云端数据、迁移旧本机存量
 {
   const wsEd = $id('wsEditor');
   const wsMsg = $id('wsErr');
@@ -3188,12 +3417,12 @@ let wsImportPack = null; // ?pack= 深链复用（在下方工坊模块内赋值
       if (mine) {
         mkBtn(T('ui.wsShare'), () => { // 分享 = 阶段1→2（私有先晋升），生成 ?pack= 链接
           const idx = wsEntries.indexOf(e);
-          if ((e.stage ?? 'private') === 'private') { wsEntries[idx] = promoteStage(e); wsPersist(); }
+          if ((e.stage ?? 'private') === 'private') { wsEntries[idx] = promoteStage(e); wsPersist(wsEntries[idx]); }
           const s = serializePack(makePack([wsEntries[idx]]));
           emitShare(`${location.origin}${location.pathname}?pack=${encodeURIComponent(s)}&lang=${LANG}`);
           refresh();
         });
-        mkBtn(T('ui.wsDelete'), () => { wsEntries.splice(wsEntries.indexOf(e), 1); wsPersist(); refresh(); });
+        mkBtn(T('ui.wsDelete'), () => { wsEntries.splice(wsEntries.indexOf(e), 1); wsPersist(e, true); refresh(); });
       }
       wsListEl.appendChild(row);
     };
@@ -3213,13 +3442,30 @@ let wsImportPack = null; // ?pack= 深链复用（在下方工坊模块内赋值
       const entry = { ...e, stage: 'shared' }; // 导入的内容一律记为阶段2（official 只能来自引擎收录列表）
       const i = wsEntries.findIndex((x) => x.type === e.type && x.id === e.id);
       if (i >= 0) wsEntries[i] = entry; else wsEntries.push(entry);
+      wsPersist(entry); // 登录态：导入即入云端；未登录：内存暂存
     }
-    wsPersist();
     refresh();
     if (!opts.silent) showWs(`${T('ui.wsImported')} ×${p.entries.length}`, false);
     return p.entries.length;
   }
   wsImportPack = importPackStr; // 供 ?pack= 深链复用
+  wsCloudFail = (msg) => showWs(T('ui.wsCloudFail', { msg }), true);
+  wsConnectCloud = async (cloud) => { // 登录成功：云端 Workshop 成为唯一事实源
+    wsCloud = { save: cloud.save, remove: cloud.remove };
+    wsEntries = (cloud.entries || []).slice();
+    // 旧本机 localStorage 存量一次性搬上云；全部成功才清本机 key（失败留着下次登录重试）
+    let legacy = [];
+    try { legacy = JSON.parse(localStorage.getItem(WS_KEY) || '[]'); } catch { /* 忽略 */ }
+    let moved = 0, failed = false;
+    for (const e of Array.isArray(legacy) ? legacy : []) {
+      if (!e || !e.type || !e.id) continue;
+      if (wsEntries.some((x) => x.type === e.type && x.id === e.id)) continue; // 云端已有同名：云端优先
+      try { await cloud.save(e); wsEntries.push(e); moved += 1; } catch { failed = true; }
+    }
+    if (!failed) { try { localStorage.removeItem(WS_KEY); } catch { /* 忽略 */ } }
+    if (moved) showWs(T('ui.wsMigrated', { n: moved }), false);
+    refresh();
+  };
   $id('wsNewBtn')?.addEventListener('click', () => {
     if (wsEd) wsEd.value = JSON.stringify(WS_TPL[$id('wsTpl')?.value || 'map'], null, 2);
     showWs('', false);
@@ -3229,10 +3475,11 @@ let wsImportPack = null; // ?pack= 深链复用（在下方工坊模块内赋值
     try { def = JSON.parse(wsEd.value); } catch (e) { showWs(`JSON: ${e.message}`, true); return; }
     const r = validateContent(def);
     if (!r.ok) { showWs(r.errors.join('；'), true); return; }
+    if (!wsCloud) { showWs(T('ui.wsLoginFirst'), true); return; } // 私有内容只存服务器端：未登录不落任何本机持久层
     const entry = { ...def, stage: 'private' }; // 保存/改动一律回私有：改完需重新分享（阶段1）
     const i = wsEntries.findIndex((e) => e.type === def.type && e.id === def.id);
     if (i >= 0) wsEntries[i] = entry; else wsEntries.push(entry);
-    wsPersist();
+    wsPersist(entry);
     showWs(T('ui.wsSaved'), false);
     refresh();
   });
@@ -3281,7 +3528,7 @@ function defaultDecide(api) {
   const me = api.me();
   const star = api.nearestStar();
   if (api.enemyVisible() && api.canFire()) return api.fireAt(api.enemy());
-  if (me.hp < 30 && api.ready('teleport')) return api.teleport(api.safestCorner());
+  if (me.hp < 30 && api.ready()) return api.useSkill(api.safestCorner());
   return star ? api.moveTo(star) : api.patrol();
 }
 
@@ -3319,34 +3566,314 @@ function guardWrap(fn, box) {
 function showErr(msg) { errEl.textContent = msg; errEl.classList.add('show'); }
 function hideErr() { errEl.classList.remove('show'); }
 
-// ---------- 版本存储 ----------
-let curVersion = 1;
-let versionCount = 1;
-function loadStore() {
+// ---------- 车库存储（多坦克，方案 v2） ----------
+// 匿名期：坦克列表落本机 localStorage（agentank.save = {tanks:[{name,code,skill,v}],cur}，
+// 旧单份 {code,v,n} 一次性迁移为「坦克1」）；登录后云端是坦克唯一的家（garage.mode='cloud'）。
+const SAVE_KEY = 'agentank.save';
+const DRAFT_KEY = 'agentank.draft'; // 草稿断电保护：未保存的编辑内容，≠ 坦克版本
+const ARCHIVE_KEY = 'agentank.archive'; // 零丢失兜底：被覆盖/清理的代码进存档
+const garage = { mode: 'local', tanks: [], cur: null, cloud: null };
+const tankN = (n) => T('ui.tankN', { n });
+const curTank = () => garage.tanks.find((t) => t.name === garage.cur) || null;
+const myTankLabel = () => { const t = curTank(); return t ? `${t.name} v${t.v}` : `${L.ui.myTank} v1`; };
+
+function readLocalStore() {
+  try { return migrateLocalSave(localStorage.getItem(SAVE_KEY), tankN(1)); } catch { return { tanks: [], cur: null }; }
+}
+function writeLocalStore(s) {
   try {
-    const raw = localStorage.getItem('agentank.save');
-    if (raw) {
-      const s = JSON.parse(raw);
-      if (s && typeof s.code === 'string' && s.code.trim()) {
-        editorEl.value = s.code;
-        curVersion = s.v || 1;
-        versionCount = s.n || 1;
-      }
-    }
+    if (!s.tanks.length) localStorage.removeItem(SAVE_KEY);
+    else localStorage.setItem(SAVE_KEY, JSON.stringify({ tanks: s.tanks, cur: s.cur }));
   } catch { /* file:// 或隐私模式下无 localStorage：忽略 */ }
 }
-function saveVersion() {
-  versionCount++;
-  curVersion = versionCount;
+function archiveCopy(t, from) {
   try {
-    localStorage.setItem('agentank.save', JSON.stringify({ code: editorEl.value, v: curVersion, n: versionCount }));
+    const arc = JSON.parse(localStorage.getItem(ARCHIVE_KEY) || '[]');
+    arc.push({ name: t.name, code: t.code, skill: t.skill || '', v: t.v ?? 1, from, ts: Date.now() });
+    localStorage.setItem(ARCHIVE_KEY, JSON.stringify(arc));
   } catch { /* 忽略 */ }
+}
+function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch { /* 忽略 */ } }
+function applyTankToUi(t) { // 切台/入座：代码进编辑器、技能跟随（无该选项时保持现装备）
+  editorEl.value = t ? t.code : DEFAULT_SCRIPT;
+  if (t && t.skill && skillSel && [...skillSel.options].some((o) => o.value === t.skill)) skillSel.value = t.skill;
+  refreshSkillHint();
+}
+function loadStore() {
+  const s = readLocalStore();
+  garage.tanks = s.tanks;
+  garage.cur = s.cur;
+  const t = curTank();
+  if (t) applyTankToUi(t);
+  try { // 草稿恢复：仅当仍是同一台坦克（含「尚无坦克」态）时才回填
+    const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
+    if (d && typeof d.code === 'string' && d.code.trim() && (d.cur ?? null) === (garage.cur ?? null)) editorEl.value = d.code;
+  } catch { /* 忽略 */ }
+}
+async function saveVersion() {
+  const code = editorEl.value;
+  const skill = userSkill();
+  if (garage.mode === 'cloud') {
+    try { compileScript(code); } catch (e) { garageMsg(T('play.compileFail', { msg: String((e && e.message) || e) }), true); return; }
+    const t = curTank();
+    try {
+      if (t) {
+        await garage.cloud.update(t.id, buildTankPayload({ name: t.name, code, skill, version: t.v + 1, is_active: t.active === true }));
+      } else { // 云端第一台：命名即入库
+        const name = askName(tankN(1));
+        if (!name) return;
+        await garage.cloud.create(buildTankPayload({ name, code, skill, version: 1, is_active: true }));
+      }
+      await reloadCloudGarage();
+      garageMsg(T('play.saved', { v: curTank()?.v ?? 1 }));
+    } catch (e) { garageMsg(T('play.saveFail', { msg: String((e && e.message) || e) }), true); return; }
+  } else {
+    const r = upsertLocalTank({ tanks: garage.tanks, cur: garage.cur }, { name: garage.cur || tankN(1), code, skill });
+    garage.tanks = r.tanks;
+    garage.cur = r.cur;
+    writeLocalStore(garage);
+  }
+  clearDraft();
   updateVersionUi();
+  renderGarage();
   scheduleLadder();
 }
 function updateVersionUi() {
-  saveBtn.textContent = T('ui.save', { v: curVersion, n: versionCount });
-  editorTitle.textContent = T('ui.editorTitle', { name: `${L.ui.myTank} v${curVersion}` });
+  const t = curTank();
+  saveBtn.textContent = t ? T('ui.save', { name: t.name, v: t.v + 1 }) : T('ui.saveFirst');
+  editorTitle.textContent = T('ui.editorTitle', { name: myTankLabel() });
+}
+
+// ---------- 我的车库 UI（列表 / 切换出战 / 新建 / 重命名） ----------
+const garageListEl = $id('garageList');
+const garageMsgEl = $id('garageMsg');
+const garageTitleEl = $id('garageTitle');
+function garageMsg(msg, bad) { if (garageMsgEl) { garageMsgEl.textContent = msg || ''; garageMsgEl.style.color = bad ? 'var(--bad)' : 'var(--dim)'; } }
+function askName(def, promptKey = 'ui.garageNewPrompt') { // 同一玩家内 name 唯一（前端校验）
+  const name = (window.prompt(T(promptKey), def) || '').trim();
+  if (!name) return null;
+  if (garage.tanks.some((t) => t.name === name)) { garageMsg(T('ui.garageNameDup', { name }), true); return null; }
+  return name;
+}
+async function reloadCloudGarage() {
+  const g = await garage.cloud.list();
+  garage.tanks = g.tanks;
+  garage.cur = g.active ? g.active.name : null;
+}
+async function switchTank(name) {
+  const t = garage.tanks.find((x) => x.name === name);
+  if (!t || name === garage.cur) return;
+  if (garage.mode === 'cloud') { // 出战切换：is_active 唯一标记
+    try {
+      const old = curTank();
+      await garage.cloud.update(t.id, { is_active: true });
+      if (old && old.id !== t.id) await garage.cloud.update(old.id, { is_active: false });
+      await reloadCloudGarage();
+    } catch (e) { garageMsg(T('play.saveFail', { msg: String((e && e.message) || e) }), true); return; }
+  } else {
+    garage.cur = name;
+    writeLocalStore(garage);
+  }
+  applyTankToUi(curTank() || t);
+  clearDraft();
+  updateVersionUi();
+  renderGarage();
+  scheduleLadder();
+}
+async function newTank() {
+  const def = nextTankName(garage.tanks.map((t) => t.name), tankN);
+  const name = askName(def);
+  if (!name) return;
+  if (garage.mode === 'cloud') { // 登录态：新坦克直接建在云端（命名即入库，不再产生本地坦克）
+    try {
+      const old = curTank();
+      await garage.cloud.create(buildTankPayload({ name, code: DEFAULT_SCRIPT, skill: userSkill(), version: 1, is_active: true }));
+      if (old) await garage.cloud.update(old.id, { is_active: false });
+      await reloadCloudGarage();
+    } catch (e) { garageMsg(T('play.saveFail', { msg: String((e && e.message) || e) }), true); return; }
+  } else {
+    garage.tanks.push({ name, code: DEFAULT_SCRIPT, skill: userSkill(), v: 1 });
+    garage.cur = name;
+    writeLocalStore(garage);
+  }
+  applyTankToUi(curTank());
+  clearDraft();
+  updateVersionUi();
+  renderGarage();
+  scheduleLadder();
+}
+async function renameTank(name) {
+  const t = garage.tanks.find((x) => x.name === name);
+  if (!t) return;
+  const name2 = askName(t.name, 'ui.garageRenamePrompt');
+  if (!name2 || name2 === t.name) return;
+  if (garage.mode === 'cloud') {
+    try { await garage.cloud.update(t.id, { name: name2 }); await reloadCloudGarage(); }
+    catch (e) { garageMsg(T('play.saveFail', { msg: String((e && e.message) || e) }), true); return; }
+  } else {
+    t.name = name2;
+    if (garage.cur === name) garage.cur = name2;
+    writeLocalStore(garage);
+  }
+  updateVersionUi();
+  renderGarage();
+}
+function renderGarage() {
+  if (garageTitleEl) garageTitleEl.textContent = garage.tanks.length ? T('ui.garageCount', { n: garage.tanks.length }) : T('ui.garage');
+  if (!garageListEl) return;
+  garageListEl.innerHTML = '';
+  if (!garage.tanks.length) {
+    const p = document.createElement('div');
+    p.style.cssText = 'font-size:11px;color:var(--dim)';
+    p.textContent = T('ui.garageEmpty');
+    garageListEl.appendChild(p);
+    return;
+  }
+  for (const t of garage.tanks) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:6px;align-items:center;font-size:11px;margin:2px 0;color:var(--muted)';
+    const label = document.createElement('span');
+    label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    const isCur = t.name === garage.cur;
+    label.textContent = isCur ? `${t.name} v${t.v} · ${T('ui.garageActive')}` : `${t.name} v${t.v}`;
+    if (isCur) label.style.color = 'var(--p1)';
+    row.appendChild(label);
+    const mkBtn = (text, fn) => {
+      const b = document.createElement('button');
+      b.className = 'btn ghost';
+      b.style.cssText = 'padding:1px 8px;font-size:11px;min-width:0';
+      b.textContent = text;
+      b.addEventListener('click', fn);
+      row.appendChild(b);
+    };
+    if (!isCur) mkBtn(T('ui.garageUse'), () => { switchTank(t.name); });
+    mkBtn(T('ui.garageRename'), () => { renameTank(t.name); });
+    garageListEl.appendChild(row);
+  }
+}
+
+// ---------- 登录时刻衔接（方案 v2）：横幅流程 + 云端车库接管 ----------
+const bridgeEl = $id('bridgeHint');
+const bridgeText = $id('bridgeText');
+const bridgeBtns = $id('bridgeBtns');
+function bridgeShow(text, btns) {
+  if (!bridgeEl) return;
+  bridgeText.textContent = text;
+  bridgeBtns.innerHTML = '';
+  for (const b of btns) {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.textContent = b.text;
+    el.addEventListener('click', b.fn);
+    bridgeBtns.appendChild(el);
+  }
+  bridgeEl.classList.add('show');
+}
+function bridgeHide() { if (bridgeEl) bridgeEl.classList.remove('show'); }
+function dropLocal(names) { // 已衔接的本地匿名坦克出清（全部处理完 = 本地清零）
+  if (!names.length) return;
+  const s = readLocalStore();
+  s.tanks = s.tanks.filter((t) => !names.includes(t.name));
+  if (!s.tanks.some((t) => t.name === s.cur)) s.cur = s.tanks.length ? s.tanks[0].name : null;
+  writeLocalStore(s);
+}
+function runBridge(r) { // 非阻断横幅队列：一键入库 → 冲突逐台二选一 → 完成语
+  const steps = [];
+  if (r.upload.length) steps.push({ kind: 'upload', tanks: r.upload });
+  for (const c of r.conflicts) steps.push({ kind: 'conflict', local: c.local, cloud: c.cloud });
+  const next = async () => {
+    const s = steps.shift();
+    if (!s) {
+      if (!readLocalStore().tanks.length) bridgeShow(T('play.bridgeDone'), [{ text: T('play.bridgeCloseBtn'), fn: bridgeHide }]);
+      else bridgeHide();
+      return;
+    }
+    if (s.kind === 'upload') {
+      const names = s.tanks.map((t) => t.name).join(LANG === 'zh' ? '、' : ', ');
+      bridgeShow(T('play.bridgeFound', { n: s.tanks.length, names }), [{
+        text: T('play.bridgeUploadBtn'),
+        fn: async () => {
+          const hasActive = garage.tanks.some((t) => t.active);
+          try {
+            for (let i = 0; i < s.tanks.length; i++) {
+              const lt = s.tanks[i];
+              await garage.cloud.create(buildTankPayload({
+                name: lt.name, code: lt.code, skill: lt.skill,
+                version: 1, is_active: !hasActive && i === 0, // 云端尚无出战坦克时，第一台顶上
+              }));
+            }
+          } catch (e) { garageMsg(T('play.saveFail', { msg: String((e && e.message) || e) }), true); return; }
+          dropLocal(s.tanks.map((t) => t.name));
+          await reloadCloudGarage();
+          updateVersionUi();
+          renderGarage();
+          garageMsg(T('play.bridgeUploaded', { n: s.tanks.length }));
+          next();
+        },
+      }]);
+      return;
+    }
+    // 冲突：同名不同码，二选一；另一份自动进本地存档，零丢失
+    const finish = async (code) => {
+      dropLocal([s.local.name]);
+      await reloadCloudGarage();
+      if (garage.cur === s.cloud.name) { editorEl.value = code; refreshSkillHint(); }
+      updateVersionUi();
+      renderGarage();
+      garageMsg(T('play.bridgeArchived'));
+      next();
+    };
+    bridgeShow(T('play.bridgeConflict', { name: s.local.name, v: s.cloud.v }), [
+      {
+        text: T('play.bridgeUseLocal', { v: s.cloud.v + 1 }),
+        fn: async () => {
+          archiveCopy(s.cloud, 'cloud');
+          try {
+            await garage.cloud.update(s.cloud.id, buildTankPayload({
+              name: s.cloud.name, code: s.local.code, skill: s.local.skill || s.cloud.skill,
+              version: s.cloud.v + 1, is_active: s.cloud.active === true,
+            }));
+          } catch (e) { garageMsg(T('play.saveFail', { msg: String((e && e.message) || e) }), true); return; }
+          finish(s.local.code);
+        },
+      },
+      { text: T('play.bridgeUseCloud', { v: s.cloud.v }), fn: () => { archiveCopy(s.local, 'local'); finish(s.cloud.code); } },
+    ]);
+  };
+  next();
+}
+// 登录成功（play.js 调用）：车库切云端 + 登录时刻逐台按名字衔接
+async function garageConnect(cloud) {
+  const localTanks = readLocalStore().tanks;
+  const g = await cloud.list(); // 失败则抛回 play.js 报状态，本地模式零回归
+  garage.cloud = cloud;
+  garage.mode = 'cloud';
+  garage.tanks = g.tanks;
+  garage.cur = g.active ? g.active.name : null;
+  if (!localTanks.length) { // 场景 2：本地无匿名坦克 → 载入云端车库，恢复出战坦克
+    const t = curTank();
+    if (t) {
+      applyTankToUi(t);
+      clearDraft();
+      garageMsg(T('play.garageLoaded', { n: garage.tanks.length, name: t.name, v: t.v }));
+    } else {
+      garageMsg(T('play.garageEmptyCloud'));
+    }
+  } else { // 场景 1/3：逐台按名字判定（编辑器不动，横幅引导，不阻塞开战）
+    const r = reconcileLogin(localTanks, garage.tanks);
+    dropLocal(r.synced); // 同名同码：视为已同步，静默出清
+    runBridge(r);
+  }
+  updateVersionUi();
+  renderGarage();
+  scheduleLadder();
+}
+function resetForLogout() { // 场景 5：登出清空车库与编辑器（未入库的匿名坦克先进存档，零丢失）
+  const s = readLocalStore();
+  for (const t of s.tanks) archiveCopy(t, 'logout');
+  writeLocalStore({ tanks: [], cur: null });
+  clearDraft();
+  editorEl.value = DEFAULT_SCRIPT;
 }
 
 // ---------- 回放时间线（由事件数组重建每 tick 快照） ----------
@@ -3500,10 +4027,12 @@ function buildTimeline(map, result) {
 }
 
 // ---------- 战报时间线（中文行 + 着色） ----------
+// 坦克名是用户数据：凡进 innerHTML 一律先转义
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function buildLog(result, names, seedStr) {
   const held = [0, 0];
   const out = [];
-  const nm = (i) => `<span class="${i === 0 ? 'p1' : 'p2'}">${names[i]}</span>`;
+  const nm = (i) => `<span class="${i === 0 ? 'p1' : 'p2'}">${esc(names[i])}</span>`;
   for (const e of result.events) {
     let html = null;
     switch (e.type) {
@@ -4161,7 +4690,7 @@ function render() {
       facing: [0, Math.PI], dead: [false, false],
       field: previewMap.stars.slice(0, RULES.maxFieldStars ?? previewMap.stars.length),
       bombs: [], gone: new Set(), cracked: new Set(),
-    }, [`${L.ui.myTank} v${curVersion}`, T('ui.opponent')], null, null, 0);
+    }, [myTankLabel(), T('ui.opponent')], null, null, 0);
   }
 }
 
@@ -4236,7 +4765,7 @@ function startBattle() {
   }
   // 地图与对局同源：预置图按选择取，随机图与 seed 同源；先取图再喂给 runMatch，保证渲染的就是对局用图
   const map = makeMap(seed);
-  const names = [`${L.ui.myTank} v${curVersion}`, oppStyle];
+  const names = [myTankLabel(), oppStyle];
   // 内容包全程随局（UGC 技能/道具/地图注册 + 战报嵌 pack：分享后任何人可确定性重现）
   const result = runMatch({ seed, botA: guarded, botB: oppFn, map, content: PACK });
   const tl = buildTimeline(map, result);
@@ -4260,7 +4789,7 @@ function computeLadder() {
     const box = { count: 0, last: '' };
     const gfn = guardWrap(fn, box);
     gfn.skill = userSkill();
-    parts.push({ key: '__user__', tank: `${L.ui.myTank} v${curVersion}`, style: T('ladder.userStyle'), fn: gfn, me: true, elo: 1200, w: 0, d: 0, g: 0 });
+    parts.push({ key: '__user__', tank: myTankLabel(), style: T('ladder.userStyle'), fn: gfn, me: true, elo: 1200, w: 0, d: 0, g: 0 });
   } catch { /* 用户脚本编译失败：天梯只算内置四家 */ }
   const jobs = [];
   for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) jobs.push([i, j]);
@@ -4296,7 +4825,7 @@ function renderLadder(parts) {
     const tr = document.createElement('tr');
     if (p.me) tr.className = 'me';
     const wr = p.g ? Math.round(((p.w + 0.5 * p.d) / p.g) * 100) : 0;
-    tr.innerHTML = `<td${i === 0 ? ' class="r1"' : ''}>${i + 1}</td><td>${p.tank}</td><td>${p.style}</td><td class="elo">${Math.round(p.elo)}</td><td>${wr}%</td>`;
+    tr.innerHTML = `<td${i === 0 ? ' class="r1"' : ''}>${i + 1}</td><td>${esc(p.tank)}</td><td>${esc(p.style)}</td><td class="elo">${Math.round(p.elo)}</td><td>${wr}%</td>`;
     ladderBody.appendChild(tr);
   });
   for (const r of ROSTER) {
@@ -4306,7 +4835,7 @@ function renderLadder(parts) {
   }
   const mine = parts.find((p) => p.me);
   rankChip.textContent = mine
-    ? T('ladder.rankChip', { name: `${L.ui.myTank} v${curVersion}`, elo: Math.round(mine.elo), rank: parts.indexOf(mine) + 1, total: parts.length })
+    ? T('ladder.rankChip', { name: myTankLabel(), elo: Math.round(mine.elo), rank: parts.indexOf(mine) + 1, total: parts.length })
     : T('ladder.updated');
   const hint = document.getElementById('ladderHint');
   if (hint) hint.textContent = T('ladder.hint', { seeds: JSON.stringify(LADDER_SEEDS), n: parts.length * (parts.length - 1) * LADDER_SEEDS.length });
@@ -4320,8 +4849,43 @@ function scheduleLadder() {
 
 // ---------- 事件绑定 ----------
 $id('battleBtn').addEventListener('click', startBattle);
-saveBtn.addEventListener('click', saveVersion);
+saveBtn.addEventListener('click', () => { saveVersion(); });
+$id('garageNewBtn')?.addEventListener('click', () => { newTank(); });
+editorEl.addEventListener('input', () => { // 草稿断电保护：未保存内容刷新不丢（≠ 坦克版本，不自动上传）
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ cur: garage.cur, code: editorEl.value })); } catch { /* 忽略 */ }
+});
 if (skillSel) skillSel.addEventListener('change', scheduleLadder);
+
+// ---------- 装备/代码不符提醒（非阻断） ----------
+// 装备由下拉框决定（guarded.skill），代码只决定何时施放；代码里点名的技能与装备不符时，
+// 引擎按 no-op 处理（旧入口语义）——这里显式提醒，并给一键换通用模板（旧代码先落存档可找回）。
+const skillHintEl = $id('skillHint');
+const skillHintText = $id('skillHintText');
+const skillHintBtn = $id('skillHintBtn');
+function refreshSkillHint() {
+  if (!skillHintEl) return;
+  const bad = skillCodeMismatch(editorEl.value, userSkill());
+  if (!bad.length) { skillHintEl.classList.remove('show'); return; }
+  skillHintText.textContent = T('ui.skillMismatch', { skill: skillLabel(userSkill()), calls: bad.map(skillLabel).join('/') });
+  skillHintBtn.style.display = '';
+  skillHintEl.classList.add('show');
+}
+if (skillHintBtn) {
+  skillHintBtn.textContent = T('ui.skillMismatchBtn');
+  skillHintBtn.addEventListener('click', async () => {
+    const prev = editorEl.value;
+    const storedCode = curTank()?.code ?? null;
+    const needSave = !!prev.trim() && prev !== storedCode && prev !== DEFAULT_SCRIPT;
+    if (needSave) await saveVersion(); // 覆盖前旧代码先存一版：刷新页面/车库里即可找回
+    editorEl.value = DEFAULT_SCRIPT;
+    refreshSkillHint(); // 通用模板必然清除不符 → 隐藏后再补一条完成提示
+    skillHintText.textContent = needSave ? T('ui.skillMismatchDoneSaved', { v: curTank()?.v ?? 1 }) : T('ui.skillMismatchDone');
+    skillHintBtn.style.display = 'none';
+    skillHintEl.classList.add('show');
+  });
+}
+if (skillSel) skillSel.addEventListener('change', refreshSkillHint);
+editorEl.addEventListener('input', refreshSkillHint);
 if (mapSel) mapSel.addEventListener('change', () => {
   // 切图立即生效：回到预览态，下一局按新图开战
   match = null;
@@ -4361,6 +4925,7 @@ if (!EVAL_OK) {
   errEl.parentNode.insertBefore(note, errEl);
 }
 updateVersionUi();
+renderGarage();
 const qp = new URLSearchParams(location.search);
 if (qp.get('seed')) pendingSeed = qp.get('seed').trim() || null; // ?seed= 回放深链：下一局按此种子复现
 if (qp.get('pack') && wsImportPack) { // ?pack= 分享深链（阶段2）：先导入内容包，选项注入后再应用 map/skill/opp
@@ -4383,6 +4948,7 @@ previewMap = makeMap(seedFromString(pendingSeed || genSeed()));
 setupCanvas(previewMap);
 requestAnimationFrame(loop);
 scheduleLadder();
+refreshSkillHint(); // 启动即检（含 ?script=/?skill= 深链落定后的状态）
 if (qp.get('autoplay') === '1') {
   startBattle();
   if (match) { // 跳到中局并停住，便于截图/演示（双方坦克在场、战报点亮过半）
@@ -4395,13 +4961,16 @@ if (qp.get('autoplay') === '1') {
 initPlay({
   T, L,
   editorGet: () => editorEl.value,
-  editorSet: (code) => { editorEl.value = code; },
+  editorSet: (code) => { editorEl.value = code; refreshSkillHint(); },
   compileScript, guardWrap,
   userSkill, userMapKey, makeMap,
   defaultScript: DEFAULT_SCRIPT,
   ROSTER, LADDER_SEEDS,
   runMatch,
   getPack: () => PACK,
+  workshopConnect: (cloud) => (wsConnectCloud ? wsConnectCloud(cloud) : null),
+  garageConnect, // 登录成功：车库切云端 + 登录时刻逐台衔接（方案 v2）
+  resetForLogout, // 登出：清车库/草稿、编辑器回默认模板（未入库匿名坦克先进存档）
 });
 })();
 </script>

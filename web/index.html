@@ -49,6 +49,9 @@ main{flex:1; display:grid; grid-template-columns:340px 1fr 300px; gap:12px; padd
 }
 .err{display:none; color:var(--bad); font-size:12px; padding:8px 14px; border-top:1px solid var(--line); background:#2A1518; white-space:pre-wrap}
 .err.show{display:block}
+.skillhint{display:none; color:#E8B44A; font-size:12px; padding:8px 14px; border-top:1px solid var(--line); background:#2A2314; white-space:pre-wrap}
+.skillhint.show{display:flex; align-items:center; gap:8px; justify-content:space-between}
+.skillhint button{flex:none; background:transparent; border:1px solid currentColor; color:inherit; border-radius:6px; padding:3px 8px; font-size:12px; cursor:pointer}
 .ctrl{padding:12px 14px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:10px}
 .row{display:flex; gap:8px; align-items:center}
 select,input{
@@ -117,6 +120,7 @@ footer .mono{color:var(--muted)}
     <span class="chip" data-i18n="ui.season">赛季 S1</span>
     <span class="chip" id="playUserChip" style="display:none"></span>
     <button class="chip" id="playLoginBtn" style="display:none;background:transparent;border-color:var(--line);color:var(--muted);cursor:pointer" data-i18n="play.login">登录</button>
+    <button class="chip" id="playLogoutBtn" style="display:none;background:transparent;border-color:var(--line);color:var(--muted);cursor:pointer" data-i18n="play.logout">登出</button>
     <span class="chip">v0.1.0</span>
     <select id="langSel" class="chip" style="background:transparent;border-color:var(--line);color:var(--muted);padding:2px 8px;font-size:12px" aria-label="language">
       <option value="zh">中文</option>
@@ -130,6 +134,8 @@ footer .mono{color:var(--muted)}
     <h2><span class="dot"></span><span id="editorTitle">策略脚本 · 我的坦克 v1</span></h2>
     <textarea id="editor" spellcheck="false"></textarea>
     <div class="err" id="scriptErr"></div>
+    <div class="skillhint" id="skillHint"><span id="skillHintText"></span><button id="skillHintBtn" type="button"></button></div>
+    <div class="skillhint" id="bridgeHint"><span id="bridgeText"></span><span id="bridgeBtns" style="display:flex;gap:6px;flex:none"></span></div>
     <div class="ctrl">
       <div class="row"><label data-i18n="ui.opponent">对手</label>
         <select id="opp">
@@ -157,7 +163,13 @@ footer .mono{color:var(--muted)}
         </select>
       </div>
       <button class="btn" id="battleBtn" data-i18n="ui.battle">开 战</button>
-      <button class="btn ghost" id="saveBtn">保存为新版本（当前 v1 · 共 1 版）</button>
+      <button class="btn ghost" id="saveBtn">保存为新版本</button>
+      <details id="garage" open style="margin-top:10px;border:1px solid var(--line);border-radius:8px;padding:8px">
+        <summary style="cursor:pointer;font-size:12px;color:var(--muted)"><span id="garageTitle" data-i18n="ui.garage">我的车库</span></summary>
+        <div id="garageMsg" style="font-size:11px;color:var(--dim);margin:4px 0;min-height:14px"></div>
+        <div id="garageList" style="margin-top:2px"></div>
+        <button class="btn ghost" id="garageNewBtn" data-i18n="ui.garageNew" style="margin-top:6px;padding:4px 10px;font-size:11px">新建坦克</button>
+      </details>
       <details id="workshop" style="margin-top:10px;border:1px solid var(--line);border-radius:8px;padding:8px">
         <summary data-i18n="ui.workshop" style="cursor:pointer;font-size:12px;color:var(--muted)">创作工坊 · 地图/技能/道具/流派</summary>
         <div data-i18n="ui.wsHint" style="font-size:11px;color:var(--dim);margin:6px 0;line-height:1.5">三阶段：私有 → 分享 → 官方收录</div>
@@ -185,7 +197,6 @@ footer .mono{color:var(--muted)}
         <summary data-i18n="play.panelTitle" style="cursor:pointer;font-size:12px;color:var(--muted)">我的坦克（云端）</summary>
         <div id="playStatus" style="font-size:11px;color:var(--dim);margin:6px 0"></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn" id="playSaveBtn" style="padding:4px 10px;font-size:11px" data-i18n="play.createTank">生成我的坦克</button>
           <button class="btn ghost" id="playFillBtn" style="padding:4px 10px;font-size:11px" data-i18n="play.fill">回填默认流派代码</button>
           <button class="btn ghost" id="playChallengeBtn" style="padding:4px 10px;font-size:11px" data-i18n="play.challenge">参加挑战赛</button>
         </div>

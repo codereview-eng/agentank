@@ -3,7 +3,7 @@
 import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS, presetMap, validateContent, makePack, serializePack, parsePack, promoteStage, resolvePackMap, compileBot, OFFICIAL_CONTENT } from '../src/engine/index.js';
 import { bots } from '../bots/index.js';
 import { LOCALES, LANGS, fmt, resolveLang } from './i18n.js';
-import { initPlay } from './play.js';
+import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName } from './play.js';
 
 // ---------- i18n：?lang= > localStorage > 浏览器语言 > zh ----------
 const storedLang = (() => { try { return localStorage.getItem('agentank-lang'); } catch { return null; } })();
@@ -119,14 +119,22 @@ for (const r of ROSTER) {
 }
 
 // ---------- 创作工坊（UGC 三阶段：私有 → 分享 → 官方收录） ----------
-// 阶段1：内容存本机 localStorage，仅自己可见可测；
+// 阶段1：内容存服务器端账号名下（Workshop 实体，登录后 CRUD），仅自己可见可测；未登录只能内存暂存；
 // 阶段2：生成分享串/链接（内容包整包嵌进战报参数），任何人打开即确定性重现整场战斗；
 // 阶段3：官方收录进 OFFICIAL_CONTENT（引擎侧列表），与内置地图/技能/道具/流派同权使用。
-const WS_KEY = 'agentank-workshop';
+const WS_KEY = 'agentank-workshop'; // 旧本机存档 key：只用于登录后一次性迁移上云，不再写入
 const b64e = (s) => btoa(unescape(encodeURIComponent(s)));
 const b64d = (s) => decodeURIComponent(escape(atob(s)));
-let wsEntries = (() => { try { return JSON.parse(localStorage.getItem(WS_KEY) || '[]'); } catch { return []; } })();
-const wsPersist = () => { try { localStorage.setItem(WS_KEY, JSON.stringify(wsEntries)); } catch { /* 忽略 */ } };
+// 工坊内容只存服务器端（Workshop 实体，登录后由 play.js 注入云端后端）；
+// 未登录仅内存暂存（?pack= 导入照样能玩，刷新即丢），保存/删除的持久化只发生在云端。
+let wsEntries = [];
+let wsCloud = null; // { save(entry), remove(entry) }；null = 未登录
+let wsCloudFail = null; // 云端写失败的 UI 提示（工坊块内赋值：showWs 在块里）
+const wsPersist = (entry, removed) => { // 单条变更上云；未登录时为内存态，静默跳过
+  if (!wsCloud || !entry) return;
+  (removed ? wsCloud.remove(entry) : wsCloud.save(entry))
+    .catch((e) => wsCloudFail?.(String((e && e.message) || e)));
+};
 // 活动内容包 = 官方收录 + 我的/导入（type:id 去重，官方优先不可被顶替；坏存量跳过不拖垮整包）
 function buildPack() {
   const seen = new Set();
@@ -172,6 +180,7 @@ const WS_TPL = {
   bot: { type: 'bot', id: 'mybot', name: LANG === 'zh' ? '我的流派' : 'My Style', skill: 'shield', code: 'export default function decide(api) {\n  if (api.enemyVisible() && api.canFire()) return api.fireAt(api.enemy());\n  return api.patrol();\n}' },
 };
 let wsImportPack = null; // ?pack= 深链复用（在下方工坊模块内赋值）
+let wsConnectCloud = null; // 登录后由 play.js 调用：注入云端 CRUD、灌云端数据、迁移旧本机存量
 {
   const wsEd = $id('wsEditor');
   const wsMsg = $id('wsErr');
@@ -211,12 +220,12 @@ let wsImportPack = null; // ?pack= 深链复用（在下方工坊模块内赋值
       if (mine) {
         mkBtn(T('ui.wsShare'), () => { // 分享 = 阶段1→2（私有先晋升），生成 ?pack= 链接
           const idx = wsEntries.indexOf(e);
-          if ((e.stage ?? 'private') === 'private') { wsEntries[idx] = promoteStage(e); wsPersist(); }
+          if ((e.stage ?? 'private') === 'private') { wsEntries[idx] = promoteStage(e); wsPersist(wsEntries[idx]); }
           const s = serializePack(makePack([wsEntries[idx]]));
           emitShare(`${location.origin}${location.pathname}?pack=${encodeURIComponent(s)}&lang=${LANG}`);
           refresh();
         });
-        mkBtn(T('ui.wsDelete'), () => { wsEntries.splice(wsEntries.indexOf(e), 1); wsPersist(); refresh(); });
+        mkBtn(T('ui.wsDelete'), () => { wsEntries.splice(wsEntries.indexOf(e), 1); wsPersist(e, true); refresh(); });
       }
       wsListEl.appendChild(row);
     };
@@ -236,13 +245,30 @@ let wsImportPack = null; // ?pack= 深链复用（在下方工坊模块内赋值
       const entry = { ...e, stage: 'shared' }; // 导入的内容一律记为阶段2（official 只能来自引擎收录列表）
       const i = wsEntries.findIndex((x) => x.type === e.type && x.id === e.id);
       if (i >= 0) wsEntries[i] = entry; else wsEntries.push(entry);
+      wsPersist(entry); // 登录态：导入即入云端；未登录：内存暂存
     }
-    wsPersist();
     refresh();
     if (!opts.silent) showWs(`${T('ui.wsImported')} ×${p.entries.length}`, false);
     return p.entries.length;
   }
   wsImportPack = importPackStr; // 供 ?pack= 深链复用
+  wsCloudFail = (msg) => showWs(T('ui.wsCloudFail', { msg }), true);
+  wsConnectCloud = async (cloud) => { // 登录成功：云端 Workshop 成为唯一事实源
+    wsCloud = { save: cloud.save, remove: cloud.remove };
+    wsEntries = (cloud.entries || []).slice();
+    // 旧本机 localStorage 存量一次性搬上云；全部成功才清本机 key（失败留着下次登录重试）
+    let legacy = [];
+    try { legacy = JSON.parse(localStorage.getItem(WS_KEY) || '[]'); } catch { /* 忽略 */ }
+    let moved = 0, failed = false;
+    for (const e of Array.isArray(legacy) ? legacy : []) {
+      if (!e || !e.type || !e.id) continue;
+      if (wsEntries.some((x) => x.type === e.type && x.id === e.id)) continue; // 云端已有同名：云端优先
+      try { await cloud.save(e); wsEntries.push(e); moved += 1; } catch { failed = true; }
+    }
+    if (!failed) { try { localStorage.removeItem(WS_KEY); } catch { /* 忽略 */ } }
+    if (moved) showWs(T('ui.wsMigrated', { n: moved }), false);
+    refresh();
+  };
   $id('wsNewBtn')?.addEventListener('click', () => {
     if (wsEd) wsEd.value = JSON.stringify(WS_TPL[$id('wsTpl')?.value || 'map'], null, 2);
     showWs('', false);
@@ -252,10 +278,11 @@ let wsImportPack = null; // ?pack= 深链复用（在下方工坊模块内赋值
     try { def = JSON.parse(wsEd.value); } catch (e) { showWs(`JSON: ${e.message}`, true); return; }
     const r = validateContent(def);
     if (!r.ok) { showWs(r.errors.join('；'), true); return; }
+    if (!wsCloud) { showWs(T('ui.wsLoginFirst'), true); return; } // 私有内容只存服务器端：未登录不落任何本机持久层
     const entry = { ...def, stage: 'private' }; // 保存/改动一律回私有：改完需重新分享（阶段1）
     const i = wsEntries.findIndex((e) => e.type === def.type && e.id === def.id);
     if (i >= 0) wsEntries[i] = entry; else wsEntries.push(entry);
-    wsPersist();
+    wsPersist(entry);
     showWs(T('ui.wsSaved'), false);
     refresh();
   });
@@ -304,7 +331,7 @@ function defaultDecide(api) {
   const me = api.me();
   const star = api.nearestStar();
   if (api.enemyVisible() && api.canFire()) return api.fireAt(api.enemy());
-  if (me.hp < 30 && api.ready('teleport')) return api.teleport(api.safestCorner());
+  if (me.hp < 30 && api.ready()) return api.useSkill(api.safestCorner());
   return star ? api.moveTo(star) : api.patrol();
 }
 
@@ -342,34 +369,314 @@ function guardWrap(fn, box) {
 function showErr(msg) { errEl.textContent = msg; errEl.classList.add('show'); }
 function hideErr() { errEl.classList.remove('show'); }
 
-// ---------- 版本存储 ----------
-let curVersion = 1;
-let versionCount = 1;
-function loadStore() {
+// ---------- 车库存储（多坦克，方案 v2） ----------
+// 匿名期：坦克列表落本机 localStorage（agentank.save = {tanks:[{name,code,skill,v}],cur}，
+// 旧单份 {code,v,n} 一次性迁移为「坦克1」）；登录后云端是坦克唯一的家（garage.mode='cloud'）。
+const SAVE_KEY = 'agentank.save';
+const DRAFT_KEY = 'agentank.draft'; // 草稿断电保护：未保存的编辑内容，≠ 坦克版本
+const ARCHIVE_KEY = 'agentank.archive'; // 零丢失兜底：被覆盖/清理的代码进存档
+const garage = { mode: 'local', tanks: [], cur: null, cloud: null };
+const tankN = (n) => T('ui.tankN', { n });
+const curTank = () => garage.tanks.find((t) => t.name === garage.cur) || null;
+const myTankLabel = () => { const t = curTank(); return t ? `${t.name} v${t.v}` : `${L.ui.myTank} v1`; };
+
+function readLocalStore() {
+  try { return migrateLocalSave(localStorage.getItem(SAVE_KEY), tankN(1)); } catch { return { tanks: [], cur: null }; }
+}
+function writeLocalStore(s) {
   try {
-    const raw = localStorage.getItem('agentank.save');
-    if (raw) {
-      const s = JSON.parse(raw);
-      if (s && typeof s.code === 'string' && s.code.trim()) {
-        editorEl.value = s.code;
-        curVersion = s.v || 1;
-        versionCount = s.n || 1;
-      }
-    }
+    if (!s.tanks.length) localStorage.removeItem(SAVE_KEY);
+    else localStorage.setItem(SAVE_KEY, JSON.stringify({ tanks: s.tanks, cur: s.cur }));
   } catch { /* file:// 或隐私模式下无 localStorage：忽略 */ }
 }
-function saveVersion() {
-  versionCount++;
-  curVersion = versionCount;
+function archiveCopy(t, from) {
   try {
-    localStorage.setItem('agentank.save', JSON.stringify({ code: editorEl.value, v: curVersion, n: versionCount }));
+    const arc = JSON.parse(localStorage.getItem(ARCHIVE_KEY) || '[]');
+    arc.push({ name: t.name, code: t.code, skill: t.skill || '', v: t.v ?? 1, from, ts: Date.now() });
+    localStorage.setItem(ARCHIVE_KEY, JSON.stringify(arc));
   } catch { /* 忽略 */ }
+}
+function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch { /* 忽略 */ } }
+function applyTankToUi(t) { // 切台/入座：代码进编辑器、技能跟随（无该选项时保持现装备）
+  editorEl.value = t ? t.code : DEFAULT_SCRIPT;
+  if (t && t.skill && skillSel && [...skillSel.options].some((o) => o.value === t.skill)) skillSel.value = t.skill;
+  refreshSkillHint();
+}
+function loadStore() {
+  const s = readLocalStore();
+  garage.tanks = s.tanks;
+  garage.cur = s.cur;
+  const t = curTank();
+  if (t) applyTankToUi(t);
+  try { // 草稿恢复：仅当仍是同一台坦克（含「尚无坦克」态）时才回填
+    const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
+    if (d && typeof d.code === 'string' && d.code.trim() && (d.cur ?? null) === (garage.cur ?? null)) editorEl.value = d.code;
+  } catch { /* 忽略 */ }
+}
+async function saveVersion() {
+  const code = editorEl.value;
+  const skill = userSkill();
+  if (garage.mode === 'cloud') {
+    try { compileScript(code); } catch (e) { garageMsg(T('play.compileFail', { msg: String((e && e.message) || e) }), true); return; }
+    const t = curTank();
+    try {
+      if (t) {
+        await garage.cloud.update(t.id, buildTankPayload({ name: t.name, code, skill, version: t.v + 1, is_active: t.active === true }));
+      } else { // 云端第一台：命名即入库
+        const name = askName(tankN(1));
+        if (!name) return;
+        await garage.cloud.create(buildTankPayload({ name, code, skill, version: 1, is_active: true }));
+      }
+      await reloadCloudGarage();
+      garageMsg(T('play.saved', { v: curTank()?.v ?? 1 }));
+    } catch (e) { garageMsg(T('play.saveFail', { msg: String((e && e.message) || e) }), true); return; }
+  } else {
+    const r = upsertLocalTank({ tanks: garage.tanks, cur: garage.cur }, { name: garage.cur || tankN(1), code, skill });
+    garage.tanks = r.tanks;
+    garage.cur = r.cur;
+    writeLocalStore(garage);
+  }
+  clearDraft();
   updateVersionUi();
+  renderGarage();
   scheduleLadder();
 }
 function updateVersionUi() {
-  saveBtn.textContent = T('ui.save', { v: curVersion, n: versionCount });
-  editorTitle.textContent = T('ui.editorTitle', { name: `${L.ui.myTank} v${curVersion}` });
+  const t = curTank();
+  saveBtn.textContent = t ? T('ui.save', { name: t.name, v: t.v + 1 }) : T('ui.saveFirst');
+  editorTitle.textContent = T('ui.editorTitle', { name: myTankLabel() });
+}
+
+// ---------- 我的车库 UI（列表 / 切换出战 / 新建 / 重命名） ----------
+const garageListEl = $id('garageList');
+const garageMsgEl = $id('garageMsg');
+const garageTitleEl = $id('garageTitle');
+function garageMsg(msg, bad) { if (garageMsgEl) { garageMsgEl.textContent = msg || ''; garageMsgEl.style.color = bad ? 'var(--bad)' : 'var(--dim)'; } }
+function askName(def, promptKey = 'ui.garageNewPrompt') { // 同一玩家内 name 唯一（前端校验）
+  const name = (window.prompt(T(promptKey), def) || '').trim();
+  if (!name) return null;
+  if (garage.tanks.some((t) => t.name === name)) { garageMsg(T('ui.garageNameDup', { name }), true); return null; }
+  return name;
+}
+async function reloadCloudGarage() {
+  const g = await garage.cloud.list();
+  garage.tanks = g.tanks;
+  garage.cur = g.active ? g.active.name : null;
+}
+async function switchTank(name) {
+  const t = garage.tanks.find((x) => x.name === name);
+  if (!t || name === garage.cur) return;
+  if (garage.mode === 'cloud') { // 出战切换：is_active 唯一标记
+    try {
+      const old = curTank();
+      await garage.cloud.update(t.id, { is_active: true });
+      if (old && old.id !== t.id) await garage.cloud.update(old.id, { is_active: false });
+      await reloadCloudGarage();
+    } catch (e) { garageMsg(T('play.saveFail', { msg: String((e && e.message) || e) }), true); return; }
+  } else {
+    garage.cur = name;
+    writeLocalStore(garage);
+  }
+  applyTankToUi(curTank() || t);
+  clearDraft();
+  updateVersionUi();
+  renderGarage();
+  scheduleLadder();
+}
+async function newTank() {
+  const def = nextTankName(garage.tanks.map((t) => t.name), tankN);
+  const name = askName(def);
+  if (!name) return;
+  if (garage.mode === 'cloud') { // 登录态：新坦克直接建在云端（命名即入库，不再产生本地坦克）
+    try {
+      const old = curTank();
+      await garage.cloud.create(buildTankPayload({ name, code: DEFAULT_SCRIPT, skill: userSkill(), version: 1, is_active: true }));
+      if (old) await garage.cloud.update(old.id, { is_active: false });
+      await reloadCloudGarage();
+    } catch (e) { garageMsg(T('play.saveFail', { msg: String((e && e.message) || e) }), true); return; }
+  } else {
+    garage.tanks.push({ name, code: DEFAULT_SCRIPT, skill: userSkill(), v: 1 });
+    garage.cur = name;
+    writeLocalStore(garage);
+  }
+  applyTankToUi(curTank());
+  clearDraft();
+  updateVersionUi();
+  renderGarage();
+  scheduleLadder();
+}
+async function renameTank(name) {
+  const t = garage.tanks.find((x) => x.name === name);
+  if (!t) return;
+  const name2 = askName(t.name, 'ui.garageRenamePrompt');
+  if (!name2 || name2 === t.name) return;
+  if (garage.mode === 'cloud') {
+    try { await garage.cloud.update(t.id, { name: name2 }); await reloadCloudGarage(); }
+    catch (e) { garageMsg(T('play.saveFail', { msg: String((e && e.message) || e) }), true); return; }
+  } else {
+    t.name = name2;
+    if (garage.cur === name) garage.cur = name2;
+    writeLocalStore(garage);
+  }
+  updateVersionUi();
+  renderGarage();
+}
+function renderGarage() {
+  if (garageTitleEl) garageTitleEl.textContent = garage.tanks.length ? T('ui.garageCount', { n: garage.tanks.length }) : T('ui.garage');
+  if (!garageListEl) return;
+  garageListEl.innerHTML = '';
+  if (!garage.tanks.length) {
+    const p = document.createElement('div');
+    p.style.cssText = 'font-size:11px;color:var(--dim)';
+    p.textContent = T('ui.garageEmpty');
+    garageListEl.appendChild(p);
+    return;
+  }
+  for (const t of garage.tanks) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:6px;align-items:center;font-size:11px;margin:2px 0;color:var(--muted)';
+    const label = document.createElement('span');
+    label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    const isCur = t.name === garage.cur;
+    label.textContent = isCur ? `${t.name} v${t.v} · ${T('ui.garageActive')}` : `${t.name} v${t.v}`;
+    if (isCur) label.style.color = 'var(--p1)';
+    row.appendChild(label);
+    const mkBtn = (text, fn) => {
+      const b = document.createElement('button');
+      b.className = 'btn ghost';
+      b.style.cssText = 'padding:1px 8px;font-size:11px;min-width:0';
+      b.textContent = text;
+      b.addEventListener('click', fn);
+      row.appendChild(b);
+    };
+    if (!isCur) mkBtn(T('ui.garageUse'), () => { switchTank(t.name); });
+    mkBtn(T('ui.garageRename'), () => { renameTank(t.name); });
+    garageListEl.appendChild(row);
+  }
+}
+
+// ---------- 登录时刻衔接（方案 v2）：横幅流程 + 云端车库接管 ----------
+const bridgeEl = $id('bridgeHint');
+const bridgeText = $id('bridgeText');
+const bridgeBtns = $id('bridgeBtns');
+function bridgeShow(text, btns) {
+  if (!bridgeEl) return;
+  bridgeText.textContent = text;
+  bridgeBtns.innerHTML = '';
+  for (const b of btns) {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.textContent = b.text;
+    el.addEventListener('click', b.fn);
+    bridgeBtns.appendChild(el);
+  }
+  bridgeEl.classList.add('show');
+}
+function bridgeHide() { if (bridgeEl) bridgeEl.classList.remove('show'); }
+function dropLocal(names) { // 已衔接的本地匿名坦克出清（全部处理完 = 本地清零）
+  if (!names.length) return;
+  const s = readLocalStore();
+  s.tanks = s.tanks.filter((t) => !names.includes(t.name));
+  if (!s.tanks.some((t) => t.name === s.cur)) s.cur = s.tanks.length ? s.tanks[0].name : null;
+  writeLocalStore(s);
+}
+function runBridge(r) { // 非阻断横幅队列：一键入库 → 冲突逐台二选一 → 完成语
+  const steps = [];
+  if (r.upload.length) steps.push({ kind: 'upload', tanks: r.upload });
+  for (const c of r.conflicts) steps.push({ kind: 'conflict', local: c.local, cloud: c.cloud });
+  const next = async () => {
+    const s = steps.shift();
+    if (!s) {
+      if (!readLocalStore().tanks.length) bridgeShow(T('play.bridgeDone'), [{ text: T('play.bridgeCloseBtn'), fn: bridgeHide }]);
+      else bridgeHide();
+      return;
+    }
+    if (s.kind === 'upload') {
+      const names = s.tanks.map((t) => t.name).join(LANG === 'zh' ? '、' : ', ');
+      bridgeShow(T('play.bridgeFound', { n: s.tanks.length, names }), [{
+        text: T('play.bridgeUploadBtn'),
+        fn: async () => {
+          const hasActive = garage.tanks.some((t) => t.active);
+          try {
+            for (let i = 0; i < s.tanks.length; i++) {
+              const lt = s.tanks[i];
+              await garage.cloud.create(buildTankPayload({
+                name: lt.name, code: lt.code, skill: lt.skill,
+                version: 1, is_active: !hasActive && i === 0, // 云端尚无出战坦克时，第一台顶上
+              }));
+            }
+          } catch (e) { garageMsg(T('play.saveFail', { msg: String((e && e.message) || e) }), true); return; }
+          dropLocal(s.tanks.map((t) => t.name));
+          await reloadCloudGarage();
+          updateVersionUi();
+          renderGarage();
+          garageMsg(T('play.bridgeUploaded', { n: s.tanks.length }));
+          next();
+        },
+      }]);
+      return;
+    }
+    // 冲突：同名不同码，二选一；另一份自动进本地存档，零丢失
+    const finish = async (code) => {
+      dropLocal([s.local.name]);
+      await reloadCloudGarage();
+      if (garage.cur === s.cloud.name) { editorEl.value = code; refreshSkillHint(); }
+      updateVersionUi();
+      renderGarage();
+      garageMsg(T('play.bridgeArchived'));
+      next();
+    };
+    bridgeShow(T('play.bridgeConflict', { name: s.local.name, v: s.cloud.v }), [
+      {
+        text: T('play.bridgeUseLocal', { v: s.cloud.v + 1 }),
+        fn: async () => {
+          archiveCopy(s.cloud, 'cloud');
+          try {
+            await garage.cloud.update(s.cloud.id, buildTankPayload({
+              name: s.cloud.name, code: s.local.code, skill: s.local.skill || s.cloud.skill,
+              version: s.cloud.v + 1, is_active: s.cloud.active === true,
+            }));
+          } catch (e) { garageMsg(T('play.saveFail', { msg: String((e && e.message) || e) }), true); return; }
+          finish(s.local.code);
+        },
+      },
+      { text: T('play.bridgeUseCloud', { v: s.cloud.v }), fn: () => { archiveCopy(s.local, 'local'); finish(s.cloud.code); } },
+    ]);
+  };
+  next();
+}
+// 登录成功（play.js 调用）：车库切云端 + 登录时刻逐台按名字衔接
+async function garageConnect(cloud) {
+  const localTanks = readLocalStore().tanks;
+  const g = await cloud.list(); // 失败则抛回 play.js 报状态，本地模式零回归
+  garage.cloud = cloud;
+  garage.mode = 'cloud';
+  garage.tanks = g.tanks;
+  garage.cur = g.active ? g.active.name : null;
+  if (!localTanks.length) { // 场景 2：本地无匿名坦克 → 载入云端车库，恢复出战坦克
+    const t = curTank();
+    if (t) {
+      applyTankToUi(t);
+      clearDraft();
+      garageMsg(T('play.garageLoaded', { n: garage.tanks.length, name: t.name, v: t.v }));
+    } else {
+      garageMsg(T('play.garageEmptyCloud'));
+    }
+  } else { // 场景 1/3：逐台按名字判定（编辑器不动，横幅引导，不阻塞开战）
+    const r = reconcileLogin(localTanks, garage.tanks);
+    dropLocal(r.synced); // 同名同码：视为已同步，静默出清
+    runBridge(r);
+  }
+  updateVersionUi();
+  renderGarage();
+  scheduleLadder();
+}
+function resetForLogout() { // 场景 5：登出清空车库与编辑器（未入库的匿名坦克先进存档，零丢失）
+  const s = readLocalStore();
+  for (const t of s.tanks) archiveCopy(t, 'logout');
+  writeLocalStore({ tanks: [], cur: null });
+  clearDraft();
+  editorEl.value = DEFAULT_SCRIPT;
 }
 
 // ---------- 回放时间线（由事件数组重建每 tick 快照） ----------
@@ -523,10 +830,12 @@ function buildTimeline(map, result) {
 }
 
 // ---------- 战报时间线（中文行 + 着色） ----------
+// 坦克名是用户数据：凡进 innerHTML 一律先转义
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function buildLog(result, names, seedStr) {
   const held = [0, 0];
   const out = [];
-  const nm = (i) => `<span class="${i === 0 ? 'p1' : 'p2'}">${names[i]}</span>`;
+  const nm = (i) => `<span class="${i === 0 ? 'p1' : 'p2'}">${esc(names[i])}</span>`;
   for (const e of result.events) {
     let html = null;
     switch (e.type) {
@@ -1184,7 +1493,7 @@ function render() {
       facing: [0, Math.PI], dead: [false, false],
       field: previewMap.stars.slice(0, RULES.maxFieldStars ?? previewMap.stars.length),
       bombs: [], gone: new Set(), cracked: new Set(),
-    }, [`${L.ui.myTank} v${curVersion}`, T('ui.opponent')], null, null, 0);
+    }, [myTankLabel(), T('ui.opponent')], null, null, 0);
   }
 }
 
@@ -1259,7 +1568,7 @@ function startBattle() {
   }
   // 地图与对局同源：预置图按选择取，随机图与 seed 同源；先取图再喂给 runMatch，保证渲染的就是对局用图
   const map = makeMap(seed);
-  const names = [`${L.ui.myTank} v${curVersion}`, oppStyle];
+  const names = [myTankLabel(), oppStyle];
   // 内容包全程随局（UGC 技能/道具/地图注册 + 战报嵌 pack：分享后任何人可确定性重现）
   const result = runMatch({ seed, botA: guarded, botB: oppFn, map, content: PACK });
   const tl = buildTimeline(map, result);
@@ -1283,7 +1592,7 @@ function computeLadder() {
     const box = { count: 0, last: '' };
     const gfn = guardWrap(fn, box);
     gfn.skill = userSkill();
-    parts.push({ key: '__user__', tank: `${L.ui.myTank} v${curVersion}`, style: T('ladder.userStyle'), fn: gfn, me: true, elo: 1200, w: 0, d: 0, g: 0 });
+    parts.push({ key: '__user__', tank: myTankLabel(), style: T('ladder.userStyle'), fn: gfn, me: true, elo: 1200, w: 0, d: 0, g: 0 });
   } catch { /* 用户脚本编译失败：天梯只算内置四家 */ }
   const jobs = [];
   for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) jobs.push([i, j]);
@@ -1319,7 +1628,7 @@ function renderLadder(parts) {
     const tr = document.createElement('tr');
     if (p.me) tr.className = 'me';
     const wr = p.g ? Math.round(((p.w + 0.5 * p.d) / p.g) * 100) : 0;
-    tr.innerHTML = `<td${i === 0 ? ' class="r1"' : ''}>${i + 1}</td><td>${p.tank}</td><td>${p.style}</td><td class="elo">${Math.round(p.elo)}</td><td>${wr}%</td>`;
+    tr.innerHTML = `<td${i === 0 ? ' class="r1"' : ''}>${i + 1}</td><td>${esc(p.tank)}</td><td>${esc(p.style)}</td><td class="elo">${Math.round(p.elo)}</td><td>${wr}%</td>`;
     ladderBody.appendChild(tr);
   });
   for (const r of ROSTER) {
@@ -1329,7 +1638,7 @@ function renderLadder(parts) {
   }
   const mine = parts.find((p) => p.me);
   rankChip.textContent = mine
-    ? T('ladder.rankChip', { name: `${L.ui.myTank} v${curVersion}`, elo: Math.round(mine.elo), rank: parts.indexOf(mine) + 1, total: parts.length })
+    ? T('ladder.rankChip', { name: myTankLabel(), elo: Math.round(mine.elo), rank: parts.indexOf(mine) + 1, total: parts.length })
     : T('ladder.updated');
   const hint = document.getElementById('ladderHint');
   if (hint) hint.textContent = T('ladder.hint', { seeds: JSON.stringify(LADDER_SEEDS), n: parts.length * (parts.length - 1) * LADDER_SEEDS.length });
@@ -1343,8 +1652,43 @@ function scheduleLadder() {
 
 // ---------- 事件绑定 ----------
 $id('battleBtn').addEventListener('click', startBattle);
-saveBtn.addEventListener('click', saveVersion);
+saveBtn.addEventListener('click', () => { saveVersion(); });
+$id('garageNewBtn')?.addEventListener('click', () => { newTank(); });
+editorEl.addEventListener('input', () => { // 草稿断电保护：未保存内容刷新不丢（≠ 坦克版本，不自动上传）
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ cur: garage.cur, code: editorEl.value })); } catch { /* 忽略 */ }
+});
 if (skillSel) skillSel.addEventListener('change', scheduleLadder);
+
+// ---------- 装备/代码不符提醒（非阻断） ----------
+// 装备由下拉框决定（guarded.skill），代码只决定何时施放；代码里点名的技能与装备不符时，
+// 引擎按 no-op 处理（旧入口语义）——这里显式提醒，并给一键换通用模板（旧代码先落存档可找回）。
+const skillHintEl = $id('skillHint');
+const skillHintText = $id('skillHintText');
+const skillHintBtn = $id('skillHintBtn');
+function refreshSkillHint() {
+  if (!skillHintEl) return;
+  const bad = skillCodeMismatch(editorEl.value, userSkill());
+  if (!bad.length) { skillHintEl.classList.remove('show'); return; }
+  skillHintText.textContent = T('ui.skillMismatch', { skill: skillLabel(userSkill()), calls: bad.map(skillLabel).join('/') });
+  skillHintBtn.style.display = '';
+  skillHintEl.classList.add('show');
+}
+if (skillHintBtn) {
+  skillHintBtn.textContent = T('ui.skillMismatchBtn');
+  skillHintBtn.addEventListener('click', async () => {
+    const prev = editorEl.value;
+    const storedCode = curTank()?.code ?? null;
+    const needSave = !!prev.trim() && prev !== storedCode && prev !== DEFAULT_SCRIPT;
+    if (needSave) await saveVersion(); // 覆盖前旧代码先存一版：刷新页面/车库里即可找回
+    editorEl.value = DEFAULT_SCRIPT;
+    refreshSkillHint(); // 通用模板必然清除不符 → 隐藏后再补一条完成提示
+    skillHintText.textContent = needSave ? T('ui.skillMismatchDoneSaved', { v: curTank()?.v ?? 1 }) : T('ui.skillMismatchDone');
+    skillHintBtn.style.display = 'none';
+    skillHintEl.classList.add('show');
+  });
+}
+if (skillSel) skillSel.addEventListener('change', refreshSkillHint);
+editorEl.addEventListener('input', refreshSkillHint);
 if (mapSel) mapSel.addEventListener('change', () => {
   // 切图立即生效：回到预览态，下一局按新图开战
   match = null;
@@ -1384,6 +1728,7 @@ if (!EVAL_OK) {
   errEl.parentNode.insertBefore(note, errEl);
 }
 updateVersionUi();
+renderGarage();
 const qp = new URLSearchParams(location.search);
 if (qp.get('seed')) pendingSeed = qp.get('seed').trim() || null; // ?seed= 回放深链：下一局按此种子复现
 if (qp.get('pack') && wsImportPack) { // ?pack= 分享深链（阶段2）：先导入内容包，选项注入后再应用 map/skill/opp
@@ -1406,6 +1751,7 @@ previewMap = makeMap(seedFromString(pendingSeed || genSeed()));
 setupCanvas(previewMap);
 requestAnimationFrame(loop);
 scheduleLadder();
+refreshSkillHint(); // 启动即检（含 ?script=/?skill= 深链落定后的状态）
 if (qp.get('autoplay') === '1') {
   startBattle();
   if (match) { // 跳到中局并停住，便于截图/演示（双方坦克在场、战报点亮过半）
@@ -1418,11 +1764,14 @@ if (qp.get('autoplay') === '1') {
 initPlay({
   T, L,
   editorGet: () => editorEl.value,
-  editorSet: (code) => { editorEl.value = code; },
+  editorSet: (code) => { editorEl.value = code; refreshSkillHint(); },
   compileScript, guardWrap,
   userSkill, userMapKey, makeMap,
   defaultScript: DEFAULT_SCRIPT,
   ROSTER, LADDER_SEEDS,
   runMatch,
   getPack: () => PACK,
+  workshopConnect: (cloud) => (wsConnectCloud ? wsConnectCloud(cloud) : null),
+  garageConnect, // 登录成功：车库切云端 + 登录时刻逐台衔接（方案 v2）
+  resetForLogout, // 登出：清车库/草稿、编辑器回默认模板（未入库匿名坦克先进存档）
 });
