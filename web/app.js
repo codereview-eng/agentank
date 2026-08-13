@@ -193,30 +193,77 @@ let wsConnectCloud = null; // 登录后由 play.js 调用：注入云端 CRUD、
     showWs(T('ui.wsShared'), false);
   };
   const refresh = () => { PACK = buildPack(); injectPackOptions(); renderWsList(); scheduleLadder(); };
+  let wsFilter = 'all'; // 浏览筛选：全部 / map / skill / item / bot
+  const equipEntry = (e) => { // 「装备」= 工坊页一键接回对战页下拉（订阅即用）
+    if (e.type === 'map' && mapSel) mapSel.value = `pack:${e.id}`;
+    else if (e.type === 'skill' && skillSel) { skillSel.value = e.id; refreshSkillHint(); }
+    else if (e.type === 'bot' && oppSelect) oppSelect.value = `pack:${e.id}`;
+    else { showWs(T('ui.wsEquipNa'), false); return; } // item：随对局物资刷新出现，无需装备
+    scheduleLadder();
+    showWs(T('ui.wsEquipped', { name: e.name }), false);
+  };
+  function renderWsFilter() {
+    const row = $id('wsFilterRow');
+    if (!row) return;
+    row.innerHTML = '';
+    for (const t of ['all', 'map', 'skill', 'item', 'bot']) {
+      const b = document.createElement('button');
+      b.className = 'btn ghost';
+      b.style.cssText = 'padding:1px 10px;font-size:11px;min-width:0' + (wsFilter === t ? ';border-color:var(--p1);color:var(--p1)' : '');
+      b.textContent = t === 'all' ? T('ui.wsFilterAll') : t;
+      b.addEventListener('click', () => { wsFilter = t; renderWsList(); });
+      row.appendChild(b);
+    }
+  }
   function renderWsList() {
     if (!wsListEl) return;
     wsListEl.innerHTML = '';
+    renderWsFilter();
+    const inFilter = (e) => wsFilter === 'all' || e.type === wsFilter;
     const addHdr = (key) => {
       const h = document.createElement('div');
       h.style.cssText = 'font-size:11px;color:var(--dim);margin:6px 0 2px';
       h.textContent = T(key);
       wsListEl.appendChild(h);
     };
-    const addRow = (e, mine) => {
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;gap:6px;align-items:center;font-size:11px;margin:2px 0;color:var(--muted)';
+    // 卡片 = 元数据即预览（名称/阶段/类型/描述/地图 ASCII），不用先装备就能看清是什么
+    const addCard = (e, mine) => {
+      const card = document.createElement('div');
+      card.style.cssText = 'border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0';
+      const top = document.createElement('div');
+      top.style.cssText = 'display:flex;gap:6px;align-items:center';
       const label = document.createElement('span');
-      label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
-      label.textContent = `${stageTag(e)} ${e.name} · ${e.type}/${e.id}`;
-      row.appendChild(label);
+      label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px';
+      label.textContent = `${stageTag(e)} ${e.name}`;
+      top.appendChild(label);
+      const typeTag = document.createElement('span');
+      typeTag.style.cssText = 'font-size:10px;color:var(--dim)';
+      typeTag.textContent = `${e.type}/${e.id}`;
+      top.appendChild(typeTag);
+      card.appendChild(top);
+      if (e.desc) {
+        const d = document.createElement('div');
+        d.style.cssText = 'font-size:11px;color:var(--muted);margin-top:2px';
+        d.textContent = e.desc;
+        card.appendChild(d);
+      }
+      if (e.type === 'map' && Array.isArray(e.rows)) {
+        const pre = document.createElement('pre');
+        pre.style.cssText = 'font-size:10px;line-height:1.25;color:var(--dim);margin:4px 0 0;overflow:auto';
+        pre.textContent = e.rows.join('\n');
+        card.appendChild(pre);
+      }
+      const btns = document.createElement('div');
+      btns.style.cssText = 'display:flex;gap:6px;margin-top:6px';
       const mkBtn = (text, fn) => {
         const b = document.createElement('button');
         b.className = 'btn ghost';
         b.style.cssText = 'padding:1px 8px;font-size:11px;min-width:0';
         b.textContent = text;
         b.addEventListener('click', fn);
-        row.appendChild(b);
+        btns.appendChild(b);
       };
+      mkBtn(T('ui.wsEquip'), () => equipEntry(e));
       if (mine) {
         mkBtn(T('ui.wsShare'), () => { // 分享 = 阶段1→2（私有先晋升），生成 ?pack= 链接
           const idx = wsEntries.indexOf(e);
@@ -227,17 +274,19 @@ let wsConnectCloud = null; // 登录后由 play.js 调用：注入云端 CRUD、
         });
         mkBtn(T('ui.wsDelete'), () => { wsEntries.splice(wsEntries.indexOf(e), 1); wsPersist(e, true); refresh(); });
       }
-      wsListEl.appendChild(row);
+      card.appendChild(btns);
+      wsListEl.appendChild(card);
     };
     addHdr('ui.wsMine');
-    if (!wsEntries.length) {
+    const mine = wsEntries.filter(inFilter);
+    if (!mine.length) {
       const p = document.createElement('div');
       p.style.cssText = 'font-size:11px;color:var(--dim)';
       p.textContent = T('ui.wsEmpty');
       wsListEl.appendChild(p);
-    } else for (const e of wsEntries) addRow(e, true);
+    } else for (const e of mine) addCard(e, true);
     addHdr('ui.wsOfficial');
-    for (const e of OFFICIAL_CONTENT) addRow(e, false);
+    for (const e of OFFICIAL_CONTENT.filter(inFilter)) addCard(e, false);
   }
   function importPackStr(str, opts = {}) {
     const p = parsePack(String(str).trim()); // 校验失败会抛中文原因
@@ -1658,6 +1707,19 @@ editorEl.addEventListener('input', () => { // 草稿断电保护：未保存内�
   try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ cur: garage.cur, code: editorEl.value })); } catch { /* 忽略 */ }
 });
 if (skillSel) skillSel.addEventListener('change', scheduleLadder);
+
+// ---------- 创作工坊独立页：顶栏入口 + #workshop 深链（hash 切换，单文件内双页） ----------
+const playMain = $id('playMain');
+const wsMain = $id('wsMain');
+function syncWsPage() {
+  const on = location.hash === '#workshop';
+  if (playMain) playMain.hidden = on;
+  if (wsMain) wsMain.hidden = !on;
+}
+$id('wsPageBtn')?.addEventListener('click', () => { location.hash = '#workshop'; });
+$id('wsBackBtn')?.addEventListener('click', () => { location.hash = ''; });
+window.addEventListener('hashchange', syncWsPage);
+syncWsPage();
 
 // ---------- 装备/代码不符提醒（非阻断） ----------
 // 装备由下拉框决定（guarded.skill），代码只决定何时施放；代码里点名的技能与装备不符时，

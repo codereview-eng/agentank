@@ -33,6 +33,7 @@ header{
 
 /* ── 三栏 ── */
 main{flex:1; display:grid; grid-template-columns:340px 1fr 300px; gap:12px; padding:12px 16px; min-height:0}
+main[hidden]{display:none}
 .panel{background:var(--panel); border:1px solid var(--line); border-radius:10px; display:flex; flex-direction:column; min-height:0}
 .panel h2{
   font-size:12px; color:var(--muted); font-weight:600; letter-spacing:2px;
@@ -118,6 +119,7 @@ footer .mono{color:var(--muted)}
   <div class="badge">
     <span class="chip rank" id="rankChip" data-i18n="ui.eloCalc">★ ELO 计算中…</span>
     <span class="chip" data-i18n="ui.season">赛季 S1</span>
+    <button class="chip" id="wsPageBtn" style="background:transparent;border-color:var(--line);color:var(--muted);cursor:pointer" data-i18n="ui.wsPageBtn">🛠 创作工坊</button>
     <span class="chip" id="playUserChip" style="display:none"></span>
     <button class="chip" id="playLoginBtn" style="display:none;background:transparent;border-color:var(--line);color:var(--muted);cursor:pointer" data-i18n="play.login">登录</button>
     <button class="chip" id="playLogoutBtn" style="display:none;background:transparent;border-color:var(--line);color:var(--muted);cursor:pointer" data-i18n="play.logout">登出</button>
@@ -128,7 +130,7 @@ footer .mono{color:var(--muted)}
     </select>
   </div>
 </header>
-<main>
+<main id="playMain">
   <!-- 左：策略脚本 -->
   <section class="panel">
     <h2><span class="dot"></span><span id="editorTitle">策略脚本 · 我的坦克 v1</span></h2>
@@ -169,29 +171,6 @@ footer .mono{color:var(--muted)}
         <div id="garageMsg" style="font-size:11px;color:var(--dim);margin:4px 0;min-height:14px"></div>
         <div id="garageList" style="margin-top:2px"></div>
         <button class="btn ghost" id="garageNewBtn" data-i18n="ui.garageNew" style="margin-top:6px;padding:4px 10px;font-size:11px">新建坦克</button>
-      </details>
-      <details id="workshop" style="margin-top:10px;border:1px solid var(--line);border-radius:8px;padding:8px">
-        <summary data-i18n="ui.workshop" style="cursor:pointer;font-size:12px;color:var(--muted)">创作工坊 · 地图/技能/道具/流派</summary>
-        <div data-i18n="ui.wsHint" style="font-size:11px;color:var(--dim);margin:6px 0;line-height:1.5">三阶段：私有 → 分享 → 官方收录</div>
-        <div style="display:flex;gap:6px;margin-bottom:6px">
-          <select id="wsTpl" style="flex:1">
-            <option value="map">map</option>
-            <option value="skill">skill</option>
-            <option value="item">item</option>
-            <option value="bot">bot</option>
-          </select>
-          <button class="btn ghost" id="wsNewBtn" data-i18n="ui.wsNew" style="padding:2px 10px;font-size:11px">填入模板</button>
-        </div>
-        <textarea id="wsEditor" spellcheck="false" style="width:100%;height:130px;font-size:11px;box-sizing:border-box"></textarea>
-        <div id="wsErr" style="font-size:11px;min-height:14px;margin:2px 0"></div>
-        <button class="btn ghost" id="wsSaveBtn" data-i18n="ui.wsSave" style="padding:4px 10px;font-size:11px">校验并保存（私有）</button>
-        <div id="wsList" style="margin-top:4px"></div>
-        <div style="display:flex;gap:6px;margin-top:6px">
-          <input id="wsImport" data-i18n-ph="ui.wsImportPh" placeholder="atpack1.…" style="flex:1;min-width:0">
-          <button class="btn ghost" id="wsImportBtn" data-i18n="ui.wsImport" style="padding:2px 10px;font-size:11px">导入</button>
-        </div>
-        <button class="btn ghost" id="wsShareBattleBtn" data-i18n="ui.wsShareBattle" style="margin-top:6px;padding:4px 10px;font-size:11px">分享本局战报（含内容包+脚本）</button>
-        <textarea id="wsShareOut" readonly style="width:100%;height:44px;font-size:10px;margin-top:4px;box-sizing:border-box"></textarea>
       </details>
       <details id="playPanel" open style="display:none;margin-top:10px;border:1px solid var(--line);border-radius:8px;padding:8px">
         <summary data-i18n="play.panelTitle" style="cursor:pointer;font-size:12px;color:var(--muted)">我的坦克（云端）</summary>
@@ -253,6 +232,45 @@ footer .mono{color:var(--muted)}
         <thead><tr><th data-i18n="play.thOpp">对手</th><th data-i18n="play.thW">胜</th><th data-i18n="play.thD">平</th><th data-i18n="play.thL">负</th></tr></thead>
         <tbody id="playChallengeBody"></tbody>
       </table>
+    </div>
+  </section>
+</main>
+
+<!-- 创作工坊 · 独立页面（顶栏按钮 / #workshop 深链切换；与对战页同住单文件，零外链） -->
+<main id="wsMain" hidden style="grid-template-columns:minmax(0,1fr) 400px">
+  <!-- 左：浏览与使用（工坊门户：卡片元数据 + 类型筛选 + 一键装备） -->
+  <section class="panel">
+    <h2><span class="dot"></span><span data-i18n="ui.wsBrowseTitle">浏览与使用</span>
+      <button class="btn ghost" id="wsBackBtn" data-i18n="ui.wsBack" style="margin-left:auto;padding:2px 10px;font-size:11px">← 返回对战</button>
+    </h2>
+    <div style="padding:10px 14px;overflow:auto;min-height:0">
+      <div data-i18n="ui.wsHint" style="font-size:11px;color:var(--dim);margin-bottom:8px;line-height:1.5">三阶段：私有 → 分享 → 官方收录</div>
+      <div id="wsFilterRow" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap"></div>
+      <div id="wsList"></div>
+    </div>
+  </section>
+  <!-- 右：创作（选模板 → 校验保存（私有） → 分享 / 导入） -->
+  <section class="panel">
+    <h2><span class="dot"></span><span data-i18n="ui.wsCreateTitle">创作新内容</span></h2>
+    <div style="padding:10px 14px;display:flex;flex-direction:column;gap:6px;overflow:auto;min-height:0">
+      <div style="display:flex;gap:6px">
+        <select id="wsTpl" style="flex:1">
+          <option value="map">map</option>
+          <option value="skill">skill</option>
+          <option value="item">item</option>
+          <option value="bot">bot</option>
+        </select>
+        <button class="btn ghost" id="wsNewBtn" data-i18n="ui.wsNew" style="padding:2px 10px;font-size:11px">填入模板</button>
+      </div>
+      <textarea id="wsEditor" spellcheck="false" style="width:100%;height:180px;font-size:11px;box-sizing:border-box"></textarea>
+      <div id="wsErr" style="font-size:11px;min-height:14px"></div>
+      <button class="btn ghost" id="wsSaveBtn" data-i18n="ui.wsSave" style="padding:4px 10px;font-size:11px">校验并保存（私有）</button>
+      <div style="display:flex;gap:6px">
+        <input id="wsImport" data-i18n-ph="ui.wsImportPh" placeholder="atpack1.…" style="flex:1;min-width:0">
+        <button class="btn ghost" id="wsImportBtn" data-i18n="ui.wsImport" style="padding:2px 10px;font-size:11px">导入</button>
+      </div>
+      <button class="btn ghost" id="wsShareBattleBtn" data-i18n="ui.wsShareBattle" style="padding:4px 10px;font-size:11px">分享本局战报（含内容包+脚本）</button>
+      <textarea id="wsShareOut" readonly style="width:100%;height:44px;font-size:10px;box-sizing:border-box"></textarea>
     </div>
   </section>
 </main>
