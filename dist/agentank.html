@@ -131,10 +131,18 @@ footer .mono{color:var(--muted)}
   </div>
 </header>
 <main id="playMain">
-  <!-- 左：策略脚本 -->
+  <!-- 左：战术指挥（策略文本优先：默认只见策略描述；脚本细节折叠在「查看/编辑脚本」里） -->
   <section class="panel">
-    <h2><span class="dot"></span><span id="editorTitle">策略脚本 · 我的坦克 v1</span></h2>
-    <textarea id="editor" spellcheck="false"></textarea>
+    <h2><span class="dot"></span><span id="editorTitle">战术指挥 · 我的坦克 v1</span></h2>
+    <textarea id="strategyBox" spellcheck="false" data-i18n-ph="ui.strategyPh" placeholder="用一句话描述你的战术，如：贴脸抢星，血量低于30%就传送到最安全的角落" style="flex:1;min-height:80px;padding:12px 14px;border:none;outline:none;resize:none;background:transparent;color:#C9D6E4;font-size:13px;line-height:1.7;font-family:inherit"></textarea>
+    <div style="display:flex;gap:8px;align-items:center;padding:0 14px 6px">
+      <button class="btn ghost" id="genBtn" data-i18n="ui.genBtn" style="flex:1;letter-spacing:0">⚡ AI 生成脚本</button>
+    </div>
+    <div id="genMsg" style="font-size:11px;color:var(--dim);padding:0 14px 8px;min-height:14px"></div>
+    <details id="codeBox" style="border-top:1px solid var(--line)">
+      <summary data-i18n="ui.codeBox" style="cursor:pointer;font-size:12px;color:var(--muted);padding:8px 14px">查看/编辑脚本（高级）</summary>
+      <textarea id="editor" spellcheck="false" style="width:100%;height:200px;flex:none;resize:vertical"></textarea>
+    </details>
     <div class="err" id="scriptErr"></div>
     <div class="skillhint" id="skillHint"><span id="skillHintText"></span><button id="skillHintBtn" type="button"></button></div>
     <div class="skillhint" id="bridgeHint"><span id="bridgeText"></span><span id="bridgeBtns" style="display:flex;gap:6px;flex:none"></span></div>
@@ -2246,7 +2254,10 @@ const LOCALES = {
       title: 'AgenTank — AI 脚本坦克对战',
       tagline: 'AI 脚本坦克对战 · 你当教练，AI 开炮',
       season: '赛季 S1',
-      editorTitle: '策略脚本 · {name}',
+      editorTitle: '战术指挥 · {name}',
+      strategyPh: '用一句话描述你的战术，如：贴脸抢星，血量低于30%就传送到最安全的角落',
+      genBtn: '⚡ AI 生成脚本',
+      codeBox: '查看/编辑脚本（高级）',
       myTank: '我的坦克',
       opponent: '对手',
       mySkill: '我的技能',
@@ -2336,6 +2347,17 @@ const LOCALES = {
       bridgeArchived: '已处理：另一份进了本地存档，零丢失',
       bridgeDone: '衔接完成：本地匿名坦克已清零，云端是坦克唯一的家',
       bridgeCloseBtn: '知道了',
+      genLoginBtn: '🔑 登录后可用 AI 生成',
+      genUnavailable: 'AI 生成需要在线版（当前环境无 SDK）；可点开下方「查看/编辑脚本」手写',
+      genEmpty: '先在上方用文字描述你的战术，再点生成',
+      genRunning: 'AI 正在按你的策略写代码…',
+      genRetry: '首次结果编译未过，带错误自动重试中…',
+      genDone: '已生成并编译通过 ✅ 直接「开 战」试效果，满意再「保存」',
+      genFail: '生成失败：{msg}',
+      genNeedLogin: '需要登录后才能使用 AI 生成（点右上角「登录」）',
+      genQuota: 'AI 配额已用完：{hint}',
+      genTimeout: '生成超时：任务可能仍在跑，稍后再点一次',
+      codeEdited: '代码已手工修改（与上方策略描述可能不同步）',
       panelTitle: '我的坦克（云端）',
       createTank: '生成我的坦克',
       saveTank: '保存我的坦克（v{v}）',
@@ -2502,7 +2524,10 @@ function decide(api) {
       title: 'AgenTank — AI Script Tank Battle',
       tagline: 'AI script tank battle · you coach, AI fires',
       season: 'Season S1',
-      editorTitle: 'Strategy Script · {name}',
+      editorTitle: 'Tactics HQ · {name}',
+      strategyPh: 'Describe your tactics in one line, e.g. rush stars, teleport to the safest corner below 30% HP',
+      genBtn: '⚡ Generate script with AI',
+      codeBox: 'View/edit script (advanced)',
       myTank: 'My Tank',
       opponent: 'Opponent',
       mySkill: 'My Skill',
@@ -2592,6 +2617,17 @@ function decide(api) {
       bridgeArchived: 'Done: the other copy went to the local archive, nothing lost',
       bridgeDone: 'Bridging complete: local anonymous tanks cleared; the cloud is now their only home',
       bridgeCloseBtn: 'OK',
+      genLoginBtn: '🔑 Sign in to use AI generation',
+      genUnavailable: 'AI generation needs the hosted version (no SDK here); open "View/edit script" below to write by hand',
+      genEmpty: 'Describe your tactics above first, then generate',
+      genRunning: 'AI is writing code from your strategy…',
+      genRetry: 'First attempt failed to compile, retrying with the error…',
+      genDone: 'Generated & compiled ✅ Hit BATTLE to try it, then Save if you like it',
+      genFail: 'Generation failed: {msg}',
+      genNeedLogin: 'Sign in to use AI generation (top-right "Sign in")',
+      genQuota: 'AI quota exhausted: {hint}',
+      genTimeout: 'Generation timed out: the task may still be running, try again shortly',
+      codeEdited: 'Code was hand-edited (may be out of sync with the strategy above)',
       panelTitle: 'My Tank (cloud)',
       createTank: 'Create my tank',
       saveTank: 'Save my tank (v{v})',
@@ -2739,16 +2775,58 @@ function sdkInjectDecision(loc) {
   return 'probe';
 }
 
-// Tank 实体 payload（与 spike schema 对齐：name/code/skill/version/is_active）
+// Tank 实体 payload（与 schema 对齐：name/code/strategy/skill/version/is_active）
 function buildTankPayload(opts) {
   const o = opts || {};
   return {
     name: String(o.name || 'my-tank'),
     code: String(o.code || ''),
+    strategy: String(o.strategy || ''),
     skill: String(o.skill || ''),
     version: Number(o.version) > 0 ? Number(o.version) : 1,
     is_active: o.is_active === false ? false : true,
   };
+}
+
+// ---------- 策略文本优先（strategy-first）：LLM 生成脚本的纯函数合同 ----------
+// prompt 合同（spike 已验证：/docs/strategy-first-plan.md）：引擎 API 契约摘要 + 玩家装备技能 + 策略文本。
+// 只要求模型输出一个 ```js 代码块；提取/编译失败一律 fail-closed，绝不静默塞坏代码。
+function buildLlmPrompt(opts) {
+  const o = opts || {};
+  const strategy = String(o.strategy || '').trim();
+  const skill = String(o.skill || 'teleport');
+  const feedback = String(o.feedback || '').trim(); // 上一轮编译错误（重试时带上）
+  return [
+    '你是坦克对战游戏的脚本生成器。根据玩家的策略描述，生成一个 JS 决策函数。',
+    '合同（必须严格遵守）：',
+    '- 只输出一个 ```js 代码块，里面是 export default function decide(api) {...}，不要任何解释文字。',
+    '- 每 tick 调用一次 decide(api)，返回一个动作或 null。',
+    '- api 查询：api.me()={x,y,hp,stars,skill,cloaked,stunned,frozen,poisoned,boosted,shielded,bulletInFlight,rapidShots,pierceShots,facing}；',
+    '  api.enemy()={x,y,visible}（不可见时为最后目击位置）；api.enemyVisible()；api.canFire()；api.ready(name?)（无参=所装备技能，另可查 \'bomb\'/\'fire\'）；',
+    '  api.zone()={ring,x0,y0,x1,y1,next}（毒圈）；api.inZone(p?)；api.nearestStar()；api.items()/api.nearestItem(kind?)（medkit/rapid/pierce）；',
+    '  api.nearestGrass()（草丛隐蔽位）；api.safestCorner()；api.inGrass()；api.distTo(p)；api.walkable(p)；api.myBullet()/api.enemyBullet()；api.bombs()；api.tick()；api.rand()。',
+    '- api 动作（作为返回值）：api.fireAt(p)；api.moveTo(p)；api.patrol()；api.useSkill(p?)（施放所装备技能，位移类带目标点）；api.throwBomb()。',
+    `- 玩家装备技能：${skill}（8 选 1：teleport/shield/freeze/stun/overload/cloak/poison/boost）。`,
+    feedback ? `- 上一次生成的代码编译失败，错误：${feedback}。请修正后重新输出完整代码块。` : '',
+    `玩家策略描述：${strategy}`,
+  ].filter(Boolean).join('\n');
+}
+
+// LLM 输出 → 代码：优先取 ```js 围栏块；裸输出须含 decide 入口，否则 null（fail-closed）
+function extractLlmCode(text) {
+  const m = String(text || '').match(/```(?:js|javascript)?\s*\n([\s\S]*?)```/);
+  const code = m ? m[1] : String(text || '');
+  if (!/export\s+default\s+function|function\s+decide/.test(code)) return null;
+  return code.trim();
+}
+
+// PlayError → 文案键（app.js 生成按钮的错误出口；未知码透传 hint/message）
+function mapLlmError(e) {
+  const code = e && e.code;
+  if (code === 'AUTH_REQUIRED' || code === 'TOKEN_EXPIRED') return { key: 'play.genNeedLogin' };
+  if (code === 'LLM_QUOTA_EXCEEDED') return { key: 'play.genQuota', vars: { hint: String((e && e.hint) || '') } };
+  if (code === 'LLM_TIMEOUT') return { key: 'play.genTimeout' };
+  return { key: 'play.genFail', vars: { msg: String((e && (e.hint || e.message)) || e || '') } };
 }
 
 // 版本递增：基于现有实体 version+1，缺省从 0 起
@@ -2769,6 +2847,7 @@ function garageFromRows(rows) {
       id: r.id,
       name: r.name,
       code: String(r.code || ''),
+      strategy: String(r.strategy || ''),
       skill: String(r.skill || ''),
       v: Number(r.version) > 0 ? Number(r.version) : 1,
       active: r.is_active === true,
@@ -2792,13 +2871,13 @@ function migrateLocalSave(raw, defaultName) {
   if (Array.isArray(s.tanks)) {
     const tanks = s.tanks
       .filter((t) => t && typeof t.name === 'string' && t.name && typeof t.code === 'string')
-      .map((t) => ({ name: t.name, code: t.code, skill: String(t.skill || ''), v: Number(t.v) > 0 ? Number(t.v) : 1 }));
+      .map((t) => ({ name: t.name, code: t.code, strategy: String(t.strategy || ''), skill: String(t.skill || ''), v: Number(t.v) > 0 ? Number(t.v) : 1 }));
     const cur = tanks.some((t) => t.name === s.cur) ? s.cur : (tanks.length ? tanks[0].name : null);
     return { tanks, cur };
   }
   if (typeof s.code === 'string' && s.code.trim()) {
     return {
-      tanks: [{ name: String(defaultName), code: s.code, skill: '', v: Number(s.v) > 0 ? Number(s.v) : 1 }],
+      tanks: [{ name: String(defaultName), code: s.code, strategy: '', skill: '', v: Number(s.v) > 0 ? Number(s.v) : 1 }],
       cur: String(defaultName),
     };
   }
@@ -2810,7 +2889,7 @@ function upsertLocalTank(store, t) {
   const tanks = (store && Array.isArray(store.tanks) ? store.tanks : []).slice();
   const i = tanks.findIndex((x) => x && x.name === t.name);
   const v = i >= 0 ? (Number(tanks[i].v) > 0 ? Number(tanks[i].v) : 0) + 1 : 1;
-  const entry = { name: String(t.name), code: String(t.code || ''), skill: String(t.skill || ''), v };
+  const entry = { name: String(t.name), code: String(t.code || ''), strategy: String(t.strategy || ''), skill: String(t.skill || ''), v };
   if (i >= 0) tanks[i] = entry; else tanks.push(entry);
   return { tanks, cur: entry.name, v };
 }
@@ -3020,13 +3099,14 @@ async function bootPlay(ctx) {
   let play;
   try { play = await Play.init(); } catch (e) { console.log('Play.init failed:', e && e.message); return; }
 
-  // 未登录：只露登录按钮，云端区隐藏
+  // 未登录：只露登录按钮，云端区隐藏；AI 生成按钮降级为「登录后可用」（点击引导登录）
   if (!play.user) {
     if (loginBtn) {
       loginBtn.style.display = '';
       loginBtn.textContent = T('play.login');
       loginBtn.addEventListener('click', () => play.login());
     }
+    if (typeof ctx.llmConnect === 'function') ctx.llmConnect({ needLogin: true, login: () => play.login() });
     return;
   }
 
@@ -3040,6 +3120,14 @@ async function bootPlay(ctx) {
   if (chBox) chBox.style.display = '';
   const status = (msg) => { if (statusEl) statusEl.textContent = msg; };
   bootAgentKeys(play, T); // Agent Key 管理：登录态 + agentKeys API 面齐备才亮，独立于 Tank/BR 实体
+
+  // 策略文本优先：登录态把 SDK LLM 递给 app.js 生成按钮（SDK 无 llm 面时按不可用降级）
+  if (typeof ctx.llmConnect === 'function') {
+    const llm = play.llm;
+    ctx.llmConnect(llm && typeof llm.chat === 'function'
+      ? { chat: (prompt, opts) => llm.chat(prompt, opts) }
+      : null);
+  }
 
   // 创作工坊：私有内容只存服务器端（Workshop 实体，owner 隔离）；登录后接管 app.js 工坊持久层
   const Workshop = play.db && play.db.Workshop;
@@ -3263,6 +3351,7 @@ for (const el of document.querySelectorAll('[data-i18n-ph]')) el.placeholder = T
 
 const $id = (s) => document.getElementById(s);
 const editorEl = $id('editor');
+const strategyEl = $id('strategyBox'); // 策略文本优先：默认视图是策略描述，脚本折叠在 codeBox 里
 const oppSelect = $id('opp');
 const errEl = $id('scriptErr');
 const canvasEl = $id('arena');
@@ -3672,13 +3761,14 @@ function writeLocalStore(s) {
 function archiveCopy(t, from) {
   try {
     const arc = JSON.parse(localStorage.getItem(ARCHIVE_KEY) || '[]');
-    arc.push({ name: t.name, code: t.code, skill: t.skill || '', v: t.v ?? 1, from, ts: Date.now() });
+    arc.push({ name: t.name, code: t.code, strategy: t.strategy || '', skill: t.skill || '', v: t.v ?? 1, from, ts: Date.now() });
     localStorage.setItem(ARCHIVE_KEY, JSON.stringify(arc));
   } catch { /* 忽略 */ }
 }
 function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch { /* 忽略 */ } }
-function applyTankToUi(t) { // 切台/入座：代码进编辑器、技能跟随（无该选项时保持现装备）
+function applyTankToUi(t) { // 切台/入座：代码进编辑器、策略文本跟随、技能跟随（无该选项时保持现装备）
   editorEl.value = t ? t.code : DEFAULT_SCRIPT;
+  if (strategyEl) strategyEl.value = (t && t.strategy) || '';
   if (t && t.skill && skillSel && [...skillSel.options].some((o) => o.value === t.skill)) skillSel.value = t.skill;
   refreshSkillHint();
 }
@@ -3688,30 +3778,34 @@ function loadStore() {
   garage.cur = s.cur;
   const t = curTank();
   if (t) applyTankToUi(t);
-  try { // 草稿恢复：仅当仍是同一台坦克（含「尚无坦克」态）时才回填
+  try { // 草稿恢复：仅当仍是同一台坦克（含「尚无坦克」态）时才回填（代码 + 策略文本）
     const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
-    if (d && typeof d.code === 'string' && d.code.trim() && (d.cur ?? null) === (garage.cur ?? null)) editorEl.value = d.code;
+    if (d && typeof d.code === 'string' && d.code.trim() && (d.cur ?? null) === (garage.cur ?? null)) {
+      editorEl.value = d.code;
+      if (strategyEl && typeof d.strategy === 'string') strategyEl.value = d.strategy;
+    }
   } catch { /* 忽略 */ }
 }
 async function saveVersion() {
   const code = editorEl.value;
   const skill = userSkill();
+  const strategy = strategyEl ? strategyEl.value : '';
   if (garage.mode === 'cloud') {
     try { compileScript(code); } catch (e) { garageMsg(T('play.compileFail', { msg: String((e && e.message) || e) }), true); return; }
     const t = curTank();
     try {
       if (t) {
-        await garage.cloud.update(t.id, buildTankPayload({ name: t.name, code, skill, version: t.v + 1, is_active: t.active === true }));
+        await garage.cloud.update(t.id, buildTankPayload({ name: t.name, code, strategy, skill, version: t.v + 1, is_active: t.active === true }));
       } else { // 云端第一台：命名即入库
         const name = askName(tankN(1));
         if (!name) return;
-        await garage.cloud.create(buildTankPayload({ name, code, skill, version: 1, is_active: true }));
+        await garage.cloud.create(buildTankPayload({ name, code, strategy, skill, version: 1, is_active: true }));
       }
       await reloadCloudGarage();
       garageMsg(T('play.saved', { v: curTank()?.v ?? 1 }));
     } catch (e) { garageMsg(T('play.saveFail', { msg: String((e && e.message) || e) }), true); return; }
   } else {
-    const r = upsertLocalTank({ tanks: garage.tanks, cur: garage.cur }, { name: garage.cur || tankN(1), code, skill });
+    const r = upsertLocalTank({ tanks: garage.tanks, cur: garage.cur }, { name: garage.cur || tankN(1), code, strategy, skill });
     garage.tanks = r.tanks;
     garage.cur = r.cur;
     writeLocalStore(garage);
@@ -3770,12 +3864,12 @@ async function newTank() {
   if (garage.mode === 'cloud') { // 登录态：新坦克直接建在云端（命名即入库，不再产生本地坦克）
     try {
       const old = curTank();
-      await garage.cloud.create(buildTankPayload({ name, code: DEFAULT_SCRIPT, skill: userSkill(), version: 1, is_active: true }));
+      await garage.cloud.create(buildTankPayload({ name, code: DEFAULT_SCRIPT, strategy: '', skill: userSkill(), version: 1, is_active: true }));
       if (old) await garage.cloud.update(old.id, { is_active: false });
       await reloadCloudGarage();
     } catch (e) { garageMsg(T('play.saveFail', { msg: String((e && e.message) || e) }), true); return; }
   } else {
-    garage.tanks.push({ name, code: DEFAULT_SCRIPT, skill: userSkill(), v: 1 });
+    garage.tanks.push({ name, code: DEFAULT_SCRIPT, strategy: '', skill: userSkill(), v: 1 });
     garage.cur = name;
     writeLocalStore(garage);
   }
@@ -3957,6 +4051,7 @@ function resetForLogout() { // 场景 5：登出清空车库与编辑器（未�
   writeLocalStore({ tanks: [], cur: null });
   clearDraft();
   editorEl.value = DEFAULT_SCRIPT;
+  if (strategyEl) strategyEl.value = ''; // 策略文本同属上一人内容，一并清空
 }
 
 // ---------- 回放时间线（由事件数组重建每 tick 快照） ----------
@@ -4934,8 +5029,57 @@ function scheduleLadder() {
 $id('battleBtn').addEventListener('click', startBattle);
 saveBtn.addEventListener('click', () => { saveVersion(); });
 $id('garageNewBtn')?.addEventListener('click', () => { newTank(); });
-editorEl.addEventListener('input', () => { // 草稿断电保护：未保存内容刷新不丢（≠ 坦克版本，不自动上传）
-  try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ cur: garage.cur, code: editorEl.value })); } catch { /* 忽略 */ }
+const saveDraft = () => { // 草稿断电保护：未保存内容刷新不丢（≠ 坦克版本，不自动上传）；代码 + 策略文本双字段
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ cur: garage.cur, code: editorEl.value, strategy: strategyEl ? strategyEl.value : '' })); } catch { /* 忽略 */ }
+};
+editorEl.addEventListener('input', saveDraft);
+if (strategyEl) strategyEl.addEventListener('input', saveDraft);
+
+// ---------- 策略文本优先：AI 生成脚本（SDK play.llm，登录票 + 平台配额） ----------
+const genBtn = $id('genBtn');
+const genMsgEl = $id('genMsg');
+const codeBox = $id('codeBox');
+let llmCtl = null; // null=SDK 不可用；{needLogin,login}=未登录；{chat}=可生成
+const genMsg = (msg, bad) => { if (genMsgEl) { genMsgEl.textContent = msg || ''; genMsgEl.style.color = bad ? 'var(--bad)' : 'var(--dim)'; } };
+function llmConnect(ctl) { // play.js bootPlay 回调：按登录态切换生成按钮语义
+  llmCtl = ctl;
+  if (genBtn && ctl && ctl.needLogin) genBtn.textContent = T('play.genLoginBtn');
+}
+async function generateScript() {
+  if (!genBtn) return;
+  if (llmCtl && llmCtl.needLogin) { llmCtl.login(); return; } // 未登录：按钮即登录入口
+  if (!llmCtl || typeof llmCtl.chat !== 'function') { genMsg(T('play.genUnavailable'), true); return; }
+  const strategy = (strategyEl ? strategyEl.value : '').trim();
+  if (!strategy) { genMsg(T('play.genEmpty'), true); return; }
+  genBtn.disabled = true;
+  genMsg(T('play.genRunning'));
+  try {
+    let feedback = '';
+    for (let attempt = 1; attempt <= 2; attempt++) { // 编译失败自动带错误重试一次，再失败如实报错
+      const { text } = await llmCtl.chat(buildLlmPrompt({ strategy, skill: userSkill(), feedback }));
+      const code = extractLlmCode(text);
+      if (!code) { feedback = 'no code block found in output'; genMsg(T('play.genRetry')); continue; }
+      try { compileScript(code); } catch (e) {
+        feedback = String((e && e.message) || e);
+        genMsg(T('play.genRetry'));
+        continue;
+      }
+      editorEl.value = code; // 只写编辑器，不自动保存/开战：玩家确认后自行「保存」「开战」
+      refreshSkillHint();
+      saveDraft();
+      genMsg(T('play.genDone'));
+      return;
+    }
+    genMsg(T('play.genFail', { msg: feedback }), true);
+  } catch (e) {
+    const m = mapLlmError(e);
+    genMsg(T(m.key, m.vars), true);
+  } finally { genBtn.disabled = false; }
+}
+if (genBtn) genBtn.addEventListener('click', () => { generateScript(); });
+// 掀开引擎盖手改代码后，提示代码与策略描述可能不同步（不阻断）
+editorEl.addEventListener('input', () => {
+  if (codeBox && codeBox.open && strategyEl && strategyEl.value.trim()) genMsg(T('play.codeEdited'));
 });
 if (skillSel) skillSel.addEventListener('change', scheduleLadder);
 
@@ -5079,6 +5223,7 @@ initPlay({
   workshopConnect: (cloud) => (wsConnectCloud ? wsConnectCloud(cloud) : null),
   garageConnect, // 登录成功：车库切云端 + 登录时刻逐台衔接（方案 v2）
   resetForLogout, // 登出：清车库/草稿、编辑器回默认模板（未入库匿名坦克先进存档）
+  llmConnect, // 策略文本优先：AI 生成脚本按钮的 SDK LLM 接线（未登录=登录入口，无 SDK=降级提示）
 });
 })();
 </script>

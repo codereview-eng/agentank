@@ -27,7 +27,7 @@ test('gating：?play=1 显式开启直接注入', () => {
 // ---------- Tank payload ----------
 test('Tank payload：字段与 spike schema 对齐（name/code/skill/version/is_active）', () => {
   const p = buildTankPayload({ name: '我的坦克', code: 'export default function decide(){}', skill: 'freeze' });
-  assert.deepEqual(Object.keys(p).sort(), ['code', 'is_active', 'name', 'skill', 'version']);
+  assert.deepEqual(Object.keys(p).sort(), ['code', 'is_active', 'name', 'skill', 'strategy', 'version']);
   assert.equal(p.version, 1);
   assert.equal(p.is_active, true);
   assert.equal(p.skill, 'freeze');

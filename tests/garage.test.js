@@ -54,7 +54,7 @@ test('garage/行清洗：无 name 的行跳过；version 缺省按 1', () => {
 
 test('garage/迁移：旧单份 {code,v,n} → 一台「坦克1」（v 保留）', () => {
   const s = migrateLocalSave(JSON.stringify({ code: 'legacy-code', v: 4, n: 4 }), '坦克1');
-  assert.deepEqual(s, { tanks: [{ name: '坦克1', code: 'legacy-code', skill: '', v: 4 }], cur: '坦克1' });
+  assert.deepEqual(s, { tanks: [{ name: '坦克1', code: 'legacy-code', strategy: '', skill: '', v: 4 }], cur: '坦克1' });
 });
 
 test('garage/迁移：新格式透传并清洗（坏条目剔除、cur 失配回落第一台）', () => {
@@ -67,7 +67,7 @@ test('garage/迁移：新格式透传并清洗（坏条目剔除、cur 失配回
     cur: '不存在的',
   });
   const s = migrateLocalSave(raw, '坦克1');
-  assert.deepEqual(s, { tanks: [{ name: '主攻', code: 'a', skill: 'boost', v: 2 }], cur: '主攻' });
+  assert.deepEqual(s, { tanks: [{ name: '主攻', code: 'a', strategy: '', skill: 'boost', v: 2 }], cur: '主攻' });
 });
 
 test('garage/迁移：空/坏/无内容存量一律安全返回空车库', () => {
@@ -125,8 +125,8 @@ test('garage/命名：nextTankName 找最小可用编号（跳过占用）', () 
 
 // ---------- 入库 payload（与 schema 对齐） ----------
 
-test('garage/入库：一键入库 payload = 原名、v1、schema 五字段对齐', () => {
+test('garage/入库：一键入库 payload = 原名、v1、schema 六字段对齐（含 strategy）', () => {
   const p = buildTankPayload({ name: '坦克2·防守', code: 'c', skill: 'shield', version: 1, is_active: false });
-  assert.deepEqual(Object.keys(p).sort(), ['code', 'is_active', 'name', 'skill', 'version']);
+  assert.deepEqual(Object.keys(p).sort(), ['code', 'is_active', 'name', 'skill', 'strategy', 'version']);
   assert.deepEqual([p.name, p.version, p.is_active], ['坦克2·防守', 1, false]);
 });

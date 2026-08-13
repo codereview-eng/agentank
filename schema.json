@@ -1,11 +1,13 @@
 {
   "name": "agentank",
   "web": {},
+  "llm": { "enabled": true },
   "entities": {
     "Tank": {
       "fields": {
         "name": "string",
         "code": "string",
+        "strategy": "string",
         "skill": "string",
         "version": "number",
         "is_active": "boolean"

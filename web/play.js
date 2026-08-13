@@ -14,16 +14,58 @@ export function sdkInjectDecision(loc) {
   return 'probe';
 }
 
-// Tank 实体 payload（与 spike schema 对齐：name/code/skill/version/is_active）
+// Tank 实体 payload（与 schema 对齐：name/code/strategy/skill/version/is_active）
 export function buildTankPayload(opts) {
   const o = opts || {};
   return {
     name: String(o.name || 'my-tank'),
     code: String(o.code || ''),
+    strategy: String(o.strategy || ''),
     skill: String(o.skill || ''),
     version: Number(o.version) > 0 ? Number(o.version) : 1,
     is_active: o.is_active === false ? false : true,
   };
+}
+
+// ---------- 策略文本优先（strategy-first）：LLM 生成脚本的纯函数合同 ----------
+// prompt 合同（spike 已验证：/docs/strategy-first-plan.md）：引擎 API 契约摘要 + 玩家装备技能 + 策略文本。
+// 只要求模型输出一个 ```js 代码块；提取/编译失败一律 fail-closed，绝不静默塞坏代码。
+export function buildLlmPrompt(opts) {
+  const o = opts || {};
+  const strategy = String(o.strategy || '').trim();
+  const skill = String(o.skill || 'teleport');
+  const feedback = String(o.feedback || '').trim(); // 上一轮编译错误（重试时带上）
+  return [
+    '你是坦克对战游戏的脚本生成器。根据玩家的策略描述，生成一个 JS 决策函数。',
+    '合同（必须严格遵守）：',
+    '- 只输出一个 ```js 代码块，里面是 export default function decide(api) {...}，不要任何解释文字。',
+    '- 每 tick 调用一次 decide(api)，返回一个动作或 null。',
+    '- api 查询：api.me()={x,y,hp,stars,skill,cloaked,stunned,frozen,poisoned,boosted,shielded,bulletInFlight,rapidShots,pierceShots,facing}；',
+    '  api.enemy()={x,y,visible}（不可见时为最后目击位置）；api.enemyVisible()；api.canFire()；api.ready(name?)（无参=所装备技能，另可查 \'bomb\'/\'fire\'）；',
+    '  api.zone()={ring,x0,y0,x1,y1,next}（毒圈）；api.inZone(p?)；api.nearestStar()；api.items()/api.nearestItem(kind?)（medkit/rapid/pierce）；',
+    '  api.nearestGrass()（草丛隐蔽位）；api.safestCorner()；api.inGrass()；api.distTo(p)；api.walkable(p)；api.myBullet()/api.enemyBullet()；api.bombs()；api.tick()；api.rand()。',
+    '- api 动作（作为返回值）：api.fireAt(p)；api.moveTo(p)；api.patrol()；api.useSkill(p?)（施放所装备技能，位移类带目标点）；api.throwBomb()。',
+    `- 玩家装备技能：${skill}（8 选 1：teleport/shield/freeze/stun/overload/cloak/poison/boost）。`,
+    feedback ? `- 上一次生成的代码编译失败，错误：${feedback}。请修正后重新输出完整代码块。` : '',
+    `玩家策略描述：${strategy}`,
+  ].filter(Boolean).join('\n');
+}
+
+// LLM 输出 → 代码：优先取 ```js 围栏块；裸输出须含 decide 入口，否则 null（fail-closed）
+export function extractLlmCode(text) {
+  const m = String(text || '').match(/```(?:js|javascript)?\s*\n([\s\S]*?)```/);
+  const code = m ? m[1] : String(text || '');
+  if (!/export\s+default\s+function|function\s+decide/.test(code)) return null;
+  return code.trim();
+}
+
+// PlayError → 文案键（app.js 生成按钮的错误出口；未知码透传 hint/message）
+export function mapLlmError(e) {
+  const code = e && e.code;
+  if (code === 'AUTH_REQUIRED' || code === 'TOKEN_EXPIRED') return { key: 'play.genNeedLogin' };
+  if (code === 'LLM_QUOTA_EXCEEDED') return { key: 'play.genQuota', vars: { hint: String((e && e.hint) || '') } };
+  if (code === 'LLM_TIMEOUT') return { key: 'play.genTimeout' };
+  return { key: 'play.genFail', vars: { msg: String((e && (e.hint || e.message)) || e || '') } };
 }
 
 // 版本递增：基于现有实体 version+1，缺省从 0 起
@@ -44,6 +86,7 @@ export function garageFromRows(rows) {
       id: r.id,
       name: r.name,
       code: String(r.code || ''),
+      strategy: String(r.strategy || ''),
       skill: String(r.skill || ''),
       v: Number(r.version) > 0 ? Number(r.version) : 1,
       active: r.is_active === true,
@@ -67,13 +110,13 @@ export function migrateLocalSave(raw, defaultName) {
   if (Array.isArray(s.tanks)) {
     const tanks = s.tanks
       .filter((t) => t && typeof t.name === 'string' && t.name && typeof t.code === 'string')
-      .map((t) => ({ name: t.name, code: t.code, skill: String(t.skill || ''), v: Number(t.v) > 0 ? Number(t.v) : 1 }));
+      .map((t) => ({ name: t.name, code: t.code, strategy: String(t.strategy || ''), skill: String(t.skill || ''), v: Number(t.v) > 0 ? Number(t.v) : 1 }));
     const cur = tanks.some((t) => t.name === s.cur) ? s.cur : (tanks.length ? tanks[0].name : null);
     return { tanks, cur };
   }
   if (typeof s.code === 'string' && s.code.trim()) {
     return {
-      tanks: [{ name: String(defaultName), code: s.code, skill: '', v: Number(s.v) > 0 ? Number(s.v) : 1 }],
+      tanks: [{ name: String(defaultName), code: s.code, strategy: '', skill: '', v: Number(s.v) > 0 ? Number(s.v) : 1 }],
       cur: String(defaultName),
     };
   }
@@ -85,7 +128,7 @@ export function upsertLocalTank(store, t) {
   const tanks = (store && Array.isArray(store.tanks) ? store.tanks : []).slice();
   const i = tanks.findIndex((x) => x && x.name === t.name);
   const v = i >= 0 ? (Number(tanks[i].v) > 0 ? Number(tanks[i].v) : 0) + 1 : 1;
-  const entry = { name: String(t.name), code: String(t.code || ''), skill: String(t.skill || ''), v };
+  const entry = { name: String(t.name), code: String(t.code || ''), strategy: String(t.strategy || ''), skill: String(t.skill || ''), v };
   if (i >= 0) tanks[i] = entry; else tanks.push(entry);
   return { tanks, cur: entry.name, v };
 }
@@ -295,13 +338,14 @@ async function bootPlay(ctx) {
   let play;
   try { play = await Play.init(); } catch (e) { console.log('Play.init failed:', e && e.message); return; }
 
-  // 未登录：只露登录按钮，云端区隐藏
+  // 未登录：只露登录按钮，云端区隐藏；AI 生成按钮降级为「登录后可用」（点击引导登录）
   if (!play.user) {
     if (loginBtn) {
       loginBtn.style.display = '';
       loginBtn.textContent = T('play.login');
       loginBtn.addEventListener('click', () => play.login());
     }
+    if (typeof ctx.llmConnect === 'function') ctx.llmConnect({ needLogin: true, login: () => play.login() });
     return;
   }
 
@@ -315,6 +359,14 @@ async function bootPlay(ctx) {
   if (chBox) chBox.style.display = '';
   const status = (msg) => { if (statusEl) statusEl.textContent = msg; };
   bootAgentKeys(play, T); // Agent Key 管理：登录态 + agentKeys API 面齐备才亮，独立于 Tank/BR 实体
+
+  // 策略文本优先：登录态把 SDK LLM 递给 app.js 生成按钮（SDK 无 llm 面时按不可用降级）
+  if (typeof ctx.llmConnect === 'function') {
+    const llm = play.llm;
+    ctx.llmConnect(llm && typeof llm.chat === 'function'
+      ? { chat: (prompt, opts) => llm.chat(prompt, opts) }
+      : null);
+  }
 
   // 创作工坊：私有内容只存服务器端（Workshop 实体，owner 隔离）；登录后接管 app.js 工坊持久层
   const Workshop = play.db && play.db.Workshop;

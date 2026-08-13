@@ -131,10 +131,18 @@ footer .mono{color:var(--muted)}
   </div>
 </header>
 <main id="playMain">
-  <!-- 左：策略脚本 -->
+  <!-- 左：战术指挥（策略文本优先：默认只见策略描述；脚本细节折叠在「查看/编辑脚本」里） -->
   <section class="panel">
-    <h2><span class="dot"></span><span id="editorTitle">策略脚本 · 我的坦克 v1</span></h2>
-    <textarea id="editor" spellcheck="false"></textarea>
+    <h2><span class="dot"></span><span id="editorTitle">战术指挥 · 我的坦克 v1</span></h2>
+    <textarea id="strategyBox" spellcheck="false" data-i18n-ph="ui.strategyPh" placeholder="用一句话描述你的战术，如：贴脸抢星，血量低于30%就传送到最安全的角落" style="flex:1;min-height:80px;padding:12px 14px;border:none;outline:none;resize:none;background:transparent;color:#C9D6E4;font-size:13px;line-height:1.7;font-family:inherit"></textarea>
+    <div style="display:flex;gap:8px;align-items:center;padding:0 14px 6px">
+      <button class="btn ghost" id="genBtn" data-i18n="ui.genBtn" style="flex:1;letter-spacing:0">⚡ AI 生成脚本</button>
+    </div>
+    <div id="genMsg" style="font-size:11px;color:var(--dim);padding:0 14px 8px;min-height:14px"></div>
+    <details id="codeBox" style="border-top:1px solid var(--line)">
+      <summary data-i18n="ui.codeBox" style="cursor:pointer;font-size:12px;color:var(--muted);padding:8px 14px">查看/编辑脚本（高级）</summary>
+      <textarea id="editor" spellcheck="false" style="width:100%;height:200px;flex:none;resize:vertical"></textarea>
+    </details>
     <div class="err" id="scriptErr"></div>
     <div class="skillhint" id="skillHint"><span id="skillHintText"></span><button id="skillHintBtn" type="button"></button></div>
     <div class="skillhint" id="bridgeHint"><span id="bridgeText"></span><span id="bridgeBtns" style="display:flex;gap:6px;flex:none"></span></div>
