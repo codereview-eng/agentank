@@ -103,7 +103,7 @@ test('e2e/匿名：保存脚本只写本机 agentank.save（坦克列表，同�
   const r2 = anonSave(ls, 'export default function decide(){ return { move: "up" }; }');
   assert.deepEqual([r1.v, r2.v], [1, 2]); // 第一存 v1，此后同名每存 +1
   const s = anonLoad(ls);
-  assert.deepEqual(Object.keys(s).sort(), ['code', 'name', 'skill', 'v']);
+  assert.deepEqual(Object.keys(s).sort(), ['code', 'name', 'skill', 'strategy', 'v']);
   assert.equal(s.name, '坦克1');
   assert.match(s.code, /move/);
   assert.equal(cloud.tables.Tank.length, 0);
