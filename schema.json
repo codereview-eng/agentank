@@ -1,0 +1,39 @@
+{
+  "name": "agentank",
+  "web": {},
+  "entities": {
+    "Tank": {
+      "fields": {
+        "name": "string",
+        "code": "string",
+        "skill": "string",
+        "version": "number",
+        "is_active": "boolean"
+      }
+    },
+    "BattleResult": {
+      "fields": {
+        "seed": "string",
+        "map": "string",
+        "opponent": "string",
+        "winner": "number",
+        "reason": "string",
+        "ticks": "number",
+        "stars_a": "number",
+        "stars_b": "number",
+        "elo": "number",
+        "player": "string"
+      }
+    },
+    "Workshop": {
+      "fields": {
+        "type": "string",
+        "slug": "string",
+        "name": "string",
+        "def": "string",
+        "stage": "string",
+        "is_active": "boolean"
+      }
+    }
+  }
+}

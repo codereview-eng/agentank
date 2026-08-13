@@ -32,6 +32,91 @@ export function nextTankVersion(tank) {
   return (Number.isFinite(v) && v > 0 ? v : 0) + 1;
 }
 
+// ---------- 车库（多坦克）纯函数：行分组 / 本地存档迁移 / 登录时刻衔接 ----------
+// 云端 Tank 行 → 车库：每行一台坦克，按 name 分组（同名取最高 version 兜底脏数据），
+// is_active=出战坦克（多台标 active 的历史数据取最后一台；全未标取最新入库的）。
+export function garageFromRows(rows) {
+  const byName = new Map();
+  for (const raw of rows || []) {
+    const r = entityFields(raw);
+    if (!r || typeof r.name !== 'string' || !r.name) continue;
+    const t = {
+      id: r.id,
+      name: r.name,
+      code: String(r.code || ''),
+      skill: String(r.skill || ''),
+      v: Number(r.version) > 0 ? Number(r.version) : 1,
+      active: r.is_active === true,
+    };
+    const prev = byName.get(t.name);
+    if (!prev || t.v >= prev.v) byName.set(t.name, t);
+  }
+  const tanks = [...byName.values()];
+  let active = null;
+  for (const t of tanks) if (t.active) active = t;
+  if (!active && tanks.length) active = tanks[tanks.length - 1];
+  return { tanks, active };
+}
+
+// 本地匿名存档迁移：旧单份 {code,v,n} → 一台默认名坦克（「坦克1」）；
+// 新格式 {tanks:[{name,code,skill,v}],cur} 校验透传；坏存量按空处理。
+export function migrateLocalSave(raw, defaultName) {
+  let s = null;
+  try { s = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { /* 坏存量：按空处理 */ }
+  if (!s || typeof s !== 'object') return { tanks: [], cur: null };
+  if (Array.isArray(s.tanks)) {
+    const tanks = s.tanks
+      .filter((t) => t && typeof t.name === 'string' && t.name && typeof t.code === 'string')
+      .map((t) => ({ name: t.name, code: t.code, skill: String(t.skill || ''), v: Number(t.v) > 0 ? Number(t.v) : 1 }));
+    const cur = tanks.some((t) => t.name === s.cur) ? s.cur : (tanks.length ? tanks[0].name : null);
+    return { tanks, cur };
+  }
+  if (typeof s.code === 'string' && s.code.trim()) {
+    return {
+      tanks: [{ name: String(defaultName), code: s.code, skill: '', v: Number(s.v) > 0 ? Number(s.v) : 1 }],
+      cur: String(defaultName),
+    };
+  }
+  return { tanks: [], cur: null };
+}
+
+// 本地保存：同名递增 v、新名 v1；返回新 store（不改入参）与本次落点版本
+export function upsertLocalTank(store, t) {
+  const tanks = (store && Array.isArray(store.tanks) ? store.tanks : []).slice();
+  const i = tanks.findIndex((x) => x && x.name === t.name);
+  const v = i >= 0 ? (Number(tanks[i].v) > 0 ? Number(tanks[i].v) : 0) + 1 : 1;
+  const entry = { name: String(t.name), code: String(t.code || ''), skill: String(t.skill || ''), v };
+  if (i >= 0) tanks[i] = entry; else tanks.push(entry);
+  return { tanks, cur: entry.name, v };
+}
+
+// 登录时刻逐台按名字衔接（方案 v2 三分支）：云端无同名→upload（一键入库）、
+// 同名且代码相同→synced（静默跳过）、同名且代码不同→conflict（二选一横幅）
+export function reconcileLogin(localTanks, cloudTanks) {
+  const cloudByName = new Map((cloudTanks || []).map((t) => [t.name, t]));
+  const upload = [];
+  const conflicts = [];
+  const synced = [];
+  for (const lt of localTanks || []) {
+    if (!lt || !lt.name) continue;
+    const c = cloudByName.get(lt.name);
+    if (!c) upload.push(lt);
+    else if (String(c.code || '') === String(lt.code || '')) synced.push(lt.name);
+    else conflicts.push({ local: lt, cloud: c });
+  }
+  return { upload, conflicts, synced };
+}
+
+// 默认命名：mk(n) 生成候选名（坦克1/坦克2/…），找最小未占用编号
+export function nextTankName(existing, mk) {
+  const set = new Set(existing || []);
+  for (let n = 1; n <= set.size + 1; n++) {
+    const c = mk(n);
+    if (!set.has(c)) return c;
+  }
+  return mk(set.size + 1);
+}
+
 // BattleResult 实体 payload（与 spike schema 对齐：seed/map/opponent/winner/reason/ticks/stars_a/stars_b/elo/player）
 export function buildBattleResultPayload(opts) {
   const o = opts || {};
@@ -136,6 +221,48 @@ export function mapAgentKeyError(e, nowMs = Date.now()) {
 }
 
 // ---------- 运行时接线（浏览器专用；node --test 下不触发） ----------
+// ---------- 装备/代码不符检测（纯函数可测） ----------
+// 装备由下拉框决定、代码只决定何时施放；旧入口（api.teleport/cloak/stun）与 api.ready('技能名')
+// 在装备不符时引擎按 no-op/false 处理——这里找出代码显式点名、但换装备后不会生效的技能。
+export const SKILL_IDS = ['shield', 'freeze', 'stun', 'overload', 'cloak', 'poison', 'teleport', 'boost'];
+export function skillCodeMismatch(code, equipped) {
+  const src = String(code || '')
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, ''); // 注释里的点名不算调用
+  const hits = new Set();
+  for (const name of ['teleport', 'cloak', 'stun']) { // 引擎旧入口：仅装备一致时生效
+    if (name !== equipped && new RegExp(`api\\s*\\.\\s*${name}\\s*\\(`).test(src)) hits.add(name);
+  }
+  const re = /api\s*\.\s*ready\s*\(\s*['"]([a-z]+)['"]\s*\)/g; // ready('技能名')：与装备不一致恒 false
+  let m;
+  while ((m = re.exec(src))) {
+    if (SKILL_IDS.includes(m[1]) && m[1] !== equipped) hits.add(m[1]);
+  }
+  return [...hits];
+}
+
+// ---------- Workshop 云端存取（纯函数可测）：工坊条目 ↔ 实体行 ----------
+export function buildWorkshopPayload(entry) {
+  return {
+    type: String(entry.type),
+    slug: String(entry.id),
+    name: String(entry.name || entry.id),
+    def: JSON.stringify(entry),
+    stage: entry.stage === 'shared' ? 'shared' : 'private',
+    is_active: true,
+  };
+}
+export function parseWorkshopRow(row) {
+  const f = entityFields(row);
+  if (!f || f.is_active === false) return null;
+  try {
+    const entry = JSON.parse(f.def);
+    if (!entry || !entry.type || !entry.id) return null;
+    entry.stage = f.stage === 'shared' ? 'shared' : 'private';
+    return { rowId: f.id ?? (row && row.id), entry };
+  } catch { return null; }
+}
+
 export function initPlay(ctx) {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
   const dec = sdkInjectDecision(window.location);
@@ -163,7 +290,7 @@ async function bootPlay(ctx) {
   const $ = (id) => document.getElementById(id);
   const chip = $('playUserChip'), loginBtn = $('playLoginBtn');
   const panel = $('playPanel'), statusEl = $('playStatus');
-  const saveBtn = $('playSaveBtn'), fillBtn = $('playFillBtn'), challengeBtn = $('playChallengeBtn');
+  const fillBtn = $('playFillBtn'), challengeBtn = $('playChallengeBtn');
   const chBox = $('playChallenge'), chBody = $('playChallengeBody'), chSum = $('playChallengeSummary');
   let play;
   try { play = await Play.init(); } catch (e) { console.log('Play.init failed:', e && e.message); return; }
@@ -188,41 +315,61 @@ async function bootPlay(ctx) {
   if (chBox) chBox.style.display = '';
   const status = (msg) => { if (statusEl) statusEl.textContent = msg; };
   bootAgentKeys(play, T); // Agent Key 管理：登录态 + agentKeys API 面齐备才亮，独立于 Tank/BR 实体
+
+  // 创作工坊：私有内容只存服务器端（Workshop 实体，owner 隔离）；登录后接管 app.js 工坊持久层
+  const Workshop = play.db && play.db.Workshop;
+  if (Workshop && typeof ctx.workshopConnect === 'function') {
+    try {
+      const idBySlug = new Map(); // `${type}:${slug}` -> 云端行 id
+      const entries = [];
+      for (const row of (await Workshop.list()) || []) {
+        const p = parseWorkshopRow(row);
+        if (!p) continue;
+        idBySlug.set(`${p.entry.type}:${p.entry.id}`, p.rowId);
+        entries.push(p.entry);
+      }
+      const save = async (entry) => {
+        const key = `${entry.type}:${entry.id}`;
+        const payload = buildWorkshopPayload(entry);
+        const rid = idBySlug.get(key);
+        if (rid) await Workshop.update(rid, payload);
+        else { const r = await Workshop.create(payload); if (r && r.id) idBySlug.set(key, r.id); }
+      };
+      const remove = async (entry) => { // 删除 = 置 is_active:false（与 Tank 同款软删）
+        const rid = idBySlug.get(`${entry.type}:${entry.id}`);
+        if (rid) await Workshop.update(rid, { is_active: false });
+      };
+      await ctx.workshopConnect({ entries, save, remove });
+    } catch (e) { console.log('workshop cloud failed:', e && e.message); }
+  }
+
   const Tank = play.db && play.db.Tank;
   const BR = play.db && play.db.BattleResult;
   if (!Tank || !BR) { status(T('play.noEntity')); return; }
 
-  // 我的坦克：登录后拉取云端最新，灌进编辑器（自测=复用现有开战链路）
-  let myTank = null;
-  const refreshTank = async () => {
-    const rows = ((await Tank.list()) || []).map(entityFields).filter((r) => r.is_active !== false);
-    myTank = rows.length ? rows[rows.length - 1] : null;
-  };
-  try { await refreshTank(); } catch (e) { status(T('play.loadFail', { msg: String(e && e.message || e) })); }
-  const syncUi = () => {
-    if (saveBtn) saveBtn.textContent = myTank ? T('play.saveTank', { v: nextTankVersion(myTank) }) : T('play.createTank');
-    if (myTank) status(T('play.loaded', { v: myTank.version }));
-    else status(T('play.none'));
-  };
-  if (myTank && myTank.code) ctx.editorSet(String(myTank.code));
-  syncUi();
-
-  // 生成/保存我的坦克（保存前走现有 compileScript 校验；version 递增 update）
-  if (saveBtn) saveBtn.addEventListener('click', async () => {
-    const code = ctx.editorGet();
-    try { ctx.compileScript(code); } catch (e) { status(T('play.compileFail', { msg: String(e && e.message || e) })); return; }
-    const payload = buildTankPayload({
-      name: T('play.tankName'), code, skill: ctx.userSkill(),
-      version: myTank ? nextTankVersion(myTank) : 1,
-    });
+  // 车库（云端）：Tank 每行一台坦克（name 分组、version 原地递增、is_active=出战）。
+  // 登录时刻逐台衔接（方案 v2 三分支）与车库 UI 全部由 app.js 车库模块接管，这里只递云端 CRUD。
+  if (typeof ctx.garageConnect === 'function') {
     try {
-      if (myTank) await Tank.update(myTank.id, payload);
-      else await Tank.create(payload);
-      await refreshTank();
-      status(T('play.saved', { v: payload.version }));
-      if (saveBtn) saveBtn.textContent = T('play.saveTank', { v: nextTankVersion(myTank) });
-    } catch (e) { status(T('play.saveFail', { msg: String(e && e.message || e) })); }
-  });
+      await ctx.garageConnect({
+        list: async () => garageFromRows((await Tank.list()) || []),
+        create: (payload) => Tank.create(payload),
+        update: (id, patch) => Tank.update(id, patch),
+      });
+    } catch (e) { status(T('play.loadFail', { msg: String(e && e.message || e) })); }
+  }
+
+  // 登出（SDK 支持时才露出）：清车库/编辑器回默认模板，防同一浏览器下一人看到上一人代码
+  const logoutBtn = $('playLogoutBtn');
+  if (logoutBtn && typeof play.logout === 'function') {
+    logoutBtn.style.display = '';
+    logoutBtn.textContent = T('play.logout');
+    logoutBtn.addEventListener('click', async () => {
+      if (typeof ctx.resetForLogout === 'function') ctx.resetForLogout();
+      try { await play.logout(); } catch { /* 忽略 */ }
+      location.reload(); // 干净回到匿名态
+    });
+  }
 
   // 一键回填默认流派代码（只改编辑器，不写云端）
   if (fillBtn) fillBtn.addEventListener('click', () => { ctx.editorSet(ctx.defaultScript); status(T('play.filled')); });
