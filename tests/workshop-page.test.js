@@ -31,6 +31,17 @@ test('工坊页/迁移：旧内嵌 details 面板已移除，功能 id 全部迁
   }
 });
 
+// 回归（2026-08-13 用户报障「切到创作工坊后切不回对战页」）：
+//   - 顶栏 chip 必须是开关：已在工坊页时再点即切回（此前再点无反应，用户最自然的切回动作失效）；
+//   - 切页必须设完 hash 直接调 syncWsPage，不依赖 hashchange 事件（部分内嵌 WebView 不派发）。
+test('工坊页/切回：顶栏 chip 是开关，切页不依赖 hashchange 事件', () => {
+  const appJs = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
+  assert.match(appJs, /gotoWsPage\(location\.hash !== '#workshop'\)/, '顶栏 chip 应为开关：工坊页内再点即返回对战');
+  assert.match(appJs, /location\.hash = on \? '#workshop' : '';\s*\n\s*syncWsPage\(\);/, '设 hash 后必须直接调 syncWsPage，不能只等 hashchange');
+  assert.match(appJs, /'wsBackBtn'\)\?\.addEventListener\('click', \(\) => gotoWsPage\(false\)\)/, '「← 返回对战」应与 chip 走同一 gotoWsPage(false)');
+  assert.match(appJs, /dataset\.i18n = on \? 'ui\.wsBack' : 'ui\.wsPageBtn'/, '工坊页内 chip 文案应变「← 返回对战」（含语言切换后重渲染一致）');
+});
+
 test('工坊页/i18n：新键 zh/en 齐备', () => {
   for (const k of ['wsPageBtn', 'wsBack', 'wsBrowseTitle', 'wsCreateTitle', 'wsFilterAll', 'wsEquip', 'wsEquipped', 'wsEquipNa']) {
     assert.ok(LOCALES.zh.ui[k], `缺 zh ui.${k}`);

@@ -4942,14 +4942,26 @@ if (skillSel) skillSel.addEventListener('change', scheduleLadder);
 // ---------- 创作工坊独立页：顶栏入口 + #workshop 深链（hash 切换，单文件内双页） ----------
 const playMain = $id('playMain');
 const wsMain = $id('wsMain');
+const wsPageBtn = $id('wsPageBtn');
 function syncWsPage() {
   const on = location.hash === '#workshop';
   if (playMain) playMain.hidden = on;
   if (wsMain) wsMain.hidden = !on;
+  if (wsPageBtn) { // 顶栏 chip 是开关：工坊页内变「← 返回对战」并高亮，再点一次即切回
+    wsPageBtn.dataset.i18n = on ? 'ui.wsBack' : 'ui.wsPageBtn';
+    wsPageBtn.textContent = T(on ? 'ui.wsBack' : 'ui.wsPageBtn');
+    wsPageBtn.style.borderColor = on ? 'var(--p1)' : 'var(--line)';
+    wsPageBtn.style.color = on ? 'var(--p1)' : 'var(--muted)';
+  }
 }
-$id('wsPageBtn')?.addEventListener('click', () => { location.hash = '#workshop'; });
-$id('wsBackBtn')?.addEventListener('click', () => { location.hash = ''; });
-window.addEventListener('hashchange', syncWsPage);
+// 切页设完 hash 直接同步，不依赖 hashchange 事件（部分内嵌 WebView 不派发）
+function gotoWsPage(on) {
+  location.hash = on ? '#workshop' : '';
+  syncWsPage();
+}
+wsPageBtn?.addEventListener('click', () => gotoWsPage(location.hash !== '#workshop'));
+$id('wsBackBtn')?.addEventListener('click', () => gotoWsPage(false));
+window.addEventListener('hashchange', syncWsPage); // 浏览器前进/后退、手改 hash 仍走事件
 syncWsPage();
 
 // ---------- 装备/代码不符提醒（非阻断） ----------
