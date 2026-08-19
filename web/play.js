@@ -68,6 +68,124 @@ export function mapLlmError(e) {
   return { key: 'play.genFail', vars: { msg: String((e && (e.hint || e.message)) || e || '') } };
 }
 
+// ---------- 生成闸门（无 eval 版）：托管页 CSP 禁 eval 时替代「编译一次」的结构校验 ----------
+// 背景：线上 CSP 为 script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'（无 'unsafe-eval'），
+// new Function 必抛。此前生成流程拿 compileScript 当语法闸门 → 任何自定义代码在线上都 100% 失败，
+// 且把 CSP 错误当「编译错误」喂回模型重试，白烧一次配额。这里改成不执行代码的静态检查。
+const GEN_CODE_MAX = 20000;
+// 明确禁止出现在生成脚本里的宿主能力（引擎沙箱只喂 api，出现即为跑偏/注入）
+const GEN_FORBIDDEN = [
+  { re: /<\/script/i, id: 'script-close' },
+  { re: /\beval\s*\(/, id: 'eval' },
+  { re: /new\s+Function\s*\(/, id: 'new-function' },
+  { re: /\bimport\s*[(\s]/, id: 'import' },
+  { re: /\bfetch\s*\(/, id: 'fetch' },
+  { re: /XMLHttpRequest|localStorage|sessionStorage|document\.|window\./, id: 'host-api' },
+];
+
+// 去掉字符串/注释后再数括号，避免把代码里的 "(" 文本当结构（正则字面量不参与，见 balanced 注释）
+function stripLiterals(code) {
+  let out = '';
+  let mode = null; // null | 'line' | 'block' | '"' | "'" | '`'
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i];
+    const n = code[i + 1];
+    if (mode === null) {
+      if (c === '/' && n === '/') { mode = 'line'; i++; continue; }
+      if (c === '/' && n === '*') { mode = 'block'; i++; continue; }
+      if (c === '"' || c === "'" || c === '`') { mode = c; continue; }
+      out += c;
+      continue;
+    }
+    if (mode === 'line') { if (c === '\n') { mode = null; out += c; } continue; }
+    if (mode === 'block') { if (c === '*' && n === '/') { mode = null; i++; } continue; }
+    if (c === '\\') { i++; continue; } // 字符串里的转义
+    if (c === mode) mode = null;
+  }
+  return out;
+}
+
+// 括号配平（结构性语法错的廉价代理；正则字面量里的括号可能误判，因此只在含 / 的行少见场景下生效，
+// 误判会被上层当作「本轮不通过 → 带错重试」处理，不会静默塞坏代码）
+function balanced(code) {
+  const pairs = { ')': '(', ']': '[', '}': '{' };
+  const stack = [];
+  for (const c of stripLiterals(code)) {
+    if (c === '(' || c === '[' || c === '{') stack.push(c);
+    else if (pairs[c]) { if (stack.pop() !== pairs[c]) return false; }
+  }
+  return stack.length === 0;
+}
+
+// 返回 { ok, errors[] }：ok=false 时上层按「本轮生成不合格」处理（带错重试 / 如实报错 + 出日志）
+export function checkGeneratedCode(code) {
+  const src = String(code || '');
+  const errors = [];
+  if (!src.trim()) errors.push('empty code');
+  if (src.length > GEN_CODE_MAX) errors.push(`code too long (${src.length} > ${GEN_CODE_MAX})`);
+  if (!/export\s+default\s+function|function\s+decide/.test(src)) errors.push('missing decide(api) entry');
+  for (const f of GEN_FORBIDDEN) if (f.re.test(src)) errors.push(`forbidden host API: ${f.id}`);
+  if (!balanced(src)) errors.push('unbalanced brackets');
+  return { ok: errors.length === 0, errors };
+}
+
+// ---------- 生成诊断日志：失败时一键下载交给产品方分析 ----------
+// 只装“定位问题必需”的东西：环境能力（CSP/eval/SDK）、每次尝试的形状与错误、玩家自己的策略文本与产出代码。
+// 绝不装凭证：落盘前统一过 redactSecrets（Bearer / ak1_ / gt1_ / token 字段一律打码）。
+export function redactSecrets(text) {
+  return String(text == null ? '' : text)
+    .replace(/\b(Bearer)\s+[A-Za-z0-9._-]+/gi, '$1 «redacted»')
+    .replace(/\b(ak1|gt1|sk|pk)_[A-Za-z0-9._-]{6,}/g, '$1_«redacted»')
+    .replace(/("?(?:access_)?token"?\s*[:=]\s*")([^"]{6,})(")/gi, '$1«redacted»$3')
+    .replace(/([?&](?:token|key|secret)=)[^&\s]{6,}/gi, '$1«redacted»');
+}
+
+export function genLogFilename(now) {
+  const d = now instanceof Date ? now : new Date(now || Date.now());
+  const p = (n) => String(n).padStart(2, '0');
+  return `agentank-gen-log-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.json`;
+}
+
+// attempts[i] = { n, promptChars, replyChars, replyHead, extracted, codeChars, code, error, errorKind }
+export function buildGenLog(o) {
+  const i = o || {};
+  const env = i.env || {};
+  return {
+    kind: 'agentank-generation-diagnostic',
+    schema: 1,
+    outcome: String(i.outcome || 'unknown'), // ok | invalid-output | sdk-error | no-sdk
+    reason: redactSecrets(i.reason || ''),
+    at: new Date(i.at || Date.now()).toISOString(),
+    durationMs: Number(i.durationMs) > 0 ? Math.round(Number(i.durationMs)) : 0,
+    env: {
+      url: redactSecrets(env.url || ''),
+      appVersion: String(env.appVersion || ''),
+      lang: String(env.lang || ''),
+      ua: String(env.ua || ''),
+      evalAllowed: env.evalAllowed === true, // false = 宿主 CSP 无 'unsafe-eval'（线上托管版即为此）
+      workerAllowed: env.workerAllowed === true,
+      sdk: String(env.sdk || ''), // ready | need-login | absent
+      csp: redactSecrets(env.csp || ''),
+    },
+    input: {
+      strategyChars: String(i.strategy || '').length,
+      strategy: redactSecrets(i.strategy || ''),
+      skill: String(i.skill || ''),
+    },
+    attempts: (i.attempts || []).map((a) => ({
+      n: Number(a.n) || 0,
+      promptChars: Number(a.promptChars) || 0,
+      replyChars: Number(a.replyChars) || 0,
+      replyHead: redactSecrets(String(a.replyHead || '').slice(0, 500)),
+      extracted: a.extracted === true,
+      codeChars: Number(a.codeChars) || 0,
+      code: redactSecrets(a.code || ''),
+      errorKind: String(a.errorKind || ''), // no-code | check-failed | compile-failed | sdk-error
+      error: redactSecrets(a.error || ''),
+    })),
+  };
+}
+
 // 版本递增：基于现有实体 version+1，缺省从 0 起
 export function nextTankVersion(tank) {
   const v = Number(tank && tank.version);

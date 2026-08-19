@@ -132,11 +132,22 @@ footer .mono{color:var(--muted)}
 </header>
 <main id="playMain">
   <!-- 左：战术指挥（策略文本优先：默认只见策略描述；脚本细节折叠在「查看/编辑脚本」里） -->
-  <section class="panel">
-    <h2><span class="dot"></span><span id="editorTitle">战术指挥 · 我的坦克 v1</span></h2>
-    <textarea id="strategyBox" spellcheck="false" data-i18n-ph="ui.strategyPh" placeholder="用一句话描述你的战术，如：贴脸抢星，血量低于30%就传送到最安全的角落" style="flex:1;min-height:80px;padding:12px 14px;border:none;outline:none;resize:none;background:transparent;color:#C9D6E4;font-size:13px;line-height:1.7;font-family:inherit"></textarea>
+  <section class="panel" style="position:relative">
+    <h2><span class="dot"></span><span id="editorTitle">战术指挥 · 我的坦克 v1</span><button id="strategyHelpBtn" type="button" data-i18n="ui.strategyHelpBtn" data-i18n-title="ui.strategyHelpTitle" title="怎么写战术？" aria-label="how to write tactics" style="margin-left:auto;width:20px;height:20px;flex:none;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer;font-size:12px;line-height:1;padding:0">?</button></h2>
+    <div id="strategyHelpPop" hidden style="position:absolute;z-index:30;left:12px;right:12px;top:40px;background:#0E1524;border:1px solid var(--line);border-radius:10px;padding:12px 14px;box-shadow:0 10px 30px rgba(0,0,0,.55)">
+      <div data-i18n="ui.strategyHelpTitle" style="font-weight:600;font-size:13px;margin-bottom:6px">怎么写战术？</div>
+      <div data-i18n="ui.strategyHelpBody" style="font-size:12px;line-height:1.7;color:var(--muted);white-space:pre-line">用日常语言描述你想要的打法，AI 会把这段战术文字变成可运行的坦克代码（不是替你改写战术文字）。
+可以写：进攻/防守倾向、什么时候开炮、血量多少时用技能、要不要抢星、走位偏好等。
+示例：
+· 贴脸抢星，血量低于30%就传送到最安全的角落
+· 蹲在角落防守，敌人进射程才开炮，残血开护盾
+写完点下方「AI 由战术文字生成坦克代码」。</div>
+      <button class="btn ghost" id="strategyHelpClose" type="button" data-i18n="ui.strategyHelpClose" style="margin-top:10px">知道了</button>
+    </div>
+    <textarea id="strategyBox" spellcheck="false" data-i18n-ph="ui.strategyPh" placeholder="在这里用文字描述你的战术（点右上角 ? 看写法和示例）" style="flex:1;min-height:80px;padding:12px 14px;border:none;outline:none;resize:none;background:transparent;color:#C9D6E4;font-size:13px;line-height:1.7;font-family:inherit"></textarea>
     <div style="display:flex;gap:8px;align-items:center;padding:0 14px 6px">
-      <button class="btn ghost" id="genBtn" data-i18n="ui.genBtn" style="flex:1;letter-spacing:0">⚡ AI 生成脚本</button>
+      <button class="btn ghost" id="genBtn" data-i18n="ui.genBtn" style="flex:1;letter-spacing:0">⚡ AI 由战术文字生成坦克代码</button>
+      <button class="btn ghost" id="genLogBtn" data-i18n="ui.genLogBtn" data-i18n-title="ui.genLogTitle" hidden style="flex:none;letter-spacing:0">⬇ 下载诊断日志</button>
     </div>
     <div id="genMsg" style="font-size:11px;color:var(--dim);padding:0 14px 8px;min-height:14px"></div>
     <details id="codeBox" style="border-top:1px solid var(--line)">

@@ -132,11 +132,22 @@ footer .mono{color:var(--muted)}
 </header>
 <main id="playMain">
   <!-- 左：战术指挥（策略文本优先：默认只见策略描述；脚本细节折叠在「查看/编辑脚本」里） -->
-  <section class="panel">
-    <h2><span class="dot"></span><span id="editorTitle">战术指挥 · 我的坦克 v1</span></h2>
-    <textarea id="strategyBox" spellcheck="false" data-i18n-ph="ui.strategyPh" placeholder="用一句话描述你的战术，如：贴脸抢星，血量低于30%就传送到最安全的角落" style="flex:1;min-height:80px;padding:12px 14px;border:none;outline:none;resize:none;background:transparent;color:#C9D6E4;font-size:13px;line-height:1.7;font-family:inherit"></textarea>
+  <section class="panel" style="position:relative">
+    <h2><span class="dot"></span><span id="editorTitle">战术指挥 · 我的坦克 v1</span><button id="strategyHelpBtn" type="button" data-i18n="ui.strategyHelpBtn" data-i18n-title="ui.strategyHelpTitle" title="怎么写战术？" aria-label="how to write tactics" style="margin-left:auto;width:20px;height:20px;flex:none;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer;font-size:12px;line-height:1;padding:0">?</button></h2>
+    <div id="strategyHelpPop" hidden style="position:absolute;z-index:30;left:12px;right:12px;top:40px;background:#0E1524;border:1px solid var(--line);border-radius:10px;padding:12px 14px;box-shadow:0 10px 30px rgba(0,0,0,.55)">
+      <div data-i18n="ui.strategyHelpTitle" style="font-weight:600;font-size:13px;margin-bottom:6px">怎么写战术？</div>
+      <div data-i18n="ui.strategyHelpBody" style="font-size:12px;line-height:1.7;color:var(--muted);white-space:pre-line">用日常语言描述你想要的打法，AI 会把这段战术文字变成可运行的坦克代码（不是替你改写战术文字）。
+可以写：进攻/防守倾向、什么时候开炮、血量多少时用技能、要不要抢星、走位偏好等。
+示例：
+· 贴脸抢星，血量低于30%就传送到最安全的角落
+· 蹲在角落防守，敌人进射程才开炮，残血开护盾
+写完点下方「AI 由战术文字生成坦克代码」。</div>
+      <button class="btn ghost" id="strategyHelpClose" type="button" data-i18n="ui.strategyHelpClose" style="margin-top:10px">知道了</button>
+    </div>
+    <textarea id="strategyBox" spellcheck="false" data-i18n-ph="ui.strategyPh" placeholder="在这里用文字描述你的战术（点右上角 ? 看写法和示例）" style="flex:1;min-height:80px;padding:12px 14px;border:none;outline:none;resize:none;background:transparent;color:#C9D6E4;font-size:13px;line-height:1.7;font-family:inherit"></textarea>
     <div style="display:flex;gap:8px;align-items:center;padding:0 14px 6px">
-      <button class="btn ghost" id="genBtn" data-i18n="ui.genBtn" style="flex:1;letter-spacing:0">⚡ AI 生成脚本</button>
+      <button class="btn ghost" id="genBtn" data-i18n="ui.genBtn" style="flex:1;letter-spacing:0">⚡ AI 由战术文字生成坦克代码</button>
+      <button class="btn ghost" id="genLogBtn" data-i18n="ui.genLogBtn" data-i18n-title="ui.genLogTitle" hidden style="flex:none;letter-spacing:0">⬇ 下载诊断日志</button>
     </div>
     <div id="genMsg" style="font-size:11px;color:var(--dim);padding:0 14px 8px;min-height:14px"></div>
     <details id="codeBox" style="border-top:1px solid var(--line)">
@@ -2255,8 +2266,15 @@ const LOCALES = {
       tagline: 'AI 脚本坦克对战 · 你当教练，AI 开炮',
       season: '赛季 S1',
       editorTitle: '战术指挥 · {name}',
-      strategyPh: '用一句话描述你的战术，如：贴脸抢星，血量低于30%就传送到最安全的角落',
-      genBtn: '⚡ AI 生成脚本',
+      strategyPh: '在这里用文字描述你的战术（点右上角 ? 看写法和示例）',
+      strategyDefault: '看得见敌人就开炮；血量低于30%就施放技能保命；平时抢最近的星，没星就巡逻',
+      strategyHelpBtn: '?',
+      strategyHelpTitle: '怎么写战术？',
+      strategyHelpBody: '用日常语言描述你想要的打法，AI 会把这段战术文字变成可运行的坦克代码（不是替你改写战术文字）。\n可以写：进攻/防守倾向、什么时候开炮、血量多少时用技能、要不要抢星、走位偏好等。\n示例：\n· 贴脸抢星，血量低于30%就传送到最安全的角落\n· 蹲在角落防守，敌人进射程才开炮，残血开护盾\n写完点下方「AI 由战术文字生成坦克代码」。',
+      strategyHelpClose: '知道了',
+      genBtn: '⚡ AI 由战术文字生成坦克代码',
+      genLogBtn: '⬇ 下载诊断日志',
+      genLogTitle: '把这次生成的完整记录存成 JSON 文件，发给我们即可定位问题',
       codeBox: '查看/编辑脚本（高级）',
       myTank: '我的坦克',
       opponent: '对手',
@@ -2347,14 +2365,16 @@ const LOCALES = {
       bridgeArchived: '已处理：另一份进了本地存档，零丢失',
       bridgeDone: '衔接完成：本地匿名坦克已清零，云端是坦克唯一的家',
       bridgeCloseBtn: '知道了',
-      genLoginBtn: '🔑 登录后可用 AI 生成',
+      genLoginBtn: '🔑 登录后可由战术文字生成坦克代码',
       genUnavailable: 'AI 生成需要在线版（当前环境无 SDK）；可点开下方「查看/编辑脚本」手写',
       genEmpty: '先在上方用文字描述你的战术，再点生成',
       genRunning: 'AI 正在按你的策略写代码…',
       genRetry: '首次结果编译未过，带错误自动重试中…',
       genDone: '已生成并编译通过 ✅ 直接「开 战」试效果，满意再「保存」',
+      genDoneNoRun: '代码已生成 ✅ 已填入下方「查看/编辑脚本」，可「保存」到云端；但线上版暂时还跑不了自定义脚本（浏览器安全策略限制，修复中）——请点「下载诊断日志」发给我们',
+      genLogSaved: '诊断日志已下载：{name}（把这个文件发给我们即可）',
       genFail: '生成失败：{msg}',
-      genNeedLogin: '需要登录后才能使用 AI 生成（点右上角「登录」）',
+      genNeedLogin: '需要登录后才能由战术文字生成坦克代码（点右上角「登录」）',
       genQuota: 'AI 配额已用完：{hint}',
       genTimeout: '生成超时：任务可能仍在跑，稍后再点一次',
       codeEdited: '代码已手工修改（与上方策略描述可能不同步）',
@@ -2463,8 +2483,8 @@ const LOCALES = {
       runtime: '脚本运行时报错 {n} 次（该拍已按待机处理）：{msg}',
       noEntry: '未找到入口函数 {entry}(api)，请定义 function decide(api) {...}',
       noDecide: '脚本未提供 decide(api) 函数',
-      cspEval: '线上托管版受 CSP 限制（禁 eval），暂不支持编译改动后的脚本；默认脚本可直接开战。要自定义脚本，请把本页另存为 .html 在本地打开。',
-      cspNote: '线上托管版：宿主 CSP 禁 eval，默认脚本以内置等价策略运行；编辑自定义脚本请把本页另存为 .html 在本地打开。',
+      cspEval: '线上版暂时还不能运行自定义脚本（浏览器安全策略禁止动态编译代码），我们正在修。默认脚本可以直接开战；点「下载诊断日志」把这次记录发给我们，能加快修复。',
+      cspNote: '线上版当前只能用默认脚本开战：浏览器安全策略禁止动态编译代码，自定义脚本还跑不起来（问题已知，修复中）。生成的代码可以正常保存到云端。',
     },
     script: {
       default: `// 你的战术：优先吃星，残血放技能保命
@@ -2525,8 +2545,15 @@ function decide(api) {
       tagline: 'AI script tank battle · you coach, AI fires',
       season: 'Season S1',
       editorTitle: 'Tactics HQ · {name}',
-      strategyPh: 'Describe your tactics in one line, e.g. rush stars, teleport to the safest corner below 30% HP',
-      genBtn: '⚡ Generate script with AI',
+      strategyPh: 'Describe your tactics in words here (click ? for tips & examples)',
+      strategyDefault: 'Fire whenever an enemy is visible; use my skill to survive below 30% HP; otherwise grab the nearest star, or patrol',
+      strategyHelpBtn: '?',
+      strategyHelpTitle: 'How to write tactics?',
+      strategyHelpBody: 'Describe how you want to fight in plain language — the AI turns this tactics text into runnable tank code (it does not rewrite the tactics text itself).\nYou can cover: attack/defense style, when to fire, when to use your skill, whether to chase stars, movement preferences.\nExamples:\n· Rush stars up close, teleport to the safest corner below 30% HP\n· Camp in a corner, fire only when the enemy is in range, shield when low\nThen click "Generate tank code from tactics text" below.',
+      strategyHelpClose: 'Got it',
+      genBtn: '⚡ Generate tank code from tactics text (AI)',
+      genLogBtn: '⬇ Download diagnostic log',
+      genLogTitle: 'Save the full record of this generation as JSON and send it to us to pin the problem',
       codeBox: 'View/edit script (advanced)',
       myTank: 'My Tank',
       opponent: 'Opponent',
@@ -2617,14 +2644,16 @@ function decide(api) {
       bridgeArchived: 'Done: the other copy went to the local archive, nothing lost',
       bridgeDone: 'Bridging complete: local anonymous tanks cleared; the cloud is now their only home',
       bridgeCloseBtn: 'OK',
-      genLoginBtn: '🔑 Sign in to use AI generation',
+      genLoginBtn: '🔑 Sign in to generate tank code from tactics text',
       genUnavailable: 'AI generation needs the hosted version (no SDK here); open "View/edit script" below to write by hand',
       genEmpty: 'Describe your tactics above first, then generate',
       genRunning: 'AI is writing code from your strategy…',
       genRetry: 'First attempt failed to compile, retrying with the error…',
       genDone: 'Generated & compiled ✅ Hit BATTLE to try it, then Save if you like it',
+      genDoneNoRun: 'Code generated ✅ It is in "View/edit script" below and can be Saved to the cloud, but the online build cannot run custom scripts yet (browser security policy, fix in progress) — please hit "Download diagnostic log" and send it to us',
+      genLogSaved: 'Diagnostic log downloaded: {name} (just send us this file)',
       genFail: 'Generation failed: {msg}',
-      genNeedLogin: 'Sign in to use AI generation (top-right "Sign in")',
+      genNeedLogin: 'Sign in to generate tank code from your tactics text (top-right "Sign in")',
       genQuota: 'AI quota exhausted: {hint}',
       genTimeout: 'Generation timed out: the task may still be running, try again shortly',
       codeEdited: 'Code was hand-edited (may be out of sync with the strategy above)',
@@ -2733,8 +2762,8 @@ function decide(api) {
       runtime: 'Script threw {n} time(s) (idled those ticks): {msg}',
       noEntry: 'Entry function {entry}(api) not found; define function decide(api) {...}',
       noDecide: 'Script does not provide a decide(api) function',
-      cspEval: 'Hosted build is CSP-restricted (no eval): edited scripts cannot be compiled online; the default script works out of the box. To customize, save this page as .html and open it locally.',
-      cspNote: 'Hosted build: host CSP forbids eval, the default script runs via a built-in equivalent strategy; to edit custom scripts save this page as .html and open locally.',
+      cspEval: 'The online build cannot run custom scripts yet (browser security policy forbids compiling code at runtime) — we are fixing it. The default script battles fine; hit "Download diagnostic log" and send us the record to speed up the fix.',
+      cspNote: 'Online build currently battles with the default script only: browser security policy forbids compiling code at runtime, so custom scripts cannot run yet (known issue, fix in progress). Generated code still saves to the cloud normally.',
     },
     script: {
       default: `// Your tactics: grab stars first, cast your skill when low
@@ -2827,6 +2856,124 @@ function mapLlmError(e) {
   if (code === 'LLM_QUOTA_EXCEEDED') return { key: 'play.genQuota', vars: { hint: String((e && e.hint) || '') } };
   if (code === 'LLM_TIMEOUT') return { key: 'play.genTimeout' };
   return { key: 'play.genFail', vars: { msg: String((e && (e.hint || e.message)) || e || '') } };
+}
+
+// ---------- 生成闸门（无 eval 版）：托管页 CSP 禁 eval 时替代「编译一次」的结构校验 ----------
+// 背景：线上 CSP 为 script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'（无 'unsafe-eval'），
+// new Function 必抛。此前生成流程拿 compileScript 当语法闸门 → 任何自定义代码在线上都 100% 失败，
+// 且把 CSP 错误当「编译错误」喂回模型重试，白烧一次配额。这里改成不执行代码的静态检查。
+const GEN_CODE_MAX = 20000;
+// 明确禁止出现在生成脚本里的宿主能力（引擎沙箱只喂 api，出现即为跑偏/注入）
+const GEN_FORBIDDEN = [
+  { re: /<\/script/i, id: 'script-close' },
+  { re: /\beval\s*\(/, id: 'eval' },
+  { re: /new\s+Function\s*\(/, id: 'new-function' },
+  { re: /\bimport\s*[(\s]/, id: 'import' },
+  { re: /\bfetch\s*\(/, id: 'fetch' },
+  { re: /XMLHttpRequest|localStorage|sessionStorage|document\.|window\./, id: 'host-api' },
+];
+
+// 去掉字符串/注释后再数括号，避免把代码里的 "(" 文本当结构（正则字面量不参与，见 balanced 注释）
+function stripLiterals(code) {
+  let out = '';
+  let mode = null; // null | 'line' | 'block' | '"' | "'" | '`'
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i];
+    const n = code[i + 1];
+    if (mode === null) {
+      if (c === '/' && n === '/') { mode = 'line'; i++; continue; }
+      if (c === '/' && n === '*') { mode = 'block'; i++; continue; }
+      if (c === '"' || c === "'" || c === '`') { mode = c; continue; }
+      out += c;
+      continue;
+    }
+    if (mode === 'line') { if (c === '\n') { mode = null; out += c; } continue; }
+    if (mode === 'block') { if (c === '*' && n === '/') { mode = null; i++; } continue; }
+    if (c === '\\') { i++; continue; } // 字符串里的转义
+    if (c === mode) mode = null;
+  }
+  return out;
+}
+
+// 括号配平（结构性语法错的廉价代理；正则字面量里的括号可能误判，因此只在含 / 的行少见场景下生效，
+// 误判会被上层当作「本轮不通过 → 带错重试」处理，不会静默塞坏代码）
+function balanced(code) {
+  const pairs = { ')': '(', ']': '[', '}': '{' };
+  const stack = [];
+  for (const c of stripLiterals(code)) {
+    if (c === '(' || c === '[' || c === '{') stack.push(c);
+    else if (pairs[c]) { if (stack.pop() !== pairs[c]) return false; }
+  }
+  return stack.length === 0;
+}
+
+// 返回 { ok, errors[] }：ok=false 时上层按「本轮生成不合格」处理（带错重试 / 如实报错 + 出日志）
+function checkGeneratedCode(code) {
+  const src = String(code || '');
+  const errors = [];
+  if (!src.trim()) errors.push('empty code');
+  if (src.length > GEN_CODE_MAX) errors.push(`code too long (${src.length} > ${GEN_CODE_MAX})`);
+  if (!/export\s+default\s+function|function\s+decide/.test(src)) errors.push('missing decide(api) entry');
+  for (const f of GEN_FORBIDDEN) if (f.re.test(src)) errors.push(`forbidden host API: ${f.id}`);
+  if (!balanced(src)) errors.push('unbalanced brackets');
+  return { ok: errors.length === 0, errors };
+}
+
+// ---------- 生成诊断日志：失败时一键下载交给产品方分析 ----------
+// 只装“定位问题必需”的东西：环境能力（CSP/eval/SDK）、每次尝试的形状与错误、玩家自己的策略文本与产出代码。
+// 绝不装凭证：落盘前统一过 redactSecrets（Bearer / ak1_ / gt1_ / token 字段一律打码）。
+function redactSecrets(text) {
+  return String(text == null ? '' : text)
+    .replace(/\b(Bearer)\s+[A-Za-z0-9._-]+/gi, '$1 «redacted»')
+    .replace(/\b(ak1|gt1|sk|pk)_[A-Za-z0-9._-]{6,}/g, '$1_«redacted»')
+    .replace(/("?(?:access_)?token"?\s*[:=]\s*")([^"]{6,})(")/gi, '$1«redacted»$3')
+    .replace(/([?&](?:token|key|secret)=)[^&\s]{6,}/gi, '$1«redacted»');
+}
+
+function genLogFilename(now) {
+  const d = now instanceof Date ? now : new Date(now || Date.now());
+  const p = (n) => String(n).padStart(2, '0');
+  return `agentank-gen-log-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.json`;
+}
+
+// attempts[i] = { n, promptChars, replyChars, replyHead, extracted, codeChars, code, error, errorKind }
+function buildGenLog(o) {
+  const i = o || {};
+  const env = i.env || {};
+  return {
+    kind: 'agentank-generation-diagnostic',
+    schema: 1,
+    outcome: String(i.outcome || 'unknown'), // ok | invalid-output | sdk-error | no-sdk
+    reason: redactSecrets(i.reason || ''),
+    at: new Date(i.at || Date.now()).toISOString(),
+    durationMs: Number(i.durationMs) > 0 ? Math.round(Number(i.durationMs)) : 0,
+    env: {
+      url: redactSecrets(env.url || ''),
+      appVersion: String(env.appVersion || ''),
+      lang: String(env.lang || ''),
+      ua: String(env.ua || ''),
+      evalAllowed: env.evalAllowed === true, // false = 宿主 CSP 无 'unsafe-eval'（线上托管版即为此）
+      workerAllowed: env.workerAllowed === true,
+      sdk: String(env.sdk || ''), // ready | need-login | absent
+      csp: redactSecrets(env.csp || ''),
+    },
+    input: {
+      strategyChars: String(i.strategy || '').length,
+      strategy: redactSecrets(i.strategy || ''),
+      skill: String(i.skill || ''),
+    },
+    attempts: (i.attempts || []).map((a) => ({
+      n: Number(a.n) || 0,
+      promptChars: Number(a.promptChars) || 0,
+      replyChars: Number(a.replyChars) || 0,
+      replyHead: redactSecrets(String(a.replyHead || '').slice(0, 500)),
+      extracted: a.extracted === true,
+      codeChars: Number(a.codeChars) || 0,
+      code: redactSecrets(a.code || ''),
+      errorKind: String(a.errorKind || ''), // no-code | check-failed | compile-failed | sdk-error
+      error: redactSecrets(a.error || ''),
+    })),
+  };
 }
 
 // 版本递增：基于现有实体 version+1，缺省从 0 起
@@ -3423,6 +3570,8 @@ function makeMap(seed) {
 
 // ---------- 默认脚本（效果稿同款） ----------
 const DEFAULT_SCRIPT = L.script.default + '\n'; // 注释随语言切换，代码语义两语言逐行一致
+const DEFAULT_STRATEGY = L.ui.strategyDefault; // 默认战术文本：与 DEFAULT_SCRIPT 语义一致（语言切换会整页刷新，随页取新语言）
+const isDefaultCode = (src) => String(src || '').replace(/\s+/g, '') === DEFAULT_SCRIPT.replace(/\s+/g, '');
 
 // ---------- 内置天梯阵容 ----------
 const ROSTER = [
@@ -3704,14 +3853,36 @@ function defaultDecide(api) {
   return star ? api.moveTo(star) : api.patrol();
 }
 
-// 探测宿主是否允许 eval（run.ceo artifact 的 CSP 为 script-src 'unsafe-inline'，无 'unsafe-eval'）
+// 探测宿主是否允许 eval（play-agentank.run.ceo 实测 CSP：script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'，无 'unsafe-eval'）
 const EVAL_OK = (() => { try { new Function(''); return true; } catch { return false; } })();
+// 同一宿主下 blob Worker 是否可用（受 worker-src 管辖，与 eval 无关）——线上实测可用，
+// 是后续「无 eval 也能跑自定义脚本」的执行路径；此处先如实记进诊断日志，便于产品方判断修复面。
+const WORKER_OK = (() => {
+  try {
+    const u = URL.createObjectURL(new Blob(['self.close();'], { type: 'text/javascript' }));
+    const w = new Worker(u);
+    w.terminate();
+    URL.revokeObjectURL(u);
+    return true;
+  } catch { return false; }
+})();
+// 宿主 CSP 原文（只读一次，best-effort）：失败诊断里最关键的一行事实，避免只能靠"eval 挂了"反推
+let CSP_HEADER = '';
+if (!EVAL_OK && (location.protocol === 'http:' || location.protocol === 'https:')) {
+  try {
+    fetch(location.href, { method: 'HEAD', cache: 'no-store' })
+      .then((r) => { CSP_HEADER = r.headers.get('content-security-policy') || '(header not readable)'; })
+      .catch((e) => { CSP_HEADER = `(head probe failed: ${e && e.message})`; });
+  } catch { CSP_HEADER = '(head probe threw)'; }
+}
 
 function compileScript(src) {
   if (!EVAL_OK) {
     if (String(src).replace(/\s+/g, '') === DEFAULT_SCRIPT.replace(/\s+/g, ''))
       return defaultDecide;
-    throw new Error(T('err.cspEval'));
+    const e = new Error(T('err.cspEval'));
+    e.code = 'CSP_NO_EVAL'; // 与「玩家代码写错」区分：这是宿主环境限制，绝不能当编译错误喂回模型
+    throw e;
   }
   const m = src.match(/export\s+default\s+function\s+([A-Za-z_$][\w$]*)/);
   const entry = m ? m[1] : 'decide';
@@ -3768,7 +3939,8 @@ function archiveCopy(t, from) {
 function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch { /* 忽略 */ } }
 function applyTankToUi(t) { // 切台/入座：代码进编辑器、策略文本跟随、技能跟随（无该选项时保持现装备）
   editorEl.value = t ? t.code : DEFAULT_SCRIPT;
-  if (strategyEl) strategyEl.value = (t && t.strategy) || '';
+  // 策略文本：有存的用存的；没存但代码仍是默认脚本 → 显示配套的默认战术文本（不再空白）
+  if (strategyEl) strategyEl.value = t ? (t.strategy || (isDefaultCode(t.code) ? DEFAULT_STRATEGY : '')) : DEFAULT_STRATEGY;
   if (t && t.skill && skillSel && [...skillSel.options].some((o) => o.value === t.skill)) skillSel.value = t.skill;
   refreshSkillHint();
 }
@@ -4051,7 +4223,7 @@ function resetForLogout() { // 场景 5：登出清空车库与编辑器（未�
   writeLocalStore({ tanks: [], cur: null });
   clearDraft();
   editorEl.value = DEFAULT_SCRIPT;
-  if (strategyEl) strategyEl.value = ''; // 策略文本同属上一人内容，一并清空
+  if (strategyEl) strategyEl.value = DEFAULT_STRATEGY; // 上一人的策略文本一并清掉，回到默认战术文本
 }
 
 // ---------- 回放时间线（由事件数组重建每 tick 快照） ----------
@@ -5045,38 +5217,135 @@ function llmConnect(ctl) { // play.js bootPlay 回调：按登录态切换生成
   llmCtl = ctl;
   if (genBtn && ctl && ctl.needLogin) genBtn.textContent = T('play.genLoginBtn');
 }
+// ---------- 生成诊断日志：任何一次生成结束都留档，失败时按钮显形，一键下载给产品方 ----------
+const genLogBtn = $id('genLogBtn');
+let lastGenLog = null;
+function setGenLog(log) {
+  lastGenLog = log || null;
+  if (genLogBtn) genLogBtn.hidden = !lastGenLog;
+}
+function sdkState() {
+  if (!llmCtl) return 'absent';
+  if (llmCtl.needLogin) return 'need-login';
+  return typeof llmCtl.chat === 'function' ? 'ready' : 'absent';
+}
+function genEnv() {
+  return {
+    url: location.href,
+    appVersion: (document.querySelector('meta[name="agentank-build"]') || {}).content || '',
+    lang: LANG,
+    ua: navigator.userAgent,
+    evalAllowed: EVAL_OK,   // false = 宿主 CSP 无 'unsafe-eval'（线上托管版即为此）
+    workerAllowed: WORKER_OK,
+    sdk: sdkState(),
+    csp: CSP_HEADER,
+  };
+}
+function downloadGenLog() {
+  if (!lastGenLog) return;
+  const name = genLogFilename(new Date());
+  const blob = new Blob([JSON.stringify(lastGenLog, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  genMsg(T('play.genLogSaved', { name }));
+}
+if (genLogBtn) genLogBtn.addEventListener('click', downloadGenLog);
+
+// 生成闸门：宿主允许 eval 时用真编译（最强）；宿主禁 eval 时用不执行代码的结构校验。
+// 关键：CSP 限制绝不能冒充「你的代码编译失败」——那会把 100% 环境性失败伪装成模型输出问题，
+// 还会把这条 CSP 文案当错误喂回模型再烧一次配额（本次线上 RCA 的直接成因）。
+function generationGate(code) {
+  if (!EVAL_OK) return checkGeneratedCode(code);
+  try { compileScript(code); return { ok: true, errors: [] }; } catch (e) {
+    if (e && e.code === 'CSP_NO_EVAL') return checkGeneratedCode(code);
+    return { ok: false, errors: [String((e && e.message) || e)] };
+  }
+}
+
 async function generateScript() {
   if (!genBtn) return;
   if (llmCtl && llmCtl.needLogin) { llmCtl.login(); return; } // 未登录：按钮即登录入口
-  if (!llmCtl || typeof llmCtl.chat !== 'function') { genMsg(T('play.genUnavailable'), true); return; }
   const strategy = (strategyEl ? strategyEl.value : '').trim();
+  const skill = userSkill();
+  const t0 = Date.now();
+  const attempts = [];
+  const mkLog = (outcome, reason) => buildGenLog({
+    outcome, reason, at: t0, durationMs: Date.now() - t0, env: genEnv(), strategy, skill, attempts,
+  });
+  if (!llmCtl || typeof llmCtl.chat !== 'function') {
+    genMsg(T('play.genUnavailable'), true);
+    setGenLog(mkLog('no-sdk', 'play SDK llm.chat unavailable'));
+    return;
+  }
   if (!strategy) { genMsg(T('play.genEmpty'), true); return; }
   genBtn.disabled = true;
+  setGenLog(null);
   genMsg(T('play.genRunning'));
   try {
     let feedback = '';
-    for (let attempt = 1; attempt <= 2; attempt++) { // 编译失败自动带错误重试一次，再失败如实报错
-      const { text } = await llmCtl.chat(buildLlmPrompt({ strategy, skill: userSkill(), feedback }));
+    for (let attempt = 1; attempt <= 2; attempt++) { // 不合格自动带错误重试一次，再失败如实报错
+      const prompt = buildLlmPrompt({ strategy, skill, feedback });
+      const rec = { n: attempt, promptChars: prompt.length };
+      attempts.push(rec);
+      const { text } = await llmCtl.chat(prompt);
+      rec.replyChars = String(text || '').length;
+      rec.replyHead = String(text || '').slice(0, 500);
       const code = extractLlmCode(text);
-      if (!code) { feedback = 'no code block found in output'; genMsg(T('play.genRetry')); continue; }
-      try { compileScript(code); } catch (e) {
-        feedback = String((e && e.message) || e);
+      rec.extracted = !!code;
+      if (!code) {
+        rec.errorKind = 'no-code';
+        rec.error = 'no code block found in output';
+        feedback = rec.error;
+        genMsg(T('play.genRetry'));
+        continue;
+      }
+      rec.codeChars = code.length;
+      rec.code = code;
+      const gate = generationGate(code);
+      if (!gate.ok) {
+        rec.errorKind = EVAL_OK ? 'compile-failed' : 'check-failed';
+        rec.error = gate.errors.join('; ');
+        feedback = rec.error;
         genMsg(T('play.genRetry'));
         continue;
       }
       editorEl.value = code; // 只写编辑器，不自动保存/开战：玩家确认后自行「保存」「开战」
       refreshSkillHint();
       saveDraft();
-      genMsg(T('play.genDone'));
+      if (EVAL_OK) {
+        genMsg(T('play.genDone'));
+        setGenLog(null);
+      } else {
+        // 代码生成成功，但本宿主还跑不了自定义脚本（CSP 禁 eval）：如实说明 + 留日志给产品方
+        genMsg(T('play.genDoneNoRun'), true);
+        setGenLog(mkLog('ok-cannot-run', 'host forbids dynamic compilation (CSP without unsafe-eval)'));
+      }
       return;
     }
     genMsg(T('play.genFail', { msg: feedback }), true);
+    setGenLog(mkLog('invalid-output', feedback));
   } catch (e) {
     const m = mapLlmError(e);
     genMsg(T(m.key, m.vars), true);
+    const last = attempts[attempts.length - 1];
+    if (last && !last.errorKind) {
+      last.errorKind = 'sdk-error';
+      last.error = `${(e && e.code) || ''} ${String((e && (e.hint || e.message)) || e)}`.trim();
+    }
+    setGenLog(mkLog('sdk-error', `${(e && e.code) || ''} ${String((e && (e.hint || e.message)) || e)}`.trim()));
   } finally { genBtn.disabled = false; }
 }
 if (genBtn) genBtn.addEventListener('click', () => { generateScript(); });
+// 「?」帮助弹窗：介绍战术文字怎么写（点 ? 开/关，「知道了」关闭）
+const strategyHelpPop = $id('strategyHelpPop');
+$id('strategyHelpBtn')?.addEventListener('click', () => { if (strategyHelpPop) strategyHelpPop.hidden = !strategyHelpPop.hidden; });
+$id('strategyHelpClose')?.addEventListener('click', () => { if (strategyHelpPop) strategyHelpPop.hidden = true; });
 // 掀开引擎盖手改代码后，提示代码与策略描述可能不同步（不阻断）
 editorEl.addEventListener('input', () => {
   if (codeBox && codeBox.open && strategyEl && strategyEl.value.trim()) genMsg(T('play.codeEdited'));
@@ -5170,6 +5439,8 @@ trackEl.addEventListener('pointerup', () => { dragging = false; });
 // ---------- 启动 ----------
 loadStore();
 if (!editorEl.value.trim()) editorEl.value = DEFAULT_SCRIPT;
+// 首访/清空后：代码仍是默认脚本时，战术框预填配套默认战术文本（不再空白；用户一改即draft跟随）
+if (strategyEl && !strategyEl.value.trim() && isDefaultCode(editorEl.value)) strategyEl.value = DEFAULT_STRATEGY;
 if (!EVAL_OK) {
   const note = document.createElement('div');
   note.style.cssText = 'margin:6px 12px 0;padding:6px 8px;font-size:11px;line-height:1.5;color:#8b949e;border:1px solid #30363d;border-radius:6px;';

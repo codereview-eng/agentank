@@ -100,6 +100,10 @@ test('strategy/DOM 契约：策略区、生成按钮、折叠脚本窗（默认�
   assert.match(html, /<details id="codeBox"/);
   assert.ok(!/<details id="codeBox"[^>]*\bopen\b/.test(html), 'codeBox 必须默认折叠（脚本细节默认隐藏）');
   assert.match(html, /id="editor"/);
+  // 战术写法帮助：? 按钮在，弹窗在且默认 hidden
+  assert.match(html, /id="strategyHelpBtn"/);
+  assert.match(html, /<div id="strategyHelpPop" hidden/);
+  assert.match(html, /id="strategyHelpClose"/);
 });
 
 test('strategy/i18n：zh/en 生成流程键成对存在', () => {
@@ -108,8 +112,15 @@ test('strategy/i18n：zh/en 生成流程键成对存在', () => {
     assert.equal(typeof LOCALES.zh.play[k], 'string', `zh play.${k}`);
     assert.equal(typeof LOCALES.en.play[k], 'string', `en play.${k}`);
   }
-  for (const k of ['strategyPh', 'genBtn', 'codeBox']) {
+  for (const k of ['strategyPh', 'genBtn', 'codeBox', 'strategyDefault', 'strategyHelpBtn', 'strategyHelpTitle', 'strategyHelpBody', 'strategyHelpClose']) {
     assert.equal(typeof LOCALES.zh.ui[k], 'string', `zh ui.${k}`);
     assert.equal(typeof LOCALES.en.ui[k], 'string', `en ui.${k}`);
   }
+  // 语义防回退：生成按钮必须写明「由战术文字生成坦克代码」，避免误解为生成战术文本
+  assert.match(LOCALES.zh.ui.genBtn, /战术文字生成坦克代码/);
+  assert.match(LOCALES.en.ui.genBtn, /tank code from tactics/i);
+  assert.match(LOCALES.zh.play.genLoginBtn, /战术文字生成坦克代码/);
+  // 默认战术文本非空（首访不再空白）
+  assert.ok(LOCALES.zh.ui.strategyDefault.trim().length > 0);
+  assert.ok(LOCALES.en.ui.strategyDefault.trim().length > 0);
 });

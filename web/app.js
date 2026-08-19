@@ -3,7 +3,7 @@
 import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS, presetMap, validateContent, makePack, serializePack, parsePack, promoteStage, resolvePackMap, compileBot, OFFICIAL_CONTENT } from '../src/engine/index.js';
 import { bots } from '../bots/index.js';
 import { LOCALES, LANGS, fmt, resolveLang } from './i18n.js';
-import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError } from './play.js';
+import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError, checkGeneratedCode, buildGenLog, genLogFilename } from './play.js';
 
 // ---------- i18n：?lang= > localStorage > 浏览器语言 > zh ----------
 const storedLang = (() => { try { return localStorage.getItem('agentank-lang'); } catch { return null; } })();
@@ -104,6 +104,8 @@ function makeMap(seed) {
 
 // ---------- 默认脚本（效果稿同款） ----------
 const DEFAULT_SCRIPT = L.script.default + '\n'; // 注释随语言切换，代码语义两语言逐行一致
+const DEFAULT_STRATEGY = L.ui.strategyDefault; // 默认战术文本：与 DEFAULT_SCRIPT 语义一致（语言切换会整页刷新，随页取新语言）
+const isDefaultCode = (src) => String(src || '').replace(/\s+/g, '') === DEFAULT_SCRIPT.replace(/\s+/g, '');
 
 // ---------- 内置天梯阵容 ----------
 const ROSTER = [
@@ -385,14 +387,36 @@ function defaultDecide(api) {
   return star ? api.moveTo(star) : api.patrol();
 }
 
-// 探测宿主是否允许 eval（run.ceo artifact 的 CSP 为 script-src 'unsafe-inline'，无 'unsafe-eval'）
+// 探测宿主是否允许 eval（play-agentank.run.ceo 实测 CSP：script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'，无 'unsafe-eval'）
 const EVAL_OK = (() => { try { new Function(''); return true; } catch { return false; } })();
+// 同一宿主下 blob Worker 是否可用（受 worker-src 管辖，与 eval 无关）——线上实测可用，
+// 是后续「无 eval 也能跑自定义脚本」的执行路径；此处先如实记进诊断日志，便于产品方判断修复面。
+const WORKER_OK = (() => {
+  try {
+    const u = URL.createObjectURL(new Blob(['self.close();'], { type: 'text/javascript' }));
+    const w = new Worker(u);
+    w.terminate();
+    URL.revokeObjectURL(u);
+    return true;
+  } catch { return false; }
+})();
+// 宿主 CSP 原文（只读一次，best-effort）：失败诊断里最关键的一行事实，避免只能靠"eval 挂了"反推
+let CSP_HEADER = '';
+if (!EVAL_OK && (location.protocol === 'http:' || location.protocol === 'https:')) {
+  try {
+    fetch(location.href, { method: 'HEAD', cache: 'no-store' })
+      .then((r) => { CSP_HEADER = r.headers.get('content-security-policy') || '(header not readable)'; })
+      .catch((e) => { CSP_HEADER = `(head probe failed: ${e && e.message})`; });
+  } catch { CSP_HEADER = '(head probe threw)'; }
+}
 
 function compileScript(src) {
   if (!EVAL_OK) {
     if (String(src).replace(/\s+/g, '') === DEFAULT_SCRIPT.replace(/\s+/g, ''))
       return defaultDecide;
-    throw new Error(T('err.cspEval'));
+    const e = new Error(T('err.cspEval'));
+    e.code = 'CSP_NO_EVAL'; // 与「玩家代码写错」区分：这是宿主环境限制，绝不能当编译错误喂回模型
+    throw e;
   }
   const m = src.match(/export\s+default\s+function\s+([A-Za-z_$][\w$]*)/);
   const entry = m ? m[1] : 'decide';
@@ -449,7 +473,8 @@ function archiveCopy(t, from) {
 function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch { /* 忽略 */ } }
 function applyTankToUi(t) { // 切台/入座：代码进编辑器、策略文本跟随、技能跟随（无该选项时保持现装备）
   editorEl.value = t ? t.code : DEFAULT_SCRIPT;
-  if (strategyEl) strategyEl.value = (t && t.strategy) || '';
+  // 策略文本：有存的用存的；没存但代码仍是默认脚本 → 显示配套的默认战术文本（不再空白）
+  if (strategyEl) strategyEl.value = t ? (t.strategy || (isDefaultCode(t.code) ? DEFAULT_STRATEGY : '')) : DEFAULT_STRATEGY;
   if (t && t.skill && skillSel && [...skillSel.options].some((o) => o.value === t.skill)) skillSel.value = t.skill;
   refreshSkillHint();
 }
@@ -732,7 +757,7 @@ function resetForLogout() { // 场景 5：登出清空车库与编辑器（未�
   writeLocalStore({ tanks: [], cur: null });
   clearDraft();
   editorEl.value = DEFAULT_SCRIPT;
-  if (strategyEl) strategyEl.value = ''; // 策略文本同属上一人内容，一并清空
+  if (strategyEl) strategyEl.value = DEFAULT_STRATEGY; // 上一人的策略文本一并清掉，回到默认战术文本
 }
 
 // ---------- 回放时间线（由事件数组重建每 tick 快照） ----------
@@ -1726,38 +1751,135 @@ function llmConnect(ctl) { // play.js bootPlay 回调：按登录态切换生成
   llmCtl = ctl;
   if (genBtn && ctl && ctl.needLogin) genBtn.textContent = T('play.genLoginBtn');
 }
+// ---------- 生成诊断日志：任何一次生成结束都留档，失败时按钮显形，一键下载给产品方 ----------
+const genLogBtn = $id('genLogBtn');
+let lastGenLog = null;
+function setGenLog(log) {
+  lastGenLog = log || null;
+  if (genLogBtn) genLogBtn.hidden = !lastGenLog;
+}
+function sdkState() {
+  if (!llmCtl) return 'absent';
+  if (llmCtl.needLogin) return 'need-login';
+  return typeof llmCtl.chat === 'function' ? 'ready' : 'absent';
+}
+function genEnv() {
+  return {
+    url: location.href,
+    appVersion: (document.querySelector('meta[name="agentank-build"]') || {}).content || '',
+    lang: LANG,
+    ua: navigator.userAgent,
+    evalAllowed: EVAL_OK,   // false = 宿主 CSP 无 'unsafe-eval'（线上托管版即为此）
+    workerAllowed: WORKER_OK,
+    sdk: sdkState(),
+    csp: CSP_HEADER,
+  };
+}
+function downloadGenLog() {
+  if (!lastGenLog) return;
+  const name = genLogFilename(new Date());
+  const blob = new Blob([JSON.stringify(lastGenLog, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  genMsg(T('play.genLogSaved', { name }));
+}
+if (genLogBtn) genLogBtn.addEventListener('click', downloadGenLog);
+
+// 生成闸门：宿主允许 eval 时用真编译（最强）；宿主禁 eval 时用不执行代码的结构校验。
+// 关键：CSP 限制绝不能冒充「你的代码编译失败」——那会把 100% 环境性失败伪装成模型输出问题，
+// 还会把这条 CSP 文案当错误喂回模型再烧一次配额（本次线上 RCA 的直接成因）。
+function generationGate(code) {
+  if (!EVAL_OK) return checkGeneratedCode(code);
+  try { compileScript(code); return { ok: true, errors: [] }; } catch (e) {
+    if (e && e.code === 'CSP_NO_EVAL') return checkGeneratedCode(code);
+    return { ok: false, errors: [String((e && e.message) || e)] };
+  }
+}
+
 async function generateScript() {
   if (!genBtn) return;
   if (llmCtl && llmCtl.needLogin) { llmCtl.login(); return; } // 未登录：按钮即登录入口
-  if (!llmCtl || typeof llmCtl.chat !== 'function') { genMsg(T('play.genUnavailable'), true); return; }
   const strategy = (strategyEl ? strategyEl.value : '').trim();
+  const skill = userSkill();
+  const t0 = Date.now();
+  const attempts = [];
+  const mkLog = (outcome, reason) => buildGenLog({
+    outcome, reason, at: t0, durationMs: Date.now() - t0, env: genEnv(), strategy, skill, attempts,
+  });
+  if (!llmCtl || typeof llmCtl.chat !== 'function') {
+    genMsg(T('play.genUnavailable'), true);
+    setGenLog(mkLog('no-sdk', 'play SDK llm.chat unavailable'));
+    return;
+  }
   if (!strategy) { genMsg(T('play.genEmpty'), true); return; }
   genBtn.disabled = true;
+  setGenLog(null);
   genMsg(T('play.genRunning'));
   try {
     let feedback = '';
-    for (let attempt = 1; attempt <= 2; attempt++) { // 编译失败自动带错误重试一次，再失败如实报错
-      const { text } = await llmCtl.chat(buildLlmPrompt({ strategy, skill: userSkill(), feedback }));
+    for (let attempt = 1; attempt <= 2; attempt++) { // 不合格自动带错误重试一次，再失败如实报错
+      const prompt = buildLlmPrompt({ strategy, skill, feedback });
+      const rec = { n: attempt, promptChars: prompt.length };
+      attempts.push(rec);
+      const { text } = await llmCtl.chat(prompt);
+      rec.replyChars = String(text || '').length;
+      rec.replyHead = String(text || '').slice(0, 500);
       const code = extractLlmCode(text);
-      if (!code) { feedback = 'no code block found in output'; genMsg(T('play.genRetry')); continue; }
-      try { compileScript(code); } catch (e) {
-        feedback = String((e && e.message) || e);
+      rec.extracted = !!code;
+      if (!code) {
+        rec.errorKind = 'no-code';
+        rec.error = 'no code block found in output';
+        feedback = rec.error;
+        genMsg(T('play.genRetry'));
+        continue;
+      }
+      rec.codeChars = code.length;
+      rec.code = code;
+      const gate = generationGate(code);
+      if (!gate.ok) {
+        rec.errorKind = EVAL_OK ? 'compile-failed' : 'check-failed';
+        rec.error = gate.errors.join('; ');
+        feedback = rec.error;
         genMsg(T('play.genRetry'));
         continue;
       }
       editorEl.value = code; // 只写编辑器，不自动保存/开战：玩家确认后自行「保存」「开战」
       refreshSkillHint();
       saveDraft();
-      genMsg(T('play.genDone'));
+      if (EVAL_OK) {
+        genMsg(T('play.genDone'));
+        setGenLog(null);
+      } else {
+        // 代码生成成功，但本宿主还跑不了自定义脚本（CSP 禁 eval）：如实说明 + 留日志给产品方
+        genMsg(T('play.genDoneNoRun'), true);
+        setGenLog(mkLog('ok-cannot-run', 'host forbids dynamic compilation (CSP without unsafe-eval)'));
+      }
       return;
     }
     genMsg(T('play.genFail', { msg: feedback }), true);
+    setGenLog(mkLog('invalid-output', feedback));
   } catch (e) {
     const m = mapLlmError(e);
     genMsg(T(m.key, m.vars), true);
+    const last = attempts[attempts.length - 1];
+    if (last && !last.errorKind) {
+      last.errorKind = 'sdk-error';
+      last.error = `${(e && e.code) || ''} ${String((e && (e.hint || e.message)) || e)}`.trim();
+    }
+    setGenLog(mkLog('sdk-error', `${(e && e.code) || ''} ${String((e && (e.hint || e.message)) || e)}`.trim()));
   } finally { genBtn.disabled = false; }
 }
 if (genBtn) genBtn.addEventListener('click', () => { generateScript(); });
+// 「?」帮助弹窗：介绍战术文字怎么写（点 ? 开/关，「知道了」关闭）
+const strategyHelpPop = $id('strategyHelpPop');
+$id('strategyHelpBtn')?.addEventListener('click', () => { if (strategyHelpPop) strategyHelpPop.hidden = !strategyHelpPop.hidden; });
+$id('strategyHelpClose')?.addEventListener('click', () => { if (strategyHelpPop) strategyHelpPop.hidden = true; });
 // 掀开引擎盖手改代码后，提示代码与策略描述可能不同步（不阻断）
 editorEl.addEventListener('input', () => {
   if (codeBox && codeBox.open && strategyEl && strategyEl.value.trim()) genMsg(T('play.codeEdited'));
@@ -1851,6 +1973,8 @@ trackEl.addEventListener('pointerup', () => { dragging = false; });
 // ---------- 启动 ----------
 loadStore();
 if (!editorEl.value.trim()) editorEl.value = DEFAULT_SCRIPT;
+// 首访/清空后：代码仍是默认脚本时，战术框预填配套默认战术文本（不再空白；用户一改即draft跟随）
+if (strategyEl && !strategyEl.value.trim() && isDefaultCode(editorEl.value)) strategyEl.value = DEFAULT_STRATEGY;
 if (!EVAL_OK) {
   const note = document.createElement('div');
   note.style.cssText = 'margin:6px 12px 0;padding:6px 8px;font-size:11px;line-height:1.5;color:#8b949e;border:1px solid #30363d;border-radius:6px;';
