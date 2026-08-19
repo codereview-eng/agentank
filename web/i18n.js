@@ -184,6 +184,9 @@ export const LOCALES = {
       loadFail: '云端读取失败：{msg}',
       writeFail: '战绩写入失败：{msg}',
       compileFail: '脚本编译失败：{msg}',
+      // 保存/挑战赛闸门：禁 eval 的宿主不执行代码、只做结构校验 —— 拦下的是真问题，不是浏览器限制
+      gateFail: '这段脚本没通过检查，先改好再存：{msg}',
+      sandboxFail: '沙箱跑局失败：{msg}。点「下载诊断日志」把这次记录发给我们。',
       noEntity: '游戏未声明 Tank/BattleResult 实体，云端功能不可用',
       filled: '已回填默认流派代码（仅编辑器，未写云端）',
       challengeRunning: '挑战赛进行中… {done}/{total}',
@@ -464,6 +467,8 @@ export default function decide(api) {
       loadFail: 'Cloud load failed: {msg}',
       writeFail: 'Result write failed: {msg}',
       compileFail: 'Script compile failed: {msg}',
+      gateFail: 'This script did not pass the check; fix it before saving: {msg}',
+      sandboxFail: 'Sandbox match failed: {msg}. Hit "Download diagnostic log" and send us the record.',
       noEntity: 'Game declares no Tank/BattleResult entity; cloud features unavailable',
       filled: 'Default style code refilled (editor only, not saved to cloud)',
       challengeRunning: 'Challenge running… {done}/{total}',

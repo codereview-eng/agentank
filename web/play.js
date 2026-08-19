@@ -129,6 +129,22 @@ export function checkGeneratedCode(code) {
   return { ok: errors.length === 0, errors };
 }
 
+// 统一脚本闸门（保存 / 生成 / 挑战赛共用）：
+//   宿主允许 eval → 真编译（最强，语法错当场现形）；
+//   宿主禁 eval（线上 CSP）→ 不执行代码的结构校验。
+// 为什么必须分流：保存到云端、送去沙箱跑，都不需要在主线程执行这段代码。
+// 曾经这里直接拿 compileScript 当唯一闸门，于是线上（禁 eval）保存/挑战赛任何自定义脚本 100% 必败，
+// 还把宿主 CSP 限制冒充成「你的代码编译失败」——环境性失败绝不能伪装成玩家/模型的输出问题。
+export function scriptGate(code, opts) {
+  const o = opts || {};
+  const compile = typeof o.compile === 'function' ? o.compile : null;
+  if (!o.evalOk || !compile) return checkGeneratedCode(code);
+  try { compile(code); return { ok: true, errors: [] }; } catch (e) {
+    if (e && e.code === 'CSP_NO_EVAL') return checkGeneratedCode(code); // CSP 限制 ≠ 代码写错
+    return { ok: false, errors: [String((e && e.message) || e)] };
+  }
+}
+
 // ---------- 生成诊断日志：失败时一键下载交给产品方分析 ----------
 // 只装“定位问题必需”的东西：环境能力（CSP/eval/SDK）、每次尝试的形状与错误、玩家自己的策略文本与产出代码。
 // 绝不装凭证：落盘前统一过 redactSecrets（Bearer / ak1_ / gt1_ / token 字段一律打码）。
@@ -593,10 +609,20 @@ async function bootPlay(ctx) {
     if (running) return;
     running = true;
     try {
-      let fn;
-      try { fn = ctx.compileScript(ctx.editorGet()); } catch (e) { chSum.textContent = T('play.compileFail', { msg: String(e && e.message || e) }); return; }
-      const gfn = ctx.guardWrap(fn, { count: 0, last: '' });
-      gfn.skill = ctx.userSkill();
+      // 闸门与保存同源：禁 eval 的宿主（线上）用结构校验放行，跑局改走沙箱 —— 曾经这里 100% 必败
+      const code = ctx.editorGet();
+      const evalOk = ctx.evalOk !== false;
+      const skill = ctx.userSkill();
+      const gate = scriptGate(code, { evalOk, compile: ctx.compileScript });
+      if (!gate.ok) { chSum.textContent = T('play.gateFail', { msg: gate.errors.join('; ') }); return; }
+      let gfn = null;
+      if (evalOk) {
+        try { gfn = ctx.guardWrap(ctx.compileScript(code), { count: 0, last: '' }); } catch (e) { chSum.textContent = T('play.gateFail', { msg: String(e && e.message || e) }); return; }
+        gfn.skill = skill;
+      } else if (typeof ctx.sandboxMatch !== 'function') {
+        chSum.textContent = T('err.cspEval'); // 既不能 eval、沙箱也起不来：如实报错，不伪造战绩
+        return;
+      }
       const jobs = [];
       for (const r of ctx.ROSTER) for (const seed of ctx.LADDER_SEEDS) jobs.push({ r, seed });
       let myElo = 1200;
@@ -604,7 +630,15 @@ async function bootPlay(ctx) {
         const { r, seed } = jobs[k];
         chSum.textContent = T('play.challengeRunning', { done: k, total: jobs.length });
         await tickAsync();
-        const result = ctx.runMatch({ seed, botA: gfn, botB: r.fn, map: ctx.makeMap(seed), content: ctx.getPack() });
+        const map = ctx.makeMap(seed);
+        let result;
+        if (evalOk) {
+          result = ctx.runMatch({ seed, botA: gfn, botB: r.fn, map, content: ctx.getPack() });
+        } else {
+          try { // 沙箱失败一律显式报错（含原因），绝不静默跳过这一局把战绩做漂亮
+            result = await ctx.sandboxMatch({ seed, map, a: { kind: 'user', skill }, b: { kind: 'builtin', key: r.key } }, code);
+          } catch (e) { chSum.textContent = T('play.sandboxFail', { msg: String(e && e.message || e) }); return; }
+        }
         const sA = result.winner === null ? 0.5 : result.winner === 0 ? 1 : 0;
         const ea = 1 / (1 + 10 ** ((1200 - myElo) / 400));
         myElo = Math.round((myElo + 24 * (sA - ea)) * 100) / 100;

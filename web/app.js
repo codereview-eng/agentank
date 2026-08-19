@@ -3,7 +3,7 @@
 import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS, presetMap, validateContent, makePack, serializePack, parsePack, promoteStage, resolvePackMap, compileBot, OFFICIAL_CONTENT } from '../src/engine/index.js';
 import { bots } from '../bots/index.js';
 import { LOCALES, LANGS, fmt, resolveLang } from './i18n.js';
-import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError, checkGeneratedCode, buildGenLog, genLogFilename, resolveEditorState, draftIsClean } from './play.js';
+import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError, scriptGate, buildGenLog, genLogFilename, resolveEditorState, draftIsClean } from './play.js';
 import { extractEngineSource, buildWorkerSource } from './sandbox.js';
 
 // 单文件产物里，本脚本自身的源码文本（引擎源从中切出，喂给无 eval 沙箱 Worker）。
@@ -539,7 +539,9 @@ async function saveVersion() {
   const skill = userSkill();
   const strategy = strategyEl ? strategyEl.value : '';
   if (garage.mode === 'cloud') {
-    try { compileScript(code); } catch (e) { garageMsg(T('play.compileFail', { msg: String((e && e.message) || e) }), true); return; }
+    // 保存 = 把代码写进云端，不需要在本机执行它 —— 禁 eval 的宿主上走结构校验，绝不因 CSP 挡住保存
+    const gate = scriptGate(code, { evalOk: EVAL_OK, compile: compileScript });
+    if (!gate.ok) { garageMsg(T('play.gateFail', { msg: gate.errors.join('; ') }), true); return; }
     const t = curTank();
     try {
       if (t) {
@@ -1927,11 +1929,7 @@ if (genLogBtn) genLogBtn.addEventListener('click', downloadGenLog);
 // 关键：CSP 限制绝不能冒充「你的代码编译失败」——那会把 100% 环境性失败伪装成模型输出问题，
 // 还会把这条 CSP 文案当错误喂回模型再烧一次配额（本次线上 RCA 的直接成因）。
 function generationGate(code) {
-  if (!EVAL_OK) return checkGeneratedCode(code);
-  try { compileScript(code); return { ok: true, errors: [] }; } catch (e) {
-    if (e && e.code === 'CSP_NO_EVAL') return checkGeneratedCode(code);
-    return { ok: false, errors: [String((e && e.message) || e)] };
-  }
+  return scriptGate(code, { evalOk: EVAL_OK, compile: compileScript });
 }
 
 async function generateScript() {
@@ -2152,6 +2150,14 @@ initPlay({
   editorGet: () => editorEl.value,
   editorSet: (code) => { editorEl.value = code; refreshSkillHint(); },
   compileScript, guardWrap,
+  evalOk: EVAL_OK, // 线上（CSP 禁 eval）为 false：闸门走结构校验、跑局走沙箱
+  // 禁 eval 时挑战赛逐局丢进 blob Worker 跑；沙箱起不来则为 null（上层如实报错，不伪造战绩）
+  sandboxMatch: SANDBOX_OK
+    ? async (job, userCode) => {
+      const r = await sandboxRun({ type: 'match', content: PACK, ...job }, { userCode });
+      return r.result;
+    }
+    : null,
   userSkill, userMapKey, makeMap,
   defaultScript: DEFAULT_SCRIPT,
   ROSTER, LADDER_SEEDS,
