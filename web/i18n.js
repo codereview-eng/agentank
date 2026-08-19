@@ -275,7 +275,8 @@ export const LOCALES = {
       runtime: '脚本运行时报错 {n} 次（该拍已按待机处理）：{msg}',
       noEntry: '未找到入口函数 {entry}(api)，请定义 function decide(api) {...}',
       noDecide: '脚本未提供 decide(api) 函数',
-      cspEval: '线上版暂时还不能运行自定义脚本（浏览器安全策略禁止动态编译代码），我们正在修。默认脚本可以直接开战；点「下载诊断日志」把这次记录发给我们，能加快修复。',
+      sandboxFail: '沙箱运行失败：{msg}。请点「下载诊断日志」把这次记录发给我们。',
+      cspEval: '这台浏览器暂时跑不了自定义脚本（安全策略禁止动态编译，且沙箱也没起来）。默认脚本可以直接开战；点「下载诊断日志」把这次记录发给我们，能加快修复。',
       cspNote: '线上版当前只能用默认脚本开战：浏览器安全策略禁止动态编译代码，自定义脚本还跑不起来（问题已知，修复中）。生成的代码可以正常保存到云端。',
     },
     script: {
@@ -554,7 +555,8 @@ export default function decide(api) {
       runtime: 'Script threw {n} time(s) (idled those ticks): {msg}',
       noEntry: 'Entry function {entry}(api) not found; define function decide(api) {...}',
       noDecide: 'Script does not provide a decide(api) function',
-      cspEval: 'The online build cannot run custom scripts yet (browser security policy forbids compiling code at runtime) — we are fixing it. The default script battles fine; hit "Download diagnostic log" and send us the record to speed up the fix.',
+      sandboxFail: 'Sandbox run failed: {msg}. Please hit "Download diagnostic log" and send us the record.',
+      cspEval: 'This browser cannot run custom scripts right now (security policy forbids runtime compilation and the sandbox did not start). The default script battles fine; hit "Download diagnostic log" and send us the record to speed up the fix.',
       cspNote: 'Online build currently battles with the default script only: browser security policy forbids compiling code at runtime, so custom scripts cannot run yet (known issue, fix in progress). Generated code still saves to the cloud normally.',
     },
     script: {

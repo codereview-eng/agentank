@@ -4,6 +4,11 @@ import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS
 import { bots } from '../bots/index.js';
 import { LOCALES, LANGS, fmt, resolveLang } from './i18n.js';
 import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError, checkGeneratedCode, buildGenLog, genLogFilename } from './play.js';
+import { extractEngineSource, buildWorkerSource } from './sandbox.js';
+
+// 单文件产物里，本脚本自身的源码文本（引擎源从中切出，喂给无 eval 沙箱 Worker）。
+// 开发版是 <script type="module">，currentScript 为 null → SELF_SRC 为空；但开发版允许 eval，用不到沙箱。
+const SELF_SRC = (typeof document !== 'undefined' && document.currentScript && document.currentScript.textContent) || '';
 
 // ---------- i18n：?lang= > localStorage > 浏览器语言 > zh ----------
 const storedLang = (() => { try { return localStorage.getItem('agentank-lang'); } catch { return null; } })();
@@ -408,6 +413,42 @@ if (!EVAL_OK && (location.protocol === 'http:' || location.protocol === 'https:'
       .then((r) => { CSP_HEADER = r.headers.get('content-security-policy') || '(header not readable)'; })
       .catch((e) => { CSP_HEADER = `(head probe failed: ${e && e.message})`; });
   } catch { CSP_HEADER = '(head probe threw)'; }
+}
+
+// 无 eval 沙箱可用性：禁 eval 的宿主上，只要 blob Worker 放行且能切出引擎源码，自定义脚本就照常能跑
+const ENGINE_SRC = extractEngineSource(SELF_SRC);
+const SANDBOX_OK = WORKER_OK && !!ENGINE_SRC;
+// 自定义脚本能不能开战（两条路二选一：主线程直编 / 沙箱 Worker）——UI 文案与生成流程都按它分流
+const CUSTOM_SCRIPT_OK = EVAL_OK || SANDBOX_OK;
+
+let sandboxSeq = 0;
+// 把一份作业丢进一次性 blob Worker 跑完即销毁（每局独立进程态，脚本互不残留）
+function sandboxRun(job, opts) {
+  const o = opts || {};
+  return new Promise((resolve, reject) => {
+    let url = null;
+    let w = null;
+    let timer = null;
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      if (w) w.terminate();
+      if (url) URL.revokeObjectURL(url);
+    };
+    try {
+      const src = buildWorkerSource({ engineSrc: ENGINE_SRC, userCode: o.userCode, oppCode: o.oppCode });
+      url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+      w = new Worker(url);
+    } catch (e) { cleanup(); reject(e); return; }
+    timer = setTimeout(() => { cleanup(); reject(new Error(`sandbox timeout ${o.timeoutMs || 30000}ms`)); }, o.timeoutMs || 30000);
+    w.onmessage = (ev) => {
+      const d = ev.data || {};
+      cleanup();
+      if (d.ok) resolve(d);
+      else reject(new Error(d.error || 'sandbox error'));
+    };
+    w.onerror = (ev) => { cleanup(); reject(new Error(`sandbox worker error: ${(ev && ev.message) || 'blocked'}`)); };
+    w.postMessage({ id: ++sandboxSeq, ...job });
+  });
 }
 
 function compileScript(src) {
@@ -1618,40 +1659,82 @@ function updateFooter() {
   footLog.textContent = `battle.log ${(bytes / 1024).toFixed(1)}KB`;
 }
 
-function startBattle() {
+async function startBattle() {
   hideErr();
-  let fn;
-  try {
-    fn = compileScript(editorEl.value);
-  } catch (e) {
-    showErr(T('err.compileFail', { msg: String((e && e.message) || e) }));
-    return;
-  }
-  const box = { count: 0, last: '' };
-  const guarded = guardWrap(fn, box);
-  guarded.skill = userSkill(); // 8 选 1：显式挂到脚本函数上（runMatch 按 .skill 取装备）
+  const userCode = editorEl.value;
+  const skill = userSkill(); // 8 选 1：显式挂到脚本函数上（runMatch 按 .skill 取装备）
   // 种子不由玩家选择：每局开战自动生成；?seed= 深链只顶替下一局（回放复现）
   const seedStr = pendingSeed || genSeed();
   pendingSeed = null;
   const seed = seedFromString(seedStr);
   const oppKey = oppSelect.value;
-  let oppFn;
+  let oppFn = null;   // 主线程路径用
+  let oppCode = null; // 沙箱路径用（工坊 bot 以源码随行，Worker 内同样零 eval）
+  let oppSpec;
   let oppStyle;
-  if (oppKey.startsWith('pack:')) { // 工坊/官方流派 bot：与用户脚本同一沙箱编译
-    if (!EVAL_OK) { showErr(T('err.cspEval')); return; }
+  if (oppKey.startsWith('pack:')) { // 工坊/官方流派 bot：与用户脚本同一沙箱口径
     const d = PACK.entries.find((e) => e.type === 'bot' && e.id === oppKey.slice(5));
-    try { oppFn = compileBot(d); } catch (e) { showErr(String((e && e.message) || e)); return; }
+    if (!d) { showErr(T('err.noDecide')); return; }
     oppStyle = d.name;
+    oppCode = d.code;
+    oppSpec = { kind: 'code', skill: d.skill ?? 'shield' };
+    if (EVAL_OK) { try { oppFn = compileBot(d); } catch (e) { showErr(String((e && e.message) || e)); return; } }
+    else if (!SANDBOX_OK) { showErr(T('err.cspEval')); return; }
   } else {
     const opp = ROSTER.find((r) => r.key === oppKey) || ROSTER[0];
     oppFn = opp.fn;
+    oppSpec = { kind: 'builtin', key: opp.key };
     oppStyle = T('ladder.styleTag', { style: opp.style });
   }
   // 地图与对局同源：预置图按选择取，随机图与 seed 同源；先取图再喂给 runMatch，保证渲染的就是对局用图
   const map = makeMap(seed);
   const names = [myTankLabel(), oppStyle];
+  const box = { count: 0, last: '' };
+  let result;
   // 内容包全程随局（UGC 技能/道具/地图注册 + 战报嵌 pack：分享后任何人可确定性重现）
-  const result = runMatch({ seed, botA: guarded, botB: oppFn, map, content: PACK });
+  if (EVAL_OK) { // 宿主允许 eval：主线程直编直跑（开发版/本地打开的单文件）
+    let fn;
+    try {
+      fn = compileScript(userCode);
+    } catch (e) {
+      showErr(T('err.compileFail', { msg: String((e && e.message) || e) }));
+      return;
+    }
+    const guarded = guardWrap(fn, box);
+    guarded.skill = skill;
+    result = runMatch({ seed, botA: guarded, botB: oppFn, map, content: PACK });
+  } else if (SANDBOX_OK) { // 宿主禁 eval（线上）：整局丢进 blob Worker 跑，脚本作为 Worker 源码执行
+    const btn = $id('battleBtn');
+    if (btn) btn.disabled = true;
+    try {
+      const r = await sandboxRun(
+        { type: 'match', seed, map, content: PACK, a: { kind: 'user', skill }, b: oppSpec },
+        { userCode, oppCode },
+      );
+      result = r.result;
+      box.count = r.errCount || 0;
+      box.last = r.errLast || '';
+    } catch (e) {
+      // 沙箱失败一律显式报错 + 留诊断日志：绝不静默退回默认脚本假装打了一局
+      showErr(T('err.sandboxFail', { msg: String((e && e.message) || e) }));
+      setGenLog(buildGenLog({
+        outcome: 'sandbox-failed', reason: String((e && e.message) || e), env: genEnv(),
+        strategy: strategyEl ? strategyEl.value : '', skill, attempts: [],
+      }));
+      return;
+    } finally { if (btn) btn.disabled = false; }
+  } else { // 既不能 eval 也起不了沙箱：默认脚本仍可用内置等价实现，自定义脚本如实报错
+    let fn;
+    try {
+      fn = compileScript(userCode);
+    } catch (e) {
+      showErr(T('err.compileFail', { msg: String((e && e.message) || e) }));
+      return;
+    }
+    const guarded = guardWrap(fn, box);
+    guarded.skill = skill;
+    result = runMatch({ seed, botA: guarded, botB: oppFn, map, content: PACK });
+  }
   const tl = buildTimeline(map, result);
   match = { seedStr, seed, map, result, names, frames: tl.frames, shots: tl.shots, sparks: tl.sparks, entries: buildLog(result, names, seedStr) };
   setupCanvas(map);
@@ -1665,9 +1748,55 @@ function startBattle() {
 
 // ---------- 天梯（空闲时固定 seeds 循环赛实算 ELO/胜率） ----------
 let ladderToken = 0;
+// 沙箱天梯：宿主禁 eval 时，整轮循环赛（含「我的坦克」）一次性丢进 Worker 跑，主线程只算 ELO。
+// 与主线程路径同引擎同种子，胜负一致；沙箱起不来就退回「只算内置四家」（如实少一行，不伪造战绩）。
+async function computeLadderSandboxed(token, parts) {
+  const me = { key: '__user__', tank: myTankLabel(), style: T('ladder.userStyle'), me: true, elo: 1200, w: 0, d: 0, g: 0, spec: { kind: 'user', skill: userSkill() } };
+  for (const p of parts) p.spec = { kind: 'builtin', key: p.key };
+  parts.push(me);
+  const jobs = [];
+  const pairIdx = [];
+  for (let i = 0; i < parts.length; i++) {
+    for (let j = i + 1; j < parts.length; j++) {
+      for (const seed of LADDER_SEEDS) {
+        for (const flip of [false, true]) {
+          const ai = flip ? j : i;
+          const bi = flip ? i : j;
+          jobs.push({ seed, a: parts[ai].spec, b: parts[bi].spec });
+          pairIdx.push([ai, bi]);
+        }
+      }
+    }
+  }
+  let out;
+  try {
+    const r = await sandboxRun({ type: 'ladder', jobs, content: PACK }, { userCode: editorEl.value, timeoutMs: 60000 });
+    out = r.results;
+  } catch { // 沙箱天梯失败：退回内置四家，不把「我的坦克」画成 1200 分假名次
+    if (token !== ladderToken) return;
+    renderLadder(parts.filter((p) => !p.me));
+    return;
+  }
+  if (token !== ladderToken) return; // 有新一轮计算，废弃本轮
+  for (let k = 0; k < out.length; k++) {
+    const A = parts[pairIdx[k][0]];
+    const B = parts[pairIdx[k][1]];
+    const sA = out[k].winner === null ? 0.5 : out[k].winner === 0 ? 1 : 0;
+    const ea = 1 / (1 + 10 ** ((B.elo - A.elo) / 400));
+    A.elo += 24 * (sA - ea);
+    B.elo += 24 * ((1 - sA) - (1 - ea));
+    A.g++; B.g++;
+    if (sA === 1) A.w++;
+    else if (sA === 0) B.w++;
+    else { A.d++; B.d++; }
+  }
+  renderLadder(parts);
+}
+
 function computeLadder() {
   const token = ++ladderToken;
   const parts = ROSTER.map((r) => ({ ...r, elo: 1200, w: 0, d: 0, g: 0 }));
+  if (!EVAL_OK && SANDBOX_OK) { computeLadderSandboxed(token, parts); return; }
   try {
     const fn = compileScript(editorEl.value);
     const box = { count: 0, last: '' };
@@ -1771,6 +1900,8 @@ function genEnv() {
     ua: navigator.userAgent,
     evalAllowed: EVAL_OK,   // false = 宿主 CSP 无 'unsafe-eval'（线上托管版即为此）
     workerAllowed: WORKER_OK,
+    sandboxReady: SANDBOX_OK, // 禁 eval 时能否走 blob Worker 沙箱（false = 自定义脚本真跑不了）
+    engineSrcChars: ENGINE_SRC.length,
     sdk: sdkState(),
     csp: CSP_HEADER,
   };
@@ -1852,7 +1983,7 @@ async function generateScript() {
       editorEl.value = code; // 只写编辑器，不自动保存/开战：玩家确认后自行「保存」「开战」
       refreshSkillHint();
       saveDraft();
-      if (EVAL_OK) {
+      if (CUSTOM_SCRIPT_OK) {
         genMsg(T('play.genDone'));
         setGenLog(null);
       } else {
@@ -1975,7 +2106,7 @@ loadStore();
 if (!editorEl.value.trim()) editorEl.value = DEFAULT_SCRIPT;
 // 首访/清空后：代码仍是默认脚本时，战术框预填配套默认战术文本（不再空白；用户一改即draft跟随）
 if (strategyEl && !strategyEl.value.trim() && isDefaultCode(editorEl.value)) strategyEl.value = DEFAULT_STRATEGY;
-if (!EVAL_OK) {
+if (!CUSTOM_SCRIPT_OK) { // 只有连沙箱都起不来时才提示「只能用默认脚本」；沙箱可用时线上自定义脚本照常
   const note = document.createElement('div');
   note.style.cssText = 'margin:6px 12px 0;padding:6px 8px;font-size:11px;line-height:1.5;color:#8b949e;border:1px solid #30363d;border-radius:6px;';
   note.textContent = T('err.cspNote');

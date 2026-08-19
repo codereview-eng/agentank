@@ -164,6 +164,8 @@ export function buildGenLog(o) {
       ua: String(env.ua || ''),
       evalAllowed: env.evalAllowed === true, // false = 宿主 CSP 无 'unsafe-eval'（线上托管版即为此）
       workerAllowed: env.workerAllowed === true,
+      sandboxReady: env.sandboxReady === true, // 禁 eval 时是否已用 blob Worker 沙箱跑自定义脚本
+      engineSrcChars: Number(env.engineSrcChars) || 0,
       sdk: String(env.sdk || ''), // ready | need-login | absent
       csp: redactSecrets(env.csp || ''),
     },
