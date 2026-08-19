@@ -3,7 +3,7 @@
 import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS, presetMap, validateContent, makePack, serializePack, parsePack, promoteStage, resolvePackMap, compileBot, OFFICIAL_CONTENT } from '../src/engine/index.js';
 import { bots } from '../bots/index.js';
 import { LOCALES, LANGS, fmt, resolveLang } from './i18n.js';
-import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError, checkGeneratedCode, buildGenLog, genLogFilename } from './play.js';
+import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError, checkGeneratedCode, buildGenLog, genLogFilename, resolveEditorState, draftIsClean } from './play.js';
 import { extractEngineSource, buildWorkerSource } from './sandbox.js';
 
 // 单文件产物里，本脚本自身的源码文本（引擎源从中切出，喂给无 eval 沙箱 Worker）。
@@ -512,10 +512,17 @@ function archiveCopy(t, from) {
   } catch { /* 忽略 */ }
 }
 function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch { /* 忽略 */ } }
+function readDraft() { try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch { return null; } }
+// 草稿只有在「与坦克逐字一致 = 没有未保存改动」时才清；否则留着（清掉等于丢用户没存的战术/代码）
+function clearDraftIfClean(t) { if (draftIsClean(readDraft(), t)) clearDraft(); }
 function applyTankToUi(t) { // 切台/入座：代码进编辑器、策略文本跟随、技能跟随（无该选项时保持现装备）
-  editorEl.value = t ? t.code : DEFAULT_SCRIPT;
-  // 策略文本：有存的用存的；没存但代码仍是默认脚本 → 显示配套的默认战术文本（不再空白）
-  if (strategyEl) strategyEl.value = t ? (t.strategy || (isDefaultCode(t.code) ? DEFAULT_STRATEGY : '')) : DEFAULT_STRATEGY;
+  // 未保存的草稿优先于已保存内容 —— 云端接管（异步，登录后才完成）绝不能把玩家正在写的战术文字盖掉
+  const st = resolveEditorState({
+    tank: t, draft: readDraft(), cur: t ? t.name : garage.cur,
+    defaultCode: DEFAULT_SCRIPT, defaultStrategy: DEFAULT_STRATEGY, isDefaultCode,
+  });
+  editorEl.value = st.code;
+  if (strategyEl) strategyEl.value = st.strategy;
   if (t && t.skill && skillSel && [...skillSel.options].some((o) => o.value === t.skill)) skillSel.value = t.skill;
   refreshSkillHint();
 }
@@ -523,15 +530,9 @@ function loadStore() {
   const s = readLocalStore();
   garage.tanks = s.tanks;
   garage.cur = s.cur;
-  const t = curTank();
-  if (t) applyTankToUi(t);
-  try { // 草稿恢复：仅当仍是同一台坦克（含「尚无坦克」态）时才回填（代码 + 策略文本）
-    const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
-    if (d && typeof d.code === 'string' && d.code.trim() && (d.cur ?? null) === (garage.cur ?? null)) {
-      editorEl.value = d.code;
-      if (strategyEl && typeof d.strategy === 'string') strategyEl.value = d.strategy;
-    }
-  } catch { /* 忽略 */ }
+  // 草稿回填已并入 applyTankToUi（含「尚无坦克」态）：登录态本地车库为空时，
+  // 旧写法用 garage.cur(null) 去比草稿的坦克名，永远不相等 → 草稿（含战术文字）刷新后再也回不来
+  applyTankToUi(curTank());
 }
 async function saveVersion() {
   const code = editorEl.value;
@@ -598,8 +599,8 @@ async function switchTank(name) {
     garage.cur = name;
     writeLocalStore(garage);
   }
+  clearDraft(); // 切台是明确换车：先清掉上一台的草稿，再入座，避免旧草稿串到新台
   applyTankToUi(curTank() || t);
-  clearDraft();
   updateVersionUi();
   renderGarage();
   scheduleLadder();
@@ -777,8 +778,8 @@ async function garageConnect(cloud) {
   if (!localTanks.length) { // 场景 2：本地无匿名坦克 → 载入云端车库，恢复出战坦克
     const t = curTank();
     if (t) {
-      applyTankToUi(t);
-      clearDraft();
+      applyTankToUi(t); // 草稿优先：不把玩家正在写的战术文字覆盖成云端的旧值/空值
+      clearDraftIfClean(t); // 有未保存改动就留着草稿（旧写法无条件清，正是战术文字丢失的最后一环）
       garageMsg(T('play.garageLoaded', { n: garage.tanks.length, name: t.name, v: t.v }));
     } else {
       garageMsg(T('play.garageEmptyCloud'));

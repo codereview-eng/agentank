@@ -188,6 +188,46 @@ export function buildGenLog(o) {
   };
 }
 
+// ---------- 编辑器内容裁决：坦克（已保存）vs 草稿（未保存）----------
+// 线上故障（2026-08-19）：登录后云端接管直接 applyTankToUi(云端坦克)，用云端的空 strategy
+// 覆盖了玩家正在写的战术文字，再 clearDraft() 抹掉草稿 → 刷新后战术文字彻底没了，
+// 而代码因为之前保存过所以还在（云端实测三台坦克 strategy 全为空串）。
+// 规则：未保存的草稿优先级高于已保存内容（草稿本来就是「还没存的最新改动」），
+// 但空草稿绝不覆盖已存内容 —— 零丢失优先。
+function draftBelongsTo(draft, cur) {
+  if (!draft || typeof draft.code !== 'string' || !draft.code.trim()) return false;
+  const dc = draft.cur ?? null;
+  return dc === null || dc === (cur ?? null); // cur=null：匿名期写的草稿衔接到登录后的出战坦克
+}
+
+export function resolveEditorState(opts) {
+  const o = opts || {};
+  const t = o.tank || null;
+  const isDefaultCode = typeof o.isDefaultCode === 'function' ? o.isDefaultCode : () => false;
+  const defaultCode = String(o.defaultCode || '');
+  const defaultStrategy = String(o.defaultStrategy || '');
+  let code = t ? String(t.code || '') : defaultCode;
+  // 战术文字：坦克存过就用存的；没存但代码仍是默认脚本 → 配套的默认战术文本（不留空白）
+  let strategy = t ? (String(t.strategy || '') || (isDefaultCode(t.code) ? defaultStrategy : '')) : defaultStrategy;
+  let fromDraft = false;
+  if (draftBelongsTo(o.draft, o.cur)) {
+    fromDraft = true;
+    code = String(o.draft.code);
+    const ds = typeof o.draft.strategy === 'string' ? o.draft.strategy : '';
+    if (ds) strategy = ds; // 空草稿不擦掉已存战术
+  }
+  return { code, strategy, fromDraft };
+}
+
+// 草稿能否安全清掉：只有与坦克逐字一致（= 没有未保存改动）才允许清
+export function draftIsClean(draft, tank) {
+  if (!draft || typeof draft.code !== 'string' || !draft.code.trim()) return true;
+  if (!tank) return false;
+  if ((draft.cur ?? null) !== null && (draft.cur ?? null) !== (tank.name ?? null)) return false;
+  return String(draft.code) === String(tank.code || '')
+    && String(draft.strategy || '') === String(tank.strategy || '');
+}
+
 // 版本递增：基于现有实体 version+1，缺省从 0 起
 export function nextTankVersion(tank) {
   const v = Number(tank && tank.version);
