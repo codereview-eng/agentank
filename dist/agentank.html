@@ -3245,9 +3245,9 @@ const LOCALES = {
       itHoldoutRes: '留出组 {p}（原版 {b}）',
       itDlLog: '⬇ 下载迭代记录',
       itSetupChanged: '迭代中途对局设置被改了（对手/技能/地图/坦克），已中止 —— 不同设置下的胜率没法比',
-      itRestore: '↩ 回到迭代前的版本',
+      itRestore: '↩ 回到最早留存的那版',
       itRestored: '已恢复到迭代前的战术与代码',
-      itRestoreHint: '检测到上次迭代前的版本还留着，可一键回退',
+      itRestoreHint: '这台车迭代前的最早一份还留着，可一键回退',
       itFakeChip: '假 AI（调试）',
       itStopping: '正在停止…（跑完这一步就收尾）',
       itRestoreOf: '（属于「{tank}」）',
@@ -3648,7 +3648,7 @@ function decide(api) {
       itSetupChanged: 'Match setup changed mid-iteration (rival/skill/map/tank) — aborted, win rates across setups are not comparable',
       itRestore: '↩ Restore the pre-iteration version',
       itRestored: 'Restored the tactics and code from before the iteration',
-      itRestoreHint: 'A pre-iteration snapshot is still around — one click to roll back',
+      itRestoreHint: 'The earliest pre-iteration snapshot for this tank is still kept — one click to roll back',
       itFakeChip: 'fake AI (debug)',
       itStopping: 'stopping… (wrapping up the current step)',
       itRestoreOf: '(belongs to "{tank}")',
@@ -7952,9 +7952,14 @@ const iterRounds = () => iterRoundsChoice;
 // 快照必须绑定「哪台车 + 哪种登录态」：否则切台或换账号后点回退，会把别台/别人的代码盖过来。
 // 写入不是必然成功（隐私模式/配额满/file:）——静默失败等于 B1 的保护在最需要时不存在，所以要 read-back 并回传原因。
 function writeIterBase() {
+  // B11：已有**属于本台**的快照就不覆盖 —— 连跑两次迭代时，第二次的「原版」其实已是 AI 那版，
+  // 覆盖等于把玩家手写的原版从草稿与快照两处同时抹掉（存档没有读取入口，等于丢）。
+  const prev = readIterBase();
+  if (prev && iterBaseOwns(prev)) return { ok: true, err: '', kept: true };
+  const t = curTank();
   const snap = {
     strategy: strategyEl ? strategyEl.value : '', code: editorEl.value,
-    tank: myTankLabel(), mode: garage.mode, ts: Date.now(),
+    tank: myTankLabel(), tankId: (t && t.id) || null, mode: garage.mode, ts: Date.now(),
   };
   try {
     localStorage.setItem(ITERBASE_KEY, JSON.stringify(snap));
@@ -7968,23 +7973,33 @@ function writeIterBase() {
   }
 }
 function readIterBase() { try { return JSON.parse(localStorage.getItem(ITERBASE_KEY) || 'null'); } catch { return null; } }
+// 这份快照是不是「当前这台车」的：云端坦克 id 全账号唯一，优先按 id 判；
+// 只比显示名挡不住「同为云端、换账号但没点登出」——两个账号的第一台车默认同名概率极高（评审 B12）。
+function iterBaseOwns(b) {
+  if (!b) return false;
+  const t = curTank();
+  const curId = (t && t.id) || null;
+  if (b.tankId) return curId === b.tankId;
+  if (curId) return false; // 快照没 id 而当前有 id：来源不同，按不属于处理
+  return b.tank === myTankLabel() && (!b.mode || !garage.mode || b.mode === garage.mode);
+}
 function clearIterBase() { try { localStorage.removeItem(ITERBASE_KEY); } catch { /* 忽略 */ } }
 function restoreIterBase() {
   const b = readIterBase();
   if (!b) return;
-  if (b.tank && b.tank !== myTankLabel()) { // 跨台回退会顶掉当前这台未保存的改动：直接拒绝
-    iterMsg(T('ui.itRestoreOtherTank', { tank: b.tank }), true);
-    renderReview();
-    return;
-  }
-  if (b.mode && garage.mode && b.mode !== garage.mode) { // 登录态变了（含换账号）：同样拒绝
+  if (!iterBaseOwns(b)) { // 不是本台/本账号的快照：拒绝，避免把别台别人的代码盖过来
     iterMsg(T('ui.itRestoreOtherTank', { tank: b.tank || '—' }), true);
     renderReview();
     return;
   }
+  // B10：快照恢复的是「战术文字 + 代码」两样，差异判定也必须看两样 ——
+  // 代码相同、只有战术文字不同是这个功能里的常态（同码轮被判无效、玩家只改策略文本），
+  // 若只比代码，战术文字会被静默覆盖且无处可寻（仓库既有教训：战术文字刷新即丢）。
   const cur = editorEl.value;
-  if (cur !== String(b.code || '')) {
-    archiveCopy({ name: myTankLabel(), code: cur, strategy: strategyEl ? strategyEl.value : '', skill: userSkill(), v: 0 }, 'iter-restore');
+  const curStrategy = strategyEl ? strategyEl.value : '';
+  const dirty = cur !== String(b.code || '') || curStrategy !== String(b.strategy || '');
+  if (dirty) {
+    archiveCopy({ name: myTankLabel(), code: cur, strategy: curStrategy, skill: userSkill(), v: 0 }, 'iter-restore');
     if (typeof confirm === 'function' && !confirm(T('ui.itRestoreConfirm'))) return; // eslint-disable-line no-alert
   }
   if (strategyEl) strategyEl.value = String(b.strategy || '');
