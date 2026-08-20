@@ -111,6 +111,97 @@ footer{
   font-size:11px; color:var(--dim); display:flex; gap:24px;
 }
 footer .mono{color:var(--muted)}
+
+/* ── 左栏重设计（方案 A）：作战台 = 固定头 + 独立滚动中段 + 粘底 CTA ── */
+.lp{position:relative}
+#lpScroll{flex:1; min-height:0; overflow:auto; display:flex; flex-direction:column;
+  scrollbar-width:thin; scrollbar-color:#3A4757 transparent}
+#lpScroll::-webkit-scrollbar{width:8px}
+#lpScroll::-webkit-scrollbar-thumb{background:#3A4757; border-radius:4px}
+#lpCta{flex:none; padding:10px 12px 12px; border-top:1px solid var(--line); background:var(--panel);
+  display:flex; flex-direction:column; gap:7px}
+#lpCta .row2{display:flex; gap:7px}
+#lpCta .row2 .btn{flex:1}
+/* 坦克切换器 */
+.tankbar{padding:8px 10px; border-bottom:1px solid var(--line); position:relative; flex:none}
+.tanksel{width:100%; display:flex; align-items:center; gap:8px; background:var(--panel-2);
+  border:1px solid var(--line); border-radius:8px; padding:7px 10px; cursor:pointer; color:var(--text); font-size:13px}
+.tanksel .nm{font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.tanksel .ver{color:var(--muted); font-size:11px; flex:none}
+.tanksel .sync{margin-left:auto; font-size:11px; color:var(--dim); flex:none}
+.tanksel .sync.on{color:var(--ok)}
+.tanksel .caret{color:var(--muted); font-size:10px; flex:none}
+.dd{position:absolute; left:10px; right:10px; top:46px; z-index:40; background:#0E1524; border:1px solid var(--line);
+  border-radius:10px; box-shadow:0 14px 40px rgba(0,0,0,.6); padding:6px; font-size:12px; max-height:52vh; overflow:auto}
+.dd[hidden]{display:none}
+.dd .it{display:flex; align-items:center; gap:8px; padding:7px 9px; border-radius:7px; cursor:pointer;
+  color:var(--muted); width:100%; background:transparent; border:none; text-align:left; font:inherit}
+.dd .it:hover{background:#182234; color:var(--text)}
+.dd .it.on .nm{color:var(--p1); font-weight:600}
+.dd .it .nm{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.dd .sep{height:1px; background:var(--line); margin:5px 2px}
+.dd .it.act{color:var(--accent)}
+/* 通知区：默认只显示 1 条 + 「还有 N 条」 */
+.notices{flex:none; border-bottom:1px solid var(--line)}
+.notices:empty{display:none}
+.nt-hidden{display:none !important}
+#noticeMore{display:block; width:100%; background:transparent; border:none; border-top:1px dashed var(--line);
+  color:var(--muted); font-size:11px; padding:5px 12px; cursor:pointer; text-align:left}
+#noticeMore[hidden]{display:none}
+/* 战术区 */
+.tacthead{display:flex; align-items:center; gap:6px; padding:9px 12px 4px; font-size:11px; color:var(--dim); letter-spacing:1px; flex:none}
+/* 对局设置：一行 chip + 气泡 */
+.setup{flex:none; padding:8px 12px; border-top:1px solid var(--line); display:flex; gap:6px; flex-wrap:wrap; position:relative}
+.schip{display:flex; align-items:center; gap:5px; border:1px solid var(--line); background:var(--panel-2);
+  border-radius:999px; padding:4px 10px; font-size:11.5px; color:var(--text); cursor:pointer; max-width:100%; font-family:inherit}
+.schip .k{color:var(--dim); flex:none}
+.schip .v{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.schip .caret{color:var(--muted); font-size:9px; flex:none}
+.schip.on{border-color:var(--accent); color:var(--accent)}
+.pop{position:absolute; left:12px; right:12px; bottom:44px; z-index:40; background:#0E1524; border:1px solid var(--line);
+  border-radius:10px; box-shadow:0 14px 40px rgba(0,0,0,.6); padding:10px; font-size:12px}
+.pop[hidden]{display:none}
+.pop .prow{display:none}
+.pop .prow.on{display:block}
+.pop .plabel{font-size:11px; color:var(--dim); margin-bottom:5px}
+.pop select{width:100%}
+/* 覆盖层：遮罩 / 弹窗 / 抽屉 */
+#overlayScrim{position:fixed; inset:0; background:rgba(6,10,16,.66); z-index:100}
+#overlayScrim[hidden]{display:none}
+.modal{position:fixed; z-index:101; left:50%; top:50%; transform:translate(-50%,-50%); width:720px; max-width:92vw;
+  max-height:82vh; background:var(--panel); border:1px solid var(--line); border-radius:14px;
+  box-shadow:0 30px 80px rgba(0,0,0,.7); display:flex; flex-direction:column; overflow:hidden}
+.modal[hidden],.drawer[hidden]{display:none}
+.drawer{position:fixed; z-index:101; top:62px; right:0; bottom:26px; width:min(1080px,78vw); background:var(--panel);
+  border-left:1px solid var(--line); box-shadow:-24px 0 70px rgba(0,0,0,.6); display:flex; flex-direction:column}
+.ovh{display:flex; align-items:center; gap:10px; padding:13px 18px; border-bottom:1px solid var(--line); flex:none}
+.ovh h3{font-size:14px; font-weight:700; letter-spacing:1px}
+.ovh .sub{font-size:11px; color:var(--dim)}
+.ovh .ovacts{margin-left:auto; display:flex; gap:8px; align-items:center}
+.ovh .x{width:26px; height:26px; border-radius:7px; border:1px solid var(--line); background:transparent;
+  color:var(--muted); cursor:pointer; font-size:13px; flex:none}
+.ovb{padding:14px 18px; overflow:auto; min-height:0; flex:1}
+.ovf{padding:11px 18px; border-top:1px solid var(--line); display:flex; gap:8px; align-items:center; flex:none}
+.ovf .spacer{flex:1}
+.drawer .dbody{flex:1; display:flex; min-height:0}
+.drawer #editor{flex:1; height:auto; min-height:0; width:auto; resize:none; font-size:12.5px}
+.drawer .dside{width:250px; border-left:1px solid var(--line); padding:12px 14px; font-size:11.5px;
+  color:var(--muted); overflow:auto; flex:none; display:flex; flex-direction:column; gap:8px; align-items:flex-start}
+.drawer .dside h4{font-size:11px; color:var(--dim); letter-spacing:1px; font-weight:600}
+.gcard{display:flex; align-items:center; gap:12px; border:1px solid var(--line); border-radius:10px;
+  padding:11px 13px; margin-bottom:9px; background:var(--panel-2)}
+.gcard.cur{border-color:#4C6B22; background:#1B2416}
+.gcard .meta{flex:1; min-width:0}
+.gcard .n{font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.gcard .n .tag{font-size:10px; color:#1A2408; background:var(--p1); border-radius:4px; padding:1px 6px; margin-left:7px; font-weight:700}
+.gcard .d{font-size:11px; color:var(--dim); margin-top:3px}
+.gcard .ops{display:flex; gap:6px; flex:none}
+.gcard .ops .btn{padding:4px 10px; font-size:11px; letter-spacing:0}
+@media (max-width:900px){
+  main{grid-template-columns:1fr}
+  .modal{width:96vw}
+  .drawer{width:100vw; top:0; bottom:0}
+}
 </style>
 </head>
 <body>
@@ -131,9 +222,10 @@ footer .mono{color:var(--muted)}
   </div>
 </header>
 <main id="playMain">
-  <!-- 左：战术指挥（策略文本优先：默认只见策略描述；脚本细节折叠在「查看/编辑脚本」里） -->
-  <section class="panel" style="position:relative">
-    <h2><span class="dot"></span><span id="editorTitle">战术指挥 · 我的坦克 v1</span><button id="strategyHelpBtn" type="button" data-i18n="ui.strategyHelpBtn" data-i18n-title="ui.strategyHelpTitle" title="怎么写战术？" aria-label="how to write tactics" style="margin-left:auto;width:20px;height:20px;flex:none;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer;font-size:12px;line-height:1;padding:0">?</button></h2>
+  <!-- 左：作战台（方案 A · 2026-08-20）：只留每局都要碰的东西 —— 切换坦克 / 看提醒 / 写战术 / 配对局 / 开战。
+       车库、脚本编辑、账号与 Agent Key 三块低频功能已移出到弹窗与抽屉；中段独立滚动，CTA 粘底。 -->
+  <section class="panel lp">
+    <h2><span class="dot"></span><span id="editorTitle" data-i18n="ui.lpTitle">战术指挥</span><button id="strategyHelpBtn" type="button" data-i18n="ui.strategyHelpBtn" data-i18n-title="ui.strategyHelpTitle" title="怎么写战术？" aria-label="how to write tactics" style="margin-left:auto;width:20px;height:20px;flex:none;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer;font-size:12px;line-height:1;padding:0">?</button></h2>
     <div id="strategyHelpPop" hidden style="position:absolute;z-index:30;left:12px;right:12px;top:40px;background:#0E1524;border:1px solid var(--line);border-radius:10px;padding:12px 14px;box-shadow:0 10px 30px rgba(0,0,0,.55)">
       <div data-i18n="ui.strategyHelpTitle" style="font-weight:600;font-size:13px;margin-bottom:6px">怎么写战术？</div>
       <div data-i18n="ui.strategyHelpBody" style="font-size:12px;line-height:1.7;color:var(--muted);white-space:pre-line">用日常语言描述你想要的打法，AI 会把这段战术文字变成可运行的坦克代码（不是替你改写战术文字）。
@@ -144,75 +236,86 @@ footer .mono{color:var(--muted)}
 写完点下方「AI 由战术文字生成坦克代码」。</div>
       <button class="btn ghost" id="strategyHelpClose" type="button" data-i18n="ui.strategyHelpClose" style="margin-top:10px">知道了</button>
     </div>
-    <textarea id="strategyBox" spellcheck="false" data-i18n-ph="ui.strategyPh" placeholder="在这里用文字描述你的战术（点右上角 ? 看写法和示例）" style="flex:1;min-height:80px;padding:12px 14px;border:none;outline:none;resize:none;background:transparent;color:#C9D6E4;font-size:13px;line-height:1.7;font-family:inherit"></textarea>
-    <div style="display:flex;gap:8px;align-items:center;padding:0 14px 6px">
-      <button class="btn ghost" id="genBtn" data-i18n="ui.genBtn" style="flex:1;letter-spacing:0">⚡ AI 由战术文字生成坦克代码</button>
-      <button class="btn ghost" id="genLogBtn" data-i18n="ui.genLogBtn" data-i18n-title="ui.genLogTitle" hidden style="flex:none;letter-spacing:0">⬇ 下载诊断日志</button>
+
+    <!-- 坦克切换器：换坦克是高频动作，留在原地一击直达；管理类沉到下拉最后两行 -->
+    <div class="tankbar">
+      <button class="tanksel" id="tankSwitch" type="button" aria-haspopup="true" aria-expanded="false">
+        <span class="nm" id="tankSwitchName">我的坦克</span>
+        <span class="ver" id="tankSwitchVer">v1</span>
+        <span class="sync" id="tankSwitchSync" data-i18n="ui.tankSwitchLocal">仅存本机</span>
+        <span class="caret">▼</span>
+      </button>
+      <div class="dd" id="tankMenu" hidden>
+        <div id="tankMenuList"></div>
+        <div class="sep"></div>
+        <button class="it act" id="garageOpenBtn" type="button" data-i18n="ui.garageManage">🗂 管理车库…</button>
+        <button class="it act" id="tankNewBtn" type="button" data-i18n="ui.garageNew">＋ 新建坦克</button>
+      </div>
     </div>
-    <div id="genMsg" style="font-size:11px;color:var(--dim);padding:0 14px 8px;min-height:14px"></div>
-    <details id="codeBox" style="border-top:1px solid var(--line)">
-      <summary data-i18n="ui.codeBox" style="cursor:pointer;font-size:12px;color:var(--muted);padding:8px 14px">查看/编辑脚本（高级）</summary>
-      <textarea id="editor" spellcheck="false" style="width:100%;height:200px;flex:none;resize:vertical"></textarea>
-    </details>
-    <div class="err" id="scriptErr"></div>
-    <div class="skillhint" id="skillHint"><span id="skillHintText"></span><button id="skillHintBtn" type="button"></button></div>
-    <div class="skillhint" id="bridgeHint"><span id="bridgeText"></span><span id="bridgeBtns" style="display:flex;gap:6px;flex:none"></span></div>
-    <div class="ctrl">
-      <div class="row"><label data-i18n="ui.opponent">对手</label>
-        <select id="opp">
-          <option value="stealth">隐身偷袭流 (内置 · 技能：隐身)</option>
-          <option value="starGrabber">抢星流 (内置 · 技能：疾驰)</option>
-          <option value="camper">蹲草流 (内置 · 技能：冰冻)</option>
-          <option value="brawler">贴脸流 (内置 · 技能：超载)</option>
-        </select>
+
+    <!-- 通知区：脚本报错 / 技能不符 / 登录衔接三类统一排队，默认只露最紧急一条 -->
+    <div class="notices" id="noticeBox">
+      <div class="err notice" id="scriptErr"></div>
+      <div class="skillhint notice" id="skillHint"><span id="skillHintText"></span><button id="skillHintBtn" type="button"></button></div>
+      <div class="skillhint notice" id="bridgeHint"><span id="bridgeText"></span><span id="bridgeBtns" style="display:flex;gap:6px;flex:none"></span></div>
+      <button id="noticeMore" type="button" hidden></button>
+    </div>
+
+    <!-- 独立滚动中段：战术文字 + AI 生成（内容再多也只在这里滚，不会把开战按钮顶出屏幕） -->
+    <div id="lpScroll">
+      <div class="tacthead" data-i18n="ui.tactHead">战术描述（用大白话写打法）</div>
+      <textarea id="strategyBox" spellcheck="false" data-i18n-ph="ui.strategyPh" placeholder="在这里用文字描述你的战术（点右上角 ? 看写法和示例）" style="flex:1;min-height:120px;padding:2px 14px 10px;border:none;outline:none;resize:none;background:transparent;color:#C9D6E4;font-size:13px;line-height:1.7;font-family:inherit"></textarea>
+      <div style="display:flex;gap:8px;align-items:center;padding:0 14px 6px;flex:none">
+        <button class="btn ghost" id="genBtn" data-i18n="ui.genBtn" style="flex:1;letter-spacing:0">⚡ AI 由战术文字生成坦克代码</button>
+        <button class="btn ghost" id="genLogBtn" data-i18n="ui.genLogBtn" data-i18n-title="ui.genLogTitle" hidden style="flex:none;letter-spacing:0">⬇ 下载诊断日志</button>
       </div>
-      <div class="row"><label data-i18n="ui.mySkill">我的技能</label>
-        <select id="skillSel">
-          <option value="teleport" selected>传送（8 选 1）</option>
-          <option value="shield">护盾</option>
-          <option value="freeze">冰冻</option>
-          <option value="stun">眩晕</option>
-          <option value="overload">超载</option>
-          <option value="cloak">隐身</option>
-          <option value="poison">剧毒</option>
-          <option value="boost">疾驰</option>
-        </select>
+      <div id="genMsg" style="font-size:11px;color:var(--dim);padding:0 14px 8px;min-height:14px;flex:none"></div>
+    </div>
+
+    <!-- 对局设置：三行下拉压成一行 chip，点开才展开对应 select -->
+    <div class="setup" id="setupRow">
+      <button class="schip" id="chipOpp" type="button" data-pop="opp"><span class="k" data-i18n="ui.opponent">对手</span><span class="v"></span><span class="caret">▼</span></button>
+      <button class="schip" id="chipSkill" type="button" data-pop="skill"><span class="k" data-i18n="ui.mySkill">技能</span><span class="v"></span><span class="caret">▼</span></button>
+      <button class="schip" id="chipMap" type="button" data-pop="map"><span class="k" data-i18n="ui.map">地图</span><span class="v"></span><span class="caret">▼</span></button>
+      <div class="pop" id="setupPop" hidden>
+        <div class="prow" data-row="opp">
+          <div class="plabel" data-i18n="ui.opponent">对手</div>
+          <select id="opp">
+            <option value="stealth">隐身偷袭流 (内置 · 技能：隐身)</option>
+            <option value="starGrabber">抢星流 (内置 · 技能：疾驰)</option>
+            <option value="camper">蹲草流 (内置 · 技能：冰冻)</option>
+            <option value="brawler">贴脸流 (内置 · 技能：超载)</option>
+          </select>
+        </div>
+        <div class="prow" data-row="skill">
+          <div class="plabel" data-i18n="ui.mySkill">我的技能</div>
+          <select id="skillSel">
+            <option value="teleport" selected>传送（8 选 1）</option>
+            <option value="shield">护盾</option>
+            <option value="freeze">冰冻</option>
+            <option value="stun">眩晕</option>
+            <option value="overload">超载</option>
+            <option value="cloak">隐身</option>
+            <option value="poison">剧毒</option>
+            <option value="boost">疾驰</option>
+          </select>
+        </div>
+        <div class="prow" data-row="map">
+          <div class="plabel" data-i18n="ui.map">地图</div>
+          <select id="mapSel">
+            <option value="random" selected data-i18n="ui.mapRandom">随机（按种子生成）</option>
+          </select>
+        </div>
       </div>
-      <div class="row"><label data-i18n="ui.map">地图</label>
-        <select id="mapSel">
-          <option value="random" selected data-i18n="ui.mapRandom">随机（按种子生成）</option>
-        </select>
-      </div>
+    </div>
+
+    <!-- 粘底：开战永远看得见 -->
+    <div id="lpCta">
       <button class="btn" id="battleBtn" data-i18n="ui.battle">开 战</button>
-      <button class="btn ghost" id="saveBtn">保存为新版本</button>
-      <details id="garage" open style="margin-top:10px;border:1px solid var(--line);border-radius:8px;padding:8px">
-        <summary style="cursor:pointer;font-size:12px;color:var(--muted)"><span id="garageTitle" data-i18n="ui.garage">我的车库</span></summary>
-        <div id="garageMsg" style="font-size:11px;color:var(--dim);margin:4px 0;min-height:14px"></div>
-        <div id="garageList" style="margin-top:2px"></div>
-        <button class="btn ghost" id="garageNewBtn" data-i18n="ui.garageNew" style="margin-top:6px;padding:4px 10px;font-size:11px">新建坦克</button>
-      </details>
-      <details id="playPanel" open style="display:none;margin-top:10px;border:1px solid var(--line);border-radius:8px;padding:8px">
-        <summary data-i18n="play.panelTitle" style="cursor:pointer;font-size:12px;color:var(--muted)">我的坦克（云端）</summary>
-        <div id="playStatus" style="font-size:11px;color:var(--dim);margin:6px 0"></div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn ghost" id="playFillBtn" style="padding:4px 10px;font-size:11px" data-i18n="play.fill">回填默认流派代码</button>
-          <button class="btn ghost" id="playChallengeBtn" style="padding:4px 10px;font-size:11px" data-i18n="play.challenge">参加挑战赛</button>
-        </div>
-        <div id="playAgentKeys" style="display:none;margin-top:8px;border-top:1px dashed var(--line);padding-top:8px">
-          <div style="font-size:12px;color:var(--muted)" data-i18n="play.akTitle">Agent Key（给我的 agent 换临时票用）</div>
-          <div style="font-size:11px;color:var(--dim);margin:4px 0" data-i18n="play.akOnce">明文 key 只显示一次：请立即复制保存，关闭后无法再查看</div>
-          <button class="btn" id="akCreateBtn" style="padding:4px 10px;font-size:11px" data-i18n="play.akCreate">生成 Agent Key</button>
-          <div id="akNewKey" style="display:none;margin:6px 0;padding:6px;border:1px solid var(--line);border-radius:6px">
-            <code id="akNewKeyText" class="mono" style="font-size:11px;word-break:break-all"></code>
-            <button class="btn ghost" id="akCopyBtn" style="padding:2px 8px;font-size:11px;margin-left:6px" data-i18n="play.akCopy">复制</button>
-          </div>
-          <div id="akMsg" style="font-size:11px;color:var(--dim);margin:4px 0"></div>
-          <table>
-            <thead><tr><th data-i18n="play.akThId">键 ID</th><th data-i18n="play.akThStatus">状态</th><th data-i18n="play.akThCreated">创建时间</th><th data-i18n="play.akThLastUsed">最近使用</th><th data-i18n="play.akThAction">操作</th></tr></thead>
-            <tbody id="akListBody"></tbody>
-          </table>
-        </div>
-      </details>
+      <div class="row2">
+        <button class="btn ghost" id="saveBtn">保存为新版本</button>
+        <button class="btn ghost" id="scriptOpenBtn" data-i18n="ui.scriptOpen">&lt;/&gt; 查看脚本</button>
+      </div>
     </div>
   </section>
 
@@ -247,6 +350,7 @@ footer .mono{color:var(--muted)}
     <div id="playChallenge" style="display:none;margin-top:10px">
       <h2><span class="dot"></span><span data-i18n="play.challengeTitle">我的挑战赛</span></h2>
       <div id="playChallengeSummary" style="font-size:11px;color:var(--dim);margin:4px 0" data-i18n="play.empty">尚未参赛</div>
+      <div style="padding:0 0 6px"><button class="btn ghost" id="playChallengeBtn" style="padding:4px 10px;font-size:11px" data-i18n="play.challenge">参加挑战赛</button></div>
       <table>
         <thead><tr><th data-i18n="play.thOpp">对手</th><th data-i18n="play.thW">胜</th><th data-i18n="play.thD">平</th><th data-i18n="play.thL">负</th></tr></thead>
         <tbody id="playChallengeBody"></tbody>
@@ -293,6 +397,78 @@ footer .mono{color:var(--muted)}
     </div>
   </section>
 </main>
+
+<!-- ── 覆盖层（方案 A）：低频功能从左栏搬到这里，横向空间从 320px 提到 720~1080px ── -->
+<div id="overlayScrim" hidden></div>
+
+<!-- 车库：整理坦克（切换/改名/新建）。高频的「换一台」在左栏切换器里，这里只管整理 -->
+<div class="modal" id="garageModal" hidden role="dialog" aria-modal="true" aria-labelledby="garageTitle">
+  <div class="ovh">
+    <h3 id="garageTitle" data-i18n="ui.garage">我的车库</h3>
+    <span class="sub" id="garageMsg"></span>
+    <div class="ovacts"><button class="x" type="button" data-close data-i18n-title="ui.overlayClose" title="关闭">✕</button></div>
+  </div>
+  <div class="ovb"><div id="garageList"></div></div>
+  <div class="ovf">
+    <span class="sub" style="font-size:11px;color:var(--dim)" data-i18n="ui.garageHint">车库只管「有哪些坦克」；改战术请回作战台</span>
+    <span class="spacer"></span>
+    <button class="btn ghost" id="garageNewBtn" data-i18n="ui.garageNew" style="padding:6px 14px;font-size:12px">新建坦克</button>
+  </div>
+</div>
+
+<!-- 脚本抽屉：代码天然需要宽度，320px 窄条是错误容器 -->
+<div class="drawer" id="scriptDrawer" hidden role="dialog" aria-modal="true" aria-labelledby="scriptDrawerTitle">
+  <div class="ovh">
+    <h3 id="scriptDrawerTitle" data-i18n="ui.scriptDrawerTitle">脚本编辑器</h3>
+    <span class="sub" id="scriptDrawerSub"></span>
+    <div class="ovacts">
+      <button class="btn ghost" id="playFillBtn" data-i18n="play.fill" style="padding:5px 12px;font-size:11.5px">回填默认流派代码</button>
+      <button class="x" type="button" data-close data-i18n-title="ui.overlayClose" title="关闭">✕</button>
+    </div>
+  </div>
+  <div class="dbody">
+    <textarea id="editor" spellcheck="false"></textarea>
+    <div class="dside">
+      <h4 data-i18n="ui.scriptApiTitle">可用 API</h4>
+      <div data-i18n="ui.scriptApiBody" style="line-height:1.7;white-space:pre-line">api.enemyVisible() / api.canFire()
+api.fireAt(api.enemy())
+api.useSkill()
+api.moveTo(x, y) / api.patrol()
+api.me() / api.stars()</div>
+      <h4 data-i18n="ui.scriptSandboxTitle">沙箱</h4>
+      <div data-i18n="ui.scriptSandboxBody" style="line-height:1.7">受限 API · 脚本报错 = 本拍待机</div>
+    </div>
+  </div>
+</div>
+
+<!-- 账号与密钥：这是账号设置，不是每局要碰的东西 -->
+<div class="modal" id="accountModal" hidden role="dialog" aria-modal="true" aria-labelledby="accountTitle">
+  <div class="ovh">
+    <h3 id="accountTitle" data-i18n="ui.accountTitle">账号与密钥</h3>
+    <span class="sub" id="accountSub"></span>
+    <div class="ovacts"><button class="x" type="button" data-close data-i18n-title="ui.overlayClose" title="关闭">✕</button></div>
+  </div>
+  <div class="ovb">
+    <div id="playPanel" style="display:none">
+      <div id="playStatus" style="font-size:12px;color:var(--muted);margin-bottom:10px"></div>
+      <div id="playAgentKeys" style="display:none;border-top:1px dashed var(--line);padding-top:10px">
+        <div style="font-size:12px;color:var(--muted)" data-i18n="play.akTitle">Agent Key（给我的 agent 换临时票用）</div>
+        <div style="font-size:11px;color:var(--dim);margin:4px 0 8px" data-i18n="play.akOnce">明文 key 只显示一次：请立即复制保存，关闭后无法再查看</div>
+        <button class="btn" id="akCreateBtn" style="padding:5px 12px;font-size:11px" data-i18n="play.akCreate">生成 Agent Key</button>
+        <div id="akNewKey" style="display:none;margin:8px 0;padding:8px;border:1px solid var(--line);border-radius:6px">
+          <code id="akNewKeyText" class="mono" style="font-size:11px;word-break:break-all"></code>
+          <button class="btn ghost" id="akCopyBtn" style="padding:2px 8px;font-size:11px;margin-left:6px" data-i18n="play.akCopy">复制</button>
+        </div>
+        <div id="akMsg" style="font-size:11px;color:var(--dim);margin:6px 0"></div>
+        <table>
+          <thead><tr><th data-i18n="play.akThId">键 ID</th><th data-i18n="play.akThStatus">状态</th><th data-i18n="play.akThCreated">创建时间</th><th data-i18n="play.akThLastUsed">最近使用</th><th data-i18n="play.akThAction">操作</th></tr></thead>
+          <tbody id="akListBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div id="accountAnon" style="font-size:12px;color:var(--dim)" data-i18n="ui.accountAnon">未登录：坦克只存在这台机器上。登录后可云端同步、用 AI 由战术文字生成代码。</div>
+  </div>
+</div>
 <footer>
   <span><span data-i18n="ui.footEngine">引擎</span> <span class="mono" id="footSeed">deterministic · seed=每局自动生成</span></span>
   <span><span data-i18n="ui.footLogPre">战报仅文字记录</span> <span class="mono" id="footLog">battle.log —</span><span data-i18n="ui.footLogPost">，回放由前端渲染</span></span>

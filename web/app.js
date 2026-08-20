@@ -567,8 +567,23 @@ async function saveVersion() {
 }
 function updateVersionUi() {
   const t = curTank();
-  saveBtn.textContent = t ? T('ui.save', { name: t.name, v: t.v + 1 }) : T('ui.saveFirst');
-  editorTitle.textContent = T('ui.editorTitle', { name: myTankLabel() });
+  // 粘底 CTA 是半宽按钮：这里用短文案（长文案会换行把 CTA 撑高、压小滚动区），完整说明进 title
+  saveBtn.textContent = t ? T('ui.saveShort', { v: t.v + 1 }) : T('ui.saveFirstShort');
+  saveBtn.title = t ? T('ui.save', { name: t.name, v: t.v + 1 }) : T('ui.saveFirst');
+  // 坦克身份挪到左栏顶部切换器（h2 固定为「战术指挥」）：一行显示名字 + 版本 + 云端状态
+  const nameEl = $id('tankSwitchName');
+  const verEl = $id('tankSwitchVer');
+  const syncEl = $id('tankSwitchSync');
+  if (nameEl) nameEl.textContent = t ? t.name : T('ui.myTank');
+  if (verEl) verEl.textContent = t ? `v${t.v}` : '';
+  if (syncEl) {
+    const cloud = garage.mode === 'cloud';
+    syncEl.textContent = T(cloud ? 'ui.tankSwitchCloud' : 'ui.tankSwitchLocal');
+    syncEl.classList.toggle('on', cloud);
+  }
+  const drawerSub = $id('scriptDrawerSub');
+  if (drawerSub) drawerSub.textContent = t ? `${t.name} v${t.v}` : myTankLabel();
+  renderTankMenu();
 }
 
 // ---------- 我的车库 UI（列表 / 切换出战 / 新建 / 重命名） ----------
@@ -654,29 +669,201 @@ function renderGarage() {
     p.style.cssText = 'font-size:11px;color:var(--dim)';
     p.textContent = T('ui.garageEmpty');
     garageListEl.appendChild(p);
+    renderTankMenu();
     return;
   }
   for (const t of garage.tanks) {
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;gap:6px;align-items:center;font-size:11px;margin:2px 0;color:var(--muted)';
-    const label = document.createElement('span');
-    label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
     const isCur = t.name === garage.cur;
-    label.textContent = isCur ? `${t.name} v${t.v} · ${T('ui.garageActive')}` : `${t.name} v${t.v}`;
-    if (isCur) label.style.color = 'var(--p1)';
-    row.appendChild(label);
+    // 弹窗里空间够（720px）：每台坦克显示版本 / 技能 / 战术字数，而不是旧左栏那条挤成一行的窄条
+    const row = document.createElement('div');
+    row.className = isCur ? 'gcard cur' : 'gcard';
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    const n = document.createElement('div');
+    n.className = 'n';
+    n.textContent = t.name;
+    if (isCur) {
+      const tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = T('ui.garageActive');
+      n.appendChild(tag);
+    }
+    const d = document.createElement('div');
+    d.className = 'd';
+    const chars = String(t.strategy || '').trim().length;
+    d.textContent = [
+      `v${t.v}`,
+      skillLabel(t.skill || 'teleport'),
+      chars ? T('ui.garageStrategyChars', { n: chars }) : T('ui.garageNoStrategy'),
+    ].join(' · ');
+    meta.appendChild(n);
+    meta.appendChild(d);
+    row.appendChild(meta);
+    const ops = document.createElement('div');
+    ops.className = 'ops';
     const mkBtn = (text, fn) => {
       const b = document.createElement('button');
       b.className = 'btn ghost';
-      b.style.cssText = 'padding:1px 8px;font-size:11px;min-width:0';
+      b.type = 'button';
       b.textContent = text;
       b.addEventListener('click', fn);
-      row.appendChild(b);
+      ops.appendChild(b);
     };
     if (!isCur) mkBtn(T('ui.garageUse'), () => { switchTank(t.name); });
     mkBtn(T('ui.garageRename'), () => { renameTank(t.name); });
+    row.appendChild(ops);
     garageListEl.appendChild(row);
   }
+  renderTankMenu();
+}
+
+// ---------- 左栏作战台外壳（方案 A）：坦克切换器 / 覆盖层 / 通知队列 / 对局设置 chip ----------
+// 设计约束：左栏只留每局都碰的东西；低频功能进覆盖层。任何状态下 #lpScroll 独立滚动、#lpCta 粘底，
+// 不再出现旧版「内容溢出被 body{overflow:hidden} 裁掉且没有滚动条」的情况。
+const scrimEl = $id('overlayScrim');
+const tankMenuEl = $id('tankMenu');
+const tankSwitchEl = $id('tankSwitch');
+const setupPopEl = $id('setupPop');
+let openedOverlay = null;
+
+function openOverlay(el) {
+  if (!el) return;
+  if (openedOverlay && openedOverlay !== el) openedOverlay.hidden = true;
+  openedOverlay = el;
+  el.hidden = false;
+  if (scrimEl) scrimEl.hidden = false;
+  const first = el.querySelector('textarea, select, input, button');
+  if (first) { try { first.focus(); } catch { /* 忽略 */ } }
+}
+function closeOverlay() {
+  if (openedOverlay) openedOverlay.hidden = true;
+  openedOverlay = null;
+  if (scrimEl) scrimEl.hidden = true;
+}
+function tankMenuHide() {
+  if (tankMenuEl) tankMenuEl.hidden = true;
+  if (tankSwitchEl) tankSwitchEl.setAttribute('aria-expanded', 'false');
+}
+function setupPopHide() {
+  if (setupPopEl) setupPopEl.hidden = true;
+  for (const c of document.querySelectorAll('#setupRow .schip')) c.classList.remove('on');
+}
+function renderTankMenu() { // 切换器下拉：高频「换一台」一击直达，管理类沉到最后两行
+  const list = $id('tankMenuList');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!garage.tanks.length) {
+    const p = document.createElement('div');
+    p.style.cssText = 'font-size:11px;color:var(--dim);padding:6px 9px';
+    p.textContent = T('ui.garageEmpty');
+    list.appendChild(p);
+    return;
+  }
+  for (const t of garage.tanks) {
+    const isCur = t.name === garage.cur;
+    const it = document.createElement('button');
+    it.type = 'button';
+    it.className = isCur ? 'it on' : 'it';
+    const nm = document.createElement('span');
+    nm.className = 'nm';
+    nm.textContent = `${t.name} v${t.v}`;
+    it.appendChild(nm);
+    if (isCur) {
+      const tag = document.createElement('span');
+      tag.style.cssText = 'font-size:11px;color:var(--p1)';
+      tag.textContent = T('ui.garageActive');
+      it.appendChild(tag);
+    }
+    it.addEventListener('click', () => { tankMenuHide(); if (!isCur) switchTank(t.name); });
+    list.appendChild(it);
+  }
+}
+
+// 通知队列：脚本报错 / 技能不符 / 登录衔接三条横幅曾能同时出现（叠加约 120px 把设置项顶下去）；
+// 现在默认只露最紧急一条，其余折进「还有 N 条」。各处仍按老办法 toggle .show，这里用观察器兜住所有入口。
+const noticeBoxEl = $id('noticeBox');
+const noticeMoreEl = $id('noticeMore');
+let noticesOpen = false;
+let noticeBusy = false;
+function renderNotices() {
+  if (!noticeBoxEl || !noticeMoreEl || noticeBusy) return;
+  noticeBusy = true;
+  try {
+    const all = [...noticeBoxEl.querySelectorAll('.notice')];
+    const shown = all.filter((el) => el.classList.contains('show'));
+    for (const el of all) el.classList.remove('nt-hidden');
+    if (!noticesOpen) for (const el of shown.slice(1)) el.classList.add('nt-hidden');
+    noticeMoreEl.hidden = shown.length <= 1;
+    noticeMoreEl.textContent = noticesOpen ? T('ui.noticeLess') : T('ui.noticeMore', { n: shown.length - 1 });
+  } finally {
+    setTimeout(() => { noticeBusy = false; }, 0); // 自身改 class 不再回环触发观察器
+  }
+}
+function syncSetupChips() { // chip 只显示选项主名（括号里的说明在气泡里看）
+  const short = (sel) => {
+    if (!sel) return '';
+    const txt = sel.selectedOptions && sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : '';
+    return String(txt || sel.value).split(/[（(]/)[0].trim();
+  };
+  const set = (id, sel) => {
+    const v = $id(id) && $id(id).querySelector('.v');
+    if (v) v.textContent = short(sel);
+  };
+  set('chipOpp', oppSelect);
+  set('chipSkill', skillSel);
+  set('chipMap', mapSel);
+}
+
+if (scrimEl) scrimEl.addEventListener('click', closeOverlay);
+for (const b of document.querySelectorAll('[data-close]')) b.addEventListener('click', closeOverlay);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { // 覆盖层 > 下拉/气泡：逐层收起，键盘可达
+    if (openedOverlay) closeOverlay();
+    else { tankMenuHide(); setupPopHide(); }
+  }
+});
+$id('garageOpenBtn')?.addEventListener('click', () => { tankMenuHide(); openOverlay($id('garageModal')); });
+$id('tankNewBtn')?.addEventListener('click', () => { tankMenuHide(); newTank(); });
+$id('scriptOpenBtn')?.addEventListener('click', () => openOverlay($id('scriptDrawer')));
+{
+  const userChip = $id('playUserChip');
+  if (userChip) {
+    userChip.style.cursor = 'pointer';
+    userChip.addEventListener('click', () => openOverlay($id('accountModal')));
+  }
+}
+if (tankSwitchEl && tankMenuEl) {
+  tankSwitchEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const willShow = tankMenuEl.hidden;
+    setupPopHide();
+    if (willShow) renderTankMenu();
+    tankMenuEl.hidden = !willShow;
+    tankSwitchEl.setAttribute('aria-expanded', String(willShow));
+  });
+}
+document.addEventListener('click', (e) => { // 点空白收起下拉/气泡
+  if (tankMenuEl && !tankMenuEl.hidden && !tankMenuEl.contains(e.target) && !(tankSwitchEl && tankSwitchEl.contains(e.target))) tankMenuHide();
+  if (setupPopEl && !setupPopEl.hidden && !setupPopEl.contains(e.target) && !(e.target.closest && e.target.closest('#setupRow .schip'))) setupPopHide();
+});
+for (const chip of document.querySelectorAll('#setupRow .schip')) {
+  chip.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const wasOn = chip.classList.contains('on');
+    setupPopHide();
+    tankMenuHide();
+    if (wasOn || !setupPopEl) return;
+    chip.classList.add('on');
+    for (const r of setupPopEl.querySelectorAll('.prow')) r.classList.toggle('on', r.dataset.row === chip.dataset.pop);
+    setupPopEl.hidden = false;
+  });
+}
+for (const sel of [oppSelect, skillSel, mapSel]) {
+  if (sel) sel.addEventListener('change', () => { syncSetupChips(); setupPopHide(); });
+}
+if (noticeMoreEl) noticeMoreEl.addEventListener('click', () => { noticesOpen = !noticesOpen; renderNotices(); });
+if (noticeBoxEl && typeof MutationObserver === 'function') {
+  new MutationObserver(renderNotices).observe(noticeBoxEl, { attributes: true, attributeFilter: ['class'], subtree: true });
 }
 
 // ---------- 登录时刻衔接（方案 v2）：横幅流程 + 云端车库接管 ----------
@@ -2136,6 +2323,8 @@ setupCanvas(previewMap);
 requestAnimationFrame(loop);
 scheduleLadder();
 refreshSkillHint(); // 启动即检（含 ?script=/?skill= 深链落定后的状态）
+syncSetupChips(); // chip 初值：必须在深链 ?opp=/?skill=/?map= 与内容包选项注入之后取，否则 chip 是空的
+renderNotices(); // 通知队列初始化（启动即可能有脚本报错/技能不符）
 if (qp.get('autoplay') === '1') {
   startBattle();
   if (match) { // 跳到中局并停住，便于截图/演示（双方坦克在场、战报点亮过半）
