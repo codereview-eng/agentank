@@ -3,7 +3,7 @@
 // 绝不把半截输出塞进玩家的战术框。
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildReviewPrompt, parseReviewReply, reviewPayloadFromBattle, reviewPayloadFromBatch } from '../web/play.js';
+import { buildReviewPrompt, parseReviewReply, reviewPayloadFromBattle, reviewPayloadFromBatch, compareVerdict } from '../web/play.js';
 
 const battle = {
   setup: { seed: '33', mapKey: 'crossFort', opponent: '狙击流派', tank: '我的坦克 v7', skills: ['teleport', 'shield'], strategy: '优先吃星；血量低于 40 找急救包' },
@@ -96,4 +96,43 @@ test('回复解析：新战术过长时截断，不让模型灌爆战术框', ()
   assert.ok(r);
   assert.ok(r.strategy.length <= 4000);
   assert.equal(r.truncated, true);
+});
+
+// ───────── 改前/改后结论判定：五个态（评审 R2-B1 / R2-B2 回归） ─────────
+
+const K = 'stealth|teleport|crossFort|我的坦克 v7';
+
+test('对比结论：留出组涨了才叫涨', () => {
+  const v = compareVerdict({ before: { train: 0.42, holdout: 0.38 }, after: { train: 0.67, holdout: 0.58 }, keys: [K, K], curKey: K });
+  assert.deepEqual(v, { state: 'gain', gained: true });
+});
+
+test('对比结论：训练组涨、留出组没涨 → 不算涨', () => {
+  const v = compareVerdict({ before: { train: 0.42, holdout: 0.83 }, after: { train: 0.92, holdout: 0.58 }, keys: [K], curKey: K });
+  assert.deepEqual(v, { state: 'no-gain', gained: false });
+});
+
+test('对比结论：没有改前基线 → 不许给「没有提升」的定性结论', () => {
+  const v = compareVerdict({ before: { train: 0.42, holdout: null }, after: { train: 0.67, holdout: 0.58 }, keys: [K], curKey: K });
+  assert.equal(v.state, 'no-before');
+  assert.equal(v.gained, false);
+});
+
+test('对比结论：改后批次被丢弃（脚本报错/超时）→ 也不许给否定结论', () => {
+  const v = compareVerdict({ before: { train: 0.33, holdout: 0.25 }, after: { train: null, holdout: null }, keys: [K], curKey: K });
+  assert.equal(v.state, 'no-after', '这正是「脚本报错整批丢弃」的正常出口，不能说成「没有提升」');
+});
+
+test('对比结论：改前改后不是同一套对局设置 → 对比不成立（优先于其它判定）', () => {
+  const v = compareVerdict({
+    before: { train: 0.25, holdout: 0.25 }, after: { train: 0.5, holdout: 0.5 },
+    keys: ['camper|teleport|crossFort|我的坦克 v7', K], curKey: K,
+  });
+  assert.equal(v.state, 'setup-changed');
+  assert.equal(v.gained, false, '换了对手换来的「提升」不得标成 gain');
+});
+
+test('对比结论：没给 key 时不误报设置变更（老数据兼容）', () => {
+  const v = compareVerdict({ before: { train: 0.4, holdout: 0.4 }, after: { train: 0.5, holdout: 0.5 }, keys: [], curKey: K });
+  assert.equal(v.state, 'gain');
 });

@@ -192,6 +192,21 @@ export function parseReviewReply(text) {
   return { diagnoses, strategy, changes, truncated };
 }
 
+// 改前/改后胜率对比的结论判定（纯函数，脱离 DOM 才能被测试钉住）。
+// 五个态一个都不能省：任一侧缺数据、或两侧不是同一套对局设置，都**不许**给出「有没有提升」的定性结论。
+// 教训：第一轮只挡了 before 缺失，after 缺失（脚本报错/沙箱超时被丢弃）照样印「本轮没有提升」——
+// 在没有数据时给确定性否定判决，和编造提升是同一种谎。
+export function compareVerdict(o) {
+  const before = (o && o.before) || {};
+  const after = (o && o.after) || {};
+  const cur = o && o.curKey;
+  const keys = (o && Array.isArray(o.keys) ? o.keys : []).filter((k) => k != null && k !== '');
+  if (cur != null && keys.some((k) => k !== cur)) return { state: 'setup-changed', gained: false };
+  if (before.train == null || before.holdout == null) return { state: 'no-before', gained: false };
+  if (after.train == null || after.holdout == null) return { state: 'no-after', gained: false };
+  return after.holdout > before.holdout ? { state: 'gain', gained: true } : { state: 'no-gain', gained: false };
+}
+
 // LLM 输出 → 代码：优先取 ```js 围栏块；裸输出须含 decide 入口，否则 null（fail-closed）
 export function extractLlmCode(text) {
   const m = String(text || '').match(/```(?:js|javascript)?\s*\n([\s\S]*?)```/);

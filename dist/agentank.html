@@ -2287,19 +2287,33 @@ const MOMENT_TUNING = {
 // 如果血线其实是我们的默认值，却说成「你的战术写了…」，那就是在事实层给 AI 编了一句玩家没说过的话。
 function healThresholdFrom(strategy) {
   const raw = String(strategy || '');
-  // 「对手血量 50 以下时贴身」这类句子说的是敌方血量，不是我的回血线：整句剔除再解析
-  const mine = raw.replace(/[^。；;.\n]*(?:对手|敌方|敌人|对方|敌|他)[^。；;.\n]*/g, ' ');
+  // 逐句解析，不整段擦除：中文战术几乎都是逗号长句，「我方血量低于 35 就撤，对手血量 50 以下贴身」
+  // 若按整段剔除敌方主语，会把玩家写的 35 一起吞掉，然后断言「战术里没写血线」——那是反向的捏造。
+  const parts = raw.split(/[。；;.，,、！？!?\n]+/).map((x) => x.trim()).filter(Boolean);
+  // 「其他 / 其它」先中和，否则「他」会误杀「其他时候血量低于 30」这类正常写法
+  const norm = (x) => x.replace(/其他|其它/g, '_OTHER_');
+  const ENEMY = /(对手|敌方|敌人|对方|敌|他)/;
+  const MINE = /(我方|我的|自己|我)/;
   const pats = [
     /(?:血量?|hp|HP)\s*[<≤]?[^0-9%\n]{0,12}?(\d{1,3})\s*(?:%|以下|以内|以上)?/,
     /(\d{1,3})\s*%?\s*血/,
   ];
-  for (const re of pats) {
-    const m = mine.match(re);
-    if (m) {
-      const n = Number(m[1]);
-      if (n > 0 && n <= RULES.hp) return { value: n, source: 'parsed' };
+  const pick = (list) => {
+    for (const seg of list) {
+      for (const re of pats) {
+        const m = seg.match(re);
+        if (m) {
+          const n = Number(m[1]);
+          if (n > 0 && n <= RULES.hp) return n;
+        }
+      }
     }
-  }
+    return null;
+  };
+  const mine = parts.filter((x) => MINE.test(norm(x)) && !ENEMY.test(norm(x)));
+  const neutral = parts.filter((x) => !ENEMY.test(norm(x)));
+  const n = pick(mine) ?? pick(neutral); // 我方那句优先，其次是没提敌人的句子
+  if (n != null) return { value: n, source: 'parsed' };
   return { value: MOMENT_TUNING.healDefault, source: 'default' };
 }
 
@@ -3194,10 +3208,12 @@ const LOCALES = {
       rvHoldoutNone: '留出组未跑',
       rvNoBaseline: '没有「改前」基线，无法判定是否提升 —— 先点「跑基线」把两组种子都跑一遍',
       rvSetupChanged: '改前与改后的对局设置不一致（换过对手/技能/地图），这个对比不成立',
+      rvNoAfter: '「改后」这两批没跑成（脚本报错或超时已丢弃），无法判定是否提升',
+      rvBaselineStale: '现在的基线是别的对局设置下跑的 —— 先重跑基线再采纳，否则对比不成立',
       rvScriptErr: '本批有 {n} 拍脚本报错：{msg} —— 这批数字不可信，已丢弃',
       rvAdoptNoSdk: '战术已写入战术框，但这个环境没有 AI 通道，代码仍是旧版 —— 胜率不会变，请自行重生成代码后再跑基线',
       rvAdoptGenFail: '战术已写入战术框，但代码重生成失败（{msg}），代码仍是旧版 —— 跳过胜率对比',
-      rvAdoptNoChange: '战术已写入战术框，但代码没有变化 —— 跳过一个必然无差异的对比',
+      rvAdoptNoChange: '战术已写入战术框，但代码没有变化（{msg}）—— 跳过一个必然无差异的对比',
       rvBusy: '批量正在跑，先等它跑完',
       rvNoFlag: '本局没标出可疑操作',
       rvTitleSingle: '复盘这一局',
@@ -3557,10 +3573,12 @@ function decide(api) {
       rvHoldoutNone: 'hold-out not run',
       rvNoBaseline: 'No "before" baseline, so no gain can be claimed — run the baseline over both seed sets first',
       rvSetupChanged: 'Before and after used different match setups (rival/skill/map changed) — this comparison does not hold',
+      rvNoAfter: 'The "after" batches did not complete (script errors or timeout, discarded) — no gain can be judged',
+      rvBaselineStale: 'The current baseline was run under a different match setup — re-run the baseline before adopting',
       rvScriptErr: '{n} script errors in this batch: {msg} — these numbers are untrustworthy and were discarded',
       rvAdoptNoSdk: 'Tactics written to the box, but this environment has no AI channel, so the code is still the old one — the win rate cannot change until you regenerate the code',
       rvAdoptGenFail: 'Tactics written to the box, but regenerating the code failed ({msg}) — the code is still the old one, comparison skipped',
-      rvAdoptNoChange: 'Tactics written to the box, but the code did not change — skipping a comparison that is guaranteed to show no difference',
+      rvAdoptNoChange: 'Tactics written to the box, but the code did not change ({msg}) — skipping a comparison that is guaranteed to show no difference',
       rvBusy: 'A batch is still running — wait for it to finish',
       rvNoFlag: 'no suspicious moves flagged',
       rvTitleSingle: 'Review this battle',
@@ -4043,6 +4061,21 @@ function parseReviewReply(text) {
     .slice(0, 8)
     .map((c) => c.trim().slice(0, 200));
   return { diagnoses, strategy, changes, truncated };
+}
+
+// 改前/改后胜率对比的结论判定（纯函数，脱离 DOM 才能被测试钉住）。
+// 五个态一个都不能省：任一侧缺数据、或两侧不是同一套对局设置，都**不许**给出「有没有提升」的定性结论。
+// 教训：第一轮只挡了 before 缺失，after 缺失（脚本报错/沙箱超时被丢弃）照样印「本轮没有提升」——
+// 在没有数据时给确定性否定判决，和编造提升是同一种谎。
+function compareVerdict(o) {
+  const before = (o && o.before) || {};
+  const after = (o && o.after) || {};
+  const cur = o && o.curKey;
+  const keys = (o && Array.isArray(o.keys) ? o.keys : []).filter((k) => k != null && k !== '');
+  if (cur != null && keys.some((k) => k !== cur)) return { state: 'setup-changed', gained: false };
+  if (before.train == null || before.holdout == null) return { state: 'no-before', gained: false };
+  if (after.train == null || after.holdout == null) return { state: 'no-after', gained: false };
+  return after.holdout > before.holdout ? { state: 'gain', gained: true } : { state: 'no-gain', gained: false };
 }
 
 // LLM 输出 → 代码：优先取 ```js 围栏块；裸输出须含 decide 入口，否则 null（fail-closed）
@@ -6983,7 +7016,7 @@ function generationGate(code) {
 
 async function generateScript() {
   if (!genBtn) return;
-  if (llmCtl && llmCtl.needLogin) { llmCtl.login(); return; } // 未登录：按钮即登录入口
+  if (llmCtl && llmCtl.needLogin) { llmCtl.login(); return { ok: false, outcome: 'need-login', reason: 'not logged in' }; } // 未登录：按钮即登录入口
   const strategy = (strategyEl ? strategyEl.value : '').trim();
   const skill = userSkill();
   const t0 = Date.now();
@@ -6994,7 +7027,7 @@ async function generateScript() {
   if (!llmCtl || typeof llmCtl.chat !== 'function') {
     genMsg(T('play.genUnavailable'), true);
     setGenLog(mkLog('no-sdk', 'play SDK llm.chat unavailable'));
-    return;
+    return { ok: false, outcome: 'no-sdk', reason: 'play SDK llm.chat unavailable' };
   }
   if (!strategy) { genMsg(T('play.genEmpty'), true); return; }
   genBtn.disabled = true;
@@ -7039,10 +7072,11 @@ async function generateScript() {
         genMsg(T('play.genDoneNoRun'), true);
         setGenLog(mkLog('ok-cannot-run', 'host forbids dynamic compilation (CSP without unsafe-eval)'));
       }
-      return;
+      return { ok: true, outcome: CUSTOM_SCRIPT_OK ? 'ok' : 'ok-cannot-run', reason: '' };
     }
     genMsg(T('play.genFail', { msg: feedback }), true);
     setGenLog(mkLog('invalid-output', feedback));
+    return { ok: false, outcome: 'invalid-output', reason: feedback };
   } catch (e) {
     const m = mapLlmError(e);
     genMsg(T(m.key, m.vars), true);
@@ -7051,7 +7085,9 @@ async function generateScript() {
       last.errorKind = 'sdk-error';
       last.error = `${(e && e.code) || ''} ${String((e && (e.hint || e.message)) || e)}`.trim();
     }
-    setGenLog(mkLog('sdk-error', `${(e && e.code) || ''} ${String((e && (e.hint || e.message)) || e)}`.trim()));
+    const reason = `${(e && e.name) || 'Error'}: ${(e && e.code) || ''} ${String((e && (e.hint || e.message)) || e)}`.trim();
+    setGenLog(mkLog('sdk-error', reason));
+    return { ok: false, outcome: 'sdk-error', reason };
   } finally { genBtn.disabled = false; }
 }
 if (genBtn) genBtn.addEventListener('click', () => { generateScript(); });
@@ -7460,23 +7496,24 @@ function renderCompare() {
   const c = lastCompare;
   if (!c) return '';
   const warn = (msg) => `<div class="wrfail" style="border-color:var(--warn);background:#2A2314;color:var(--warn);margin-bottom:12px">${esc(msg)}</div>`;
-  const card = (label, before, after) => { // 改前为空时只显示改后，不假装有对比
+  const card = (label, before, after) => { // 任一侧为空时只显示有的那侧，不假装有对比
     const up = before != null && after != null && after > before;
     const flat = before != null && after != null && after <= before;
     return `<div class="bacard ${up ? 'up' : flat ? 'flat' : ''}"><b>${pctText(before)} → ${pctText(after)}</b>`
       + `<span>${esc(label)} · ${esc(T('ui.rvBefore'))}→${esc(T('ui.rvAfter'))}</span></div>`;
   };
   const cards = `<div class="ba">${card(T('ui.rvTrain'), c.before.train, c.after.train)}${card(T('ui.rvHoldout'), c.before.holdout, c.after.holdout)}</div>`;
-  if (c.setupChanged) return `${cards}${warn(T('ui.rvSetupChanged'))}`;
-  if (c.before.holdout == null || c.before.train == null) return `${cards}${warn(T('ui.rvNoBaseline'))}`;
-  const gained = c.after.holdout != null && c.after.holdout > c.before.holdout;
-  const note = gained
+  const v = compareVerdict({ before: c.before, after: c.after, keys: c.keys, curKey: setupKey() });
+  if (v.state === 'setup-changed') return `${cards}${warn(T('ui.rvSetupChanged'))}`;
+  if (v.state === 'no-before') return `${cards}${warn(T('ui.rvNoBaseline'))}`;
+  if (v.state === 'no-after') return `${cards}${warn(T('ui.rvNoAfter'))}`;
+  const note = v.gained
     ? T('ui.rvGain', { before: pctText(c.before.holdout), after: pctText(c.after.holdout) })
     : T('ui.rvNoGain', {
       a: `${pctText(c.before.train)}→${pctText(c.after.train)}`,
       b: `${pctText(c.before.holdout)}→${pctText(c.after.holdout)}`,
     });
-  return `${cards}<div class="wrhint" style="margin-bottom:12px;color:${gained ? 'var(--ok)' : 'var(--warn)'}">${esc(note)}</div>`;
+  return `${cards}<div class="wrhint" style="margin-bottom:12px;color:${v.gained ? 'var(--ok)' : 'var(--warn)'}">${esc(note)}</div>`;
 }
 
 function renderHistory() {
@@ -7613,38 +7650,45 @@ async function runAiReview() {
 async function adoptProposal() {
   if (!reviewProposal || !strategyEl) return;
   if (batchBusy) { reviewMsg(T('ui.rvBusy'), true); renderReview(); return; } // 跑批期间采纳会读到上一轮旧数字
+  const curKey = setupKey();
+  // 基线必须是「当前这套对局设置」下跑的：否则「A 对手的改前」和「B 对手的改后」并列出来是假对比
+  const baseKeys = [batchRuns.train && batchRuns.train.key, batchRuns.holdout && batchRuns.holdout.key].filter(Boolean);
+  if (baseKeys.length && baseKeys.some((k) => k !== curKey)) {
+    reviewMsg(T('ui.rvBaselineStale'), true);
+    renderReview();
+    return;
+  }
   const before = {
     train: batchRuns.train ? batchRuns.train.agg.winRate : null,
     holdout: batchRuns.holdout ? batchRuns.holdout.agg.winRate : null,
   };
-  const beforeKey = setupKey();
   strategyEl.value = reviewProposal.strategy;
   saveDraft();
   reviewProposal = null;
   reviewMsg(T('ui.rvAdopted'));
   renderReview();
   const codeBefore = editorEl.value;
-  const logAdopt = (outcome, reason) => setGenLog(buildGenLog({
-    outcome, reason, env: genEnv(), strategy: strategyEl.value, skill: userSkill(), attempts: [],
-  }));
   if (sdkState() !== 'ready') { // 态①：没有 AI 通道 —— 战术已写入，但代码还是旧版，胜率不可能变
     reviewMsg(T('ui.rvAdoptNoSdk'), true);
-    logAdopt('adopt-no-sdk', `sdk=${sdkState()} strategy written, code unchanged`);
+    setGenLog(buildGenLog({
+      outcome: 'adopt-no-sdk', reason: `sdk=${sdkState()}; strategy written, code unchanged`,
+      env: genEnv(), strategy: strategyEl.value, skill: userSkill(), attempts: [],
+    }));
     renderReview();
     return;
   }
-  try {
-    await generateScript();
-  } catch (e) { // 态②：重生成失败 —— 带上异常名与内容，别只说「失败了」
-    const msg = `${(e && e.name) || 'Error'}: ${String((e && e.message) || e)}`;
-    reviewMsg(T('ui.rvAdoptGenFail', { msg }), true);
-    logAdopt('adopt-gen-failed', msg);
+  // generateScript 自己吞掉所有失败并把真因（哪次尝试、模型回了什么、gate 报什么错、401 还是没代码块）
+  // 写进诊断日志，所以这里靠它的返回值分流，且**不再覆盖**那份日志——否则用户下载到的只剩一句「代码没变」。
+  const gen = await generateScript();
+  if (gen && !gen.ok) { // 态②：生成失败 —— 归因用真实 outcome，诊断日志保留 generateScript 写的载荷
+    reviewMsg(T('ui.rvAdoptGenFail', { msg: `${gen.outcome}: ${gen.reason || ''}`.trim() }), true);
     renderReview();
     return;
   }
-  if (editorEl.value === codeBefore) { // 态③：生成跑了但代码没变 —— 不做一个必然无差异的对比
-    reviewMsg(T('ui.rvAdoptNoChange'), true);
-    logAdopt('adopt-code-unchanged', 'generateScript finished but editor content identical');
+  if (editorEl.value === codeBefore) { // 态③：生成成功但代码没变 —— 不做一个必然无差异的对比
+    reviewMsg(T('ui.rvAdoptNoChange', { msg: (gen && gen.outcome) || 'unknown' }), true);
+    if (lastGenLog) setGenLog({ ...lastGenLog, adopt: { outcome: 'adopt-code-unchanged', genOutcome: (gen && gen.outcome) || null } });
+    else setGenLog(buildGenLog({ outcome: 'adopt-code-unchanged', reason: 'editor content identical after generateScript', env: genEnv(), strategy: strategyEl.value, skill: userSkill(), attempts: [] }));
     renderReview();
     return;
   }
@@ -7654,7 +7698,12 @@ async function adoptProposal() {
     train: batchRuns.train ? batchRuns.train.agg.winRate : null,
     holdout: batchRuns.holdout ? batchRuns.holdout.agg.winRate : null,
   };
-  lastCompare = { before, after, setupChanged: beforeKey !== setupKey() };
+  lastCompare = {
+    before,
+    after,
+    // 对比是否成立，看的是被比较数据自身的 setup key（不是「采纳开始/结束」两个时刻的 key）
+    keys: [curKey, batchRuns.train && batchRuns.train.key, batchRuns.holdout && batchRuns.holdout.key].filter(Boolean),
+  };
   reviewHistory = reviewHistory.concat([{ round: reviewHistory.length + 1, before, after }]);
   reviewMode = 'batch';
   reviewMsg('');

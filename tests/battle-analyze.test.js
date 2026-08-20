@@ -466,3 +466,15 @@ test('可疑时刻：被冻住的那几拍不算「缩圈了还不进圈」（�
   const frozen = mk(evs.concat([{ t: 9, type: 'freeze_hit', target: 0, duration: 25 }]), { ticks: 30 });
   assert.equal(detectMoments(MAP, frozen, { who: 0 }).filter((m) => m.rule === 'zone-outward').length, 0);
 });
+
+test('血线解析：中文逗号是句界，我方那句优先（评审 R2-B4 回归）', () => {
+  assert.deepEqual(healThresholdFrom('我方血量低于 35 就撤，对手血量 50 以下贴身'), { value: 35, source: 'parsed' });
+  assert.deepEqual(healThresholdFrom('对手血量 50 以下贴身，我血量低于 25 就撤'), { value: 25, source: 'parsed' });
+});
+
+test('血线解析：「其他」不得被当成敌方主语（评审 R2-B4 回归）', () => {
+  assert.deepEqual(healThresholdFrom('其他时候血量低于 30 撤退'), { value: 30, source: 'parsed' });
+  assert.deepEqual(healThresholdFrom('血量低于 30 撤退；其他情况追击'), { value: 30, source: 'parsed' });
+  // 说的是把对手打到 20 血，不是我的回血线 —— 仍应落默认
+  assert.deepEqual(healThresholdFrom('把他打到 20 血再贴身'), { value: 40, source: 'default' });
+});

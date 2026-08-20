@@ -73,19 +73,33 @@ export const MOMENT_TUNING = {
 // 如果血线其实是我们的默认值，却说成「你的战术写了…」，那就是在事实层给 AI 编了一句玩家没说过的话。
 export function healThresholdFrom(strategy) {
   const raw = String(strategy || '');
-  // 「对手血量 50 以下时贴身」这类句子说的是敌方血量，不是我的回血线：整句剔除再解析
-  const mine = raw.replace(/[^。；;.\n]*(?:对手|敌方|敌人|对方|敌|他)[^。；;.\n]*/g, ' ');
+  // 逐句解析，不整段擦除：中文战术几乎都是逗号长句，「我方血量低于 35 就撤，对手血量 50 以下贴身」
+  // 若按整段剔除敌方主语，会把玩家写的 35 一起吞掉，然后断言「战术里没写血线」——那是反向的捏造。
+  const parts = raw.split(/[。；;.，,、！？!?\n]+/).map((x) => x.trim()).filter(Boolean);
+  // 「其他 / 其它」先中和，否则「他」会误杀「其他时候血量低于 30」这类正常写法
+  const norm = (x) => x.replace(/其他|其它/g, '_OTHER_');
+  const ENEMY = /(对手|敌方|敌人|对方|敌|他)/;
+  const MINE = /(我方|我的|自己|我)/;
   const pats = [
     /(?:血量?|hp|HP)\s*[<≤]?[^0-9%\n]{0,12}?(\d{1,3})\s*(?:%|以下|以内|以上)?/,
     /(\d{1,3})\s*%?\s*血/,
   ];
-  for (const re of pats) {
-    const m = mine.match(re);
-    if (m) {
-      const n = Number(m[1]);
-      if (n > 0 && n <= RULES.hp) return { value: n, source: 'parsed' };
+  const pick = (list) => {
+    for (const seg of list) {
+      for (const re of pats) {
+        const m = seg.match(re);
+        if (m) {
+          const n = Number(m[1]);
+          if (n > 0 && n <= RULES.hp) return n;
+        }
+      }
     }
-  }
+    return null;
+  };
+  const mine = parts.filter((x) => MINE.test(norm(x)) && !ENEMY.test(norm(x)));
+  const neutral = parts.filter((x) => !ENEMY.test(norm(x)));
+  const n = pick(mine) ?? pick(neutral); // 我方那句优先，其次是没提敌人的句子
+  if (n != null) return { value: n, source: 'parsed' };
   return { value: MOMENT_TUNING.healDefault, source: 'default' };
 }
 

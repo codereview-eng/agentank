@@ -3,7 +3,7 @@
 import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS, presetMap, validateContent, makePack, serializePack, parsePack, promoteStage, resolvePackMap, compileBot, OFFICIAL_CONTENT, buildBattleReport, summarizeGame, aggregateBatch, renderBatchText, battleReportFilename, batchReportFilename, BATCH_SEEDS } from '../src/engine/index.js';
 import { bots } from '../bots/index.js';
 import { LOCALES, LANGS, fmt, resolveLang } from './i18n.js';
-import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError, scriptGate, buildGenLog, genLogFilename, resolveEditorState, draftIsClean, buildReviewPrompt, parseReviewReply, reviewPayloadFromBattle, reviewPayloadFromBatch } from './play.js';
+import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError, scriptGate, buildGenLog, genLogFilename, resolveEditorState, draftIsClean, buildReviewPrompt, parseReviewReply, reviewPayloadFromBattle, reviewPayloadFromBatch, compareVerdict } from './play.js';
 import { extractEngineSource, buildWorkerSource } from './sandbox.js';
 
 // 单文件产物里，本脚本自身的源码文本（引擎源从中切出，喂给无 eval 沙箱 Worker）。
@@ -2121,7 +2121,7 @@ function generationGate(code) {
 
 async function generateScript() {
   if (!genBtn) return;
-  if (llmCtl && llmCtl.needLogin) { llmCtl.login(); return; } // 未登录：按钮即登录入口
+  if (llmCtl && llmCtl.needLogin) { llmCtl.login(); return { ok: false, outcome: 'need-login', reason: 'not logged in' }; } // 未登录：按钮即登录入口
   const strategy = (strategyEl ? strategyEl.value : '').trim();
   const skill = userSkill();
   const t0 = Date.now();
@@ -2132,7 +2132,7 @@ async function generateScript() {
   if (!llmCtl || typeof llmCtl.chat !== 'function') {
     genMsg(T('play.genUnavailable'), true);
     setGenLog(mkLog('no-sdk', 'play SDK llm.chat unavailable'));
-    return;
+    return { ok: false, outcome: 'no-sdk', reason: 'play SDK llm.chat unavailable' };
   }
   if (!strategy) { genMsg(T('play.genEmpty'), true); return; }
   genBtn.disabled = true;
@@ -2177,10 +2177,11 @@ async function generateScript() {
         genMsg(T('play.genDoneNoRun'), true);
         setGenLog(mkLog('ok-cannot-run', 'host forbids dynamic compilation (CSP without unsafe-eval)'));
       }
-      return;
+      return { ok: true, outcome: CUSTOM_SCRIPT_OK ? 'ok' : 'ok-cannot-run', reason: '' };
     }
     genMsg(T('play.genFail', { msg: feedback }), true);
     setGenLog(mkLog('invalid-output', feedback));
+    return { ok: false, outcome: 'invalid-output', reason: feedback };
   } catch (e) {
     const m = mapLlmError(e);
     genMsg(T(m.key, m.vars), true);
@@ -2189,7 +2190,9 @@ async function generateScript() {
       last.errorKind = 'sdk-error';
       last.error = `${(e && e.code) || ''} ${String((e && (e.hint || e.message)) || e)}`.trim();
     }
-    setGenLog(mkLog('sdk-error', `${(e && e.code) || ''} ${String((e && (e.hint || e.message)) || e)}`.trim()));
+    const reason = `${(e && e.name) || 'Error'}: ${(e && e.code) || ''} ${String((e && (e.hint || e.message)) || e)}`.trim();
+    setGenLog(mkLog('sdk-error', reason));
+    return { ok: false, outcome: 'sdk-error', reason };
   } finally { genBtn.disabled = false; }
 }
 if (genBtn) genBtn.addEventListener('click', () => { generateScript(); });
@@ -2598,23 +2601,24 @@ function renderCompare() {
   const c = lastCompare;
   if (!c) return '';
   const warn = (msg) => `<div class="wrfail" style="border-color:var(--warn);background:#2A2314;color:var(--warn);margin-bottom:12px">${esc(msg)}</div>`;
-  const card = (label, before, after) => { // 改前为空时只显示改后，不假装有对比
+  const card = (label, before, after) => { // 任一侧为空时只显示有的那侧，不假装有对比
     const up = before != null && after != null && after > before;
     const flat = before != null && after != null && after <= before;
     return `<div class="bacard ${up ? 'up' : flat ? 'flat' : ''}"><b>${pctText(before)} → ${pctText(after)}</b>`
       + `<span>${esc(label)} · ${esc(T('ui.rvBefore'))}→${esc(T('ui.rvAfter'))}</span></div>`;
   };
   const cards = `<div class="ba">${card(T('ui.rvTrain'), c.before.train, c.after.train)}${card(T('ui.rvHoldout'), c.before.holdout, c.after.holdout)}</div>`;
-  if (c.setupChanged) return `${cards}${warn(T('ui.rvSetupChanged'))}`;
-  if (c.before.holdout == null || c.before.train == null) return `${cards}${warn(T('ui.rvNoBaseline'))}`;
-  const gained = c.after.holdout != null && c.after.holdout > c.before.holdout;
-  const note = gained
+  const v = compareVerdict({ before: c.before, after: c.after, keys: c.keys, curKey: setupKey() });
+  if (v.state === 'setup-changed') return `${cards}${warn(T('ui.rvSetupChanged'))}`;
+  if (v.state === 'no-before') return `${cards}${warn(T('ui.rvNoBaseline'))}`;
+  if (v.state === 'no-after') return `${cards}${warn(T('ui.rvNoAfter'))}`;
+  const note = v.gained
     ? T('ui.rvGain', { before: pctText(c.before.holdout), after: pctText(c.after.holdout) })
     : T('ui.rvNoGain', {
       a: `${pctText(c.before.train)}→${pctText(c.after.train)}`,
       b: `${pctText(c.before.holdout)}→${pctText(c.after.holdout)}`,
     });
-  return `${cards}<div class="wrhint" style="margin-bottom:12px;color:${gained ? 'var(--ok)' : 'var(--warn)'}">${esc(note)}</div>`;
+  return `${cards}<div class="wrhint" style="margin-bottom:12px;color:${v.gained ? 'var(--ok)' : 'var(--warn)'}">${esc(note)}</div>`;
 }
 
 function renderHistory() {
@@ -2751,38 +2755,45 @@ async function runAiReview() {
 async function adoptProposal() {
   if (!reviewProposal || !strategyEl) return;
   if (batchBusy) { reviewMsg(T('ui.rvBusy'), true); renderReview(); return; } // 跑批期间采纳会读到上一轮旧数字
+  const curKey = setupKey();
+  // 基线必须是「当前这套对局设置」下跑的：否则「A 对手的改前」和「B 对手的改后」并列出来是假对比
+  const baseKeys = [batchRuns.train && batchRuns.train.key, batchRuns.holdout && batchRuns.holdout.key].filter(Boolean);
+  if (baseKeys.length && baseKeys.some((k) => k !== curKey)) {
+    reviewMsg(T('ui.rvBaselineStale'), true);
+    renderReview();
+    return;
+  }
   const before = {
     train: batchRuns.train ? batchRuns.train.agg.winRate : null,
     holdout: batchRuns.holdout ? batchRuns.holdout.agg.winRate : null,
   };
-  const beforeKey = setupKey();
   strategyEl.value = reviewProposal.strategy;
   saveDraft();
   reviewProposal = null;
   reviewMsg(T('ui.rvAdopted'));
   renderReview();
   const codeBefore = editorEl.value;
-  const logAdopt = (outcome, reason) => setGenLog(buildGenLog({
-    outcome, reason, env: genEnv(), strategy: strategyEl.value, skill: userSkill(), attempts: [],
-  }));
   if (sdkState() !== 'ready') { // 态①：没有 AI 通道 —— 战术已写入，但代码还是旧版，胜率不可能变
     reviewMsg(T('ui.rvAdoptNoSdk'), true);
-    logAdopt('adopt-no-sdk', `sdk=${sdkState()} strategy written, code unchanged`);
+    setGenLog(buildGenLog({
+      outcome: 'adopt-no-sdk', reason: `sdk=${sdkState()}; strategy written, code unchanged`,
+      env: genEnv(), strategy: strategyEl.value, skill: userSkill(), attempts: [],
+    }));
     renderReview();
     return;
   }
-  try {
-    await generateScript();
-  } catch (e) { // 态②：重生成失败 —— 带上异常名与内容，别只说「失败了」
-    const msg = `${(e && e.name) || 'Error'}: ${String((e && e.message) || e)}`;
-    reviewMsg(T('ui.rvAdoptGenFail', { msg }), true);
-    logAdopt('adopt-gen-failed', msg);
+  // generateScript 自己吞掉所有失败并把真因（哪次尝试、模型回了什么、gate 报什么错、401 还是没代码块）
+  // 写进诊断日志，所以这里靠它的返回值分流，且**不再覆盖**那份日志——否则用户下载到的只剩一句「代码没变」。
+  const gen = await generateScript();
+  if (gen && !gen.ok) { // 态②：生成失败 —— 归因用真实 outcome，诊断日志保留 generateScript 写的载荷
+    reviewMsg(T('ui.rvAdoptGenFail', { msg: `${gen.outcome}: ${gen.reason || ''}`.trim() }), true);
     renderReview();
     return;
   }
-  if (editorEl.value === codeBefore) { // 态③：生成跑了但代码没变 —— 不做一个必然无差异的对比
-    reviewMsg(T('ui.rvAdoptNoChange'), true);
-    logAdopt('adopt-code-unchanged', 'generateScript finished but editor content identical');
+  if (editorEl.value === codeBefore) { // 态③：生成成功但代码没变 —— 不做一个必然无差异的对比
+    reviewMsg(T('ui.rvAdoptNoChange', { msg: (gen && gen.outcome) || 'unknown' }), true);
+    if (lastGenLog) setGenLog({ ...lastGenLog, adopt: { outcome: 'adopt-code-unchanged', genOutcome: (gen && gen.outcome) || null } });
+    else setGenLog(buildGenLog({ outcome: 'adopt-code-unchanged', reason: 'editor content identical after generateScript', env: genEnv(), strategy: strategyEl.value, skill: userSkill(), attempts: [] }));
     renderReview();
     return;
   }
@@ -2792,7 +2803,12 @@ async function adoptProposal() {
     train: batchRuns.train ? batchRuns.train.agg.winRate : null,
     holdout: batchRuns.holdout ? batchRuns.holdout.agg.winRate : null,
   };
-  lastCompare = { before, after, setupChanged: beforeKey !== setupKey() };
+  lastCompare = {
+    before,
+    after,
+    // 对比是否成立，看的是被比较数据自身的 setup key（不是「采纳开始/结束」两个时刻的 key）
+    keys: [curKey, batchRuns.train && batchRuns.train.key, batchRuns.holdout && batchRuns.holdout.key].filter(Boolean),
+  };
   reviewHistory = reviewHistory.concat([{ round: reviewHistory.length + 1, before, after }]);
   reviewMode = 'batch';
   reviewMsg('');
