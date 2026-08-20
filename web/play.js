@@ -262,6 +262,7 @@ export function buildIterationLog(o) {
     applied: i.applied ? { round: i.applied.round ?? null, trainWinRate: typeof i.applied.trainWinRate === 'number' ? i.applied.trainWinRate : null } : null,
     stopped: String(i.stopped || 'done'), // done | aborted | setup-changed | no-sdk | error
     fakeLlm: i.fakeLlm === true, // true = 用调试假 AI 跑的，结果不代表真实模型（产物自证来源）
+    baseSnapshotErr: i.baseSnapshotErr ? redactSecrets(String(i.baseSnapshotErr)) : '', // 原版快照写失败的原因（空=正常）
     stats: { validRounds: valid, failedRounds: cands.length - valid },
   };
 }

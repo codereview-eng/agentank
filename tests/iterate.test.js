@@ -110,3 +110,10 @@ test('迭代日志：中途改了对局设置的中止态如实落档', () => {
   const log = buildIterationLog({ setup: {}, baseline: null, candidates: [], applied: null, stopped: 'setup-changed' });
   assert.equal(log.stopped, 'setup-changed');
 });
+
+test('迭代日志：原版快照写失败的原因必须落档（保护没生效要能事后查）', () => {
+  const ok = buildIterationLog({ setup: {}, baseline: null, candidates: [], applied: null, stopped: 'done' });
+  assert.equal(ok.baseSnapshotErr, '');
+  const bad = buildIterationLog({ setup: {}, baseline: null, candidates: [], applied: null, stopped: 'done', baseSnapshotErr: 'QuotaExceededError: full' });
+  assert.match(bad.baseSnapshotErr, /QuotaExceededError/);
+});

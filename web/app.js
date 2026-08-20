@@ -617,6 +617,7 @@ async function switchTank(name) {
     writeLocalStore(garage);
   }
   clearDraft(); // 切台是明确换车：先清掉上一台的草稿，再入座，避免旧草稿串到新台
+  clearIterBase(); // 迭代前快照同属「上一台」，一起清，避免一键回退把 A 台代码盖到 B 台
   applyTankToUi(curTank() || t);
   updateVersionUi();
   renderGarage();
@@ -640,6 +641,7 @@ async function newTank() {
   }
   applyTankToUi(curTank());
   clearDraft();
+  clearIterBase(); // 新建=换车：上一台的迭代快照必须一起清（漏挂会让一键回退把 A 台代码盖到 B 台）
   updateVersionUi();
   renderGarage();
   scheduleLadder();
@@ -987,6 +989,7 @@ function resetForLogout() { // 场景 5：登出清空车库与编辑器（未�
   for (const t of s.tanks) archiveCopy(t, 'logout');
   writeLocalStore({ tanks: [], cur: null });
   clearDraft();
+  clearIterBase(); // 登出必须一并清：否则下一个人能一键取回上一个人的战术与代码
   editorEl.value = DEFAULT_SCRIPT;
   if (strategyEl) strategyEl.value = DEFAULT_STRATEGY; // 上一人的策略文本一并清掉，回到默认战术文本
 }
@@ -2838,6 +2841,11 @@ async function adoptProposal() {
 // 只靠纯函数单测就宣称「闭环可用」属于假绿。带这个参数时用固定回复驱动整条链路做端到端验证；
 // 不带参数时这段代码零参与（线上行为不变），且启用时界面会明示「假 AI（调试）」。
 const FAKE_LLM = (() => { try { return new URLSearchParams(location.search).get('fakellm') === '1'; } catch { return false; } })();
+// 假 AI 的单次延时（毫秒，仅调试用）：真实模型一次要十几秒，假 AI 30ms 会让 10 轮在 2~3 秒内跑完，
+// 中断/改设置这类「跑到一半」的断言根本来不及命中。用 ?fakedelay= 把节奏调到接近真实。
+const FAKE_DELAY = (() => {
+  try { return Math.min(3000, Math.max(0, Number(new URLSearchParams(location.search).get('fakedelay')) || 30)); } catch { return 30; }
+})();
 function makeFakeLlm() {
   let genCall = 0;
   const VARIANTS = [
@@ -2851,7 +2859,7 @@ function makeFakeLlm() {
   return {
     models: async () => ({ models: [{ id: 'fake-model-a' }, { id: 'fake-model-b' }], default_model: 'fake-model-a' }),
     chat: async (prompt, o) => {
-      await new Promise((r) => setTimeout(r, 30));
+      await new Promise((r) => setTimeout(r, FAKE_DELAY));
       if (o && o.signal && o.signal.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
       if (String(prompt).includes('脚本生成器')) { // 生成代码
         const code = VARIANTS[genCall++ % VARIANTS.length];
@@ -2873,8 +2881,9 @@ function makeFakeLlm() {
 // 留出组验证做成事后可选按钮，不占迭代时间。
 // 单轮复盘之所以会让胜率变低，是因为流程里没有任何一步检验 AI 的建议——迭代补的正是择优压力。
 const ITER_ROUND_CHOICES = [3, 5, 10];
-const ITERBASE_KEY = 'agentank-iterbase'; // 迭代前的原版快照（崩溃/关页也能回退，草稿会被中间版覆盖）
+const ITERBASE_KEY = 'agentank.iterbase'; // 迭代前的原版快照（崩溃/关页也能回退，草稿会被中间版覆盖）
 let iterRoundsChoice = ITER_ROUND_CHOICES[0]; // 轮数选择必须有模块级状态：只靠 DOM 会在重渲染时被打回默认
+let iterBaseErr = ''; // 原版快照写失败的原因（非空 = B1 的保护这次不生效，必须明示）
 let iterState = null;
 let iterModels = null;   // {models:[{id}], default_model} | {error:'...'}
 let iterMsgText = '';
@@ -2883,19 +2892,45 @@ const iterMsg = (t, bad) => { iterMsgText = t || ''; iterMsgBad = !!bad; };
 const iterModel = () => (($id('itModel') || {}).value || '');
 const iterRounds = () => iterRoundsChoice;
 
-function writeIterBase() { // 迭代前留一份原版，独立于草稿（草稿会被每轮中间版覆盖）
+// 迭代前留一份原版，独立于草稿（草稿会被每轮中间版覆盖）。
+// 快照必须绑定「哪台车 + 哪种登录态」：否则切台或换账号后点回退，会把别台/别人的代码盖过来。
+// 写入不是必然成功（隐私模式/配额满/file:）——静默失败等于 B1 的保护在最需要时不存在，所以要 read-back 并回传原因。
+function writeIterBase() {
+  const snap = {
+    strategy: strategyEl ? strategyEl.value : '', code: editorEl.value,
+    tank: myTankLabel(), mode: garage.mode, ts: Date.now(),
+  };
   try {
-    localStorage.setItem(ITERBASE_KEY, JSON.stringify({
-      strategy: strategyEl ? strategyEl.value : '', code: editorEl.value,
-      tank: myTankLabel(), ts: Date.now(),
-    }));
-  } catch { /* 存不下就算了，不阻断迭代 */ }
+    localStorage.setItem(ITERBASE_KEY, JSON.stringify(snap));
+    const back = readIterBase();
+    if (!back || back.code !== snap.code || back.tank !== snap.tank) {
+      return { ok: false, err: 'read-back mismatch after write' };
+    }
+    return { ok: true, err: '' };
+  } catch (e) {
+    return { ok: false, err: `${(e && e.name) || 'Error'}: ${String((e && e.message) || e)}` };
+  }
 }
 function readIterBase() { try { return JSON.parse(localStorage.getItem(ITERBASE_KEY) || 'null'); } catch { return null; } }
 function clearIterBase() { try { localStorage.removeItem(ITERBASE_KEY); } catch { /* 忽略 */ } }
 function restoreIterBase() {
   const b = readIterBase();
   if (!b) return;
+  if (b.tank && b.tank !== myTankLabel()) { // 跨台回退会顶掉当前这台未保存的改动：直接拒绝
+    iterMsg(T('ui.itRestoreOtherTank', { tank: b.tank }), true);
+    renderReview();
+    return;
+  }
+  if (b.mode && garage.mode && b.mode !== garage.mode) { // 登录态变了（含换账号）：同样拒绝
+    iterMsg(T('ui.itRestoreOtherTank', { tank: b.tank || '—' }), true);
+    renderReview();
+    return;
+  }
+  const cur = editorEl.value;
+  if (cur !== String(b.code || '')) {
+    archiveCopy({ name: myTankLabel(), code: cur, strategy: strategyEl ? strategyEl.value : '', skill: userSkill(), v: 0 }, 'iter-restore');
+    if (typeof confirm === 'function' && !confirm(T('ui.itRestoreConfirm'))) return; // eslint-disable-line no-alert
+  }
   if (strategyEl) strategyEl.value = String(b.strategy || '');
   editorEl.value = String(b.code || '');
   saveDraft();
@@ -2920,9 +2955,13 @@ function renderIterPanel() {
   const st = sdkState();
   const running = !!(iterState && iterState.running);
   const parts = [`<h4>${esc(T('ui.itTitle'))}${FAKE_LLM ? ` <span class="fl">${esc(T('ui.itFakeChip'))}</span>` : ''}</h4>`];
-  if (readIterBase()) { // 崩溃/关页后也能回退到迭代前那版
-    parts.push(`<div class="wrhint">${esc(T('ui.itRestoreHint'))}</div>`);
+  const snap = readIterBase();
+  if (snap) { // 崩溃/关页后也能回退到迭代前那版；标明属于哪台车，避免串台
+    parts.push(`<div class="wrhint">${esc(T('ui.itRestoreHint'))}${snap.tank ? esc(T('ui.itRestoreOf', { tank: snap.tank })) : ''}</div>`);
     parts.push(`<button class="btn ghost" id="itRestoreBtn" style="padding:5px 12px;font-size:11px">${esc(T('ui.itRestore'))}</button>`);
+  }
+  if (iterBaseErr) { // 反向告警：保护没生效必须让玩家在开跑前就知道
+    parts.push(`<div class="wrhint" style="color:var(--warn)">${esc(T('ui.itSnapshotFail', { msg: iterBaseErr }))}</div>`);
   }
   if (st === 'absent') { parts.push(`<div class="wrhint">${esc(T('ui.rvNoSdk'))}</div>`); return parts.join(''); }
   if (st === 'need-login') { parts.push(`<div class="wrhint">${esc(T('ui.rvNeedLogin'))}</div>`); return parts.join(''); }
@@ -2996,7 +3035,8 @@ async function runIteration() {
   const rounds = iterRounds();
   const model = iterModel();
   const lockKey = setupKey(); // 迭代要跑几分钟，期间对手/技能/地图可点：跨设置的胜率不能放进同一个候选池比较
-  writeIterBase();
+  const snapRes = writeIterBase();
+  iterBaseErr = snapRes.ok ? '' : snapRes.err;
   const baseline = {
     round: 0, isBaseline: true, valid: true,
     strategy: strategyEl.value, code: editorEl.value, codeHash: codeHashOf(editorEl.value),
@@ -3043,7 +3083,7 @@ async function runIteration() {
       iterTick();
       strategyEl.value = parsed.strategy;
       // noDraft：迭代期间不许把中间版本写进草稿，否则崩溃/关页后玩家原版不可恢复（评审 B1）
-      const gen = await generateScript({ model: model || undefined, signal: iterState.ctl ? iterState.ctl.signal : undefined, noDraft: true });
+      const gen = await generateScript({ model: model || undefined, signal: iterState.ctl ? iterState.ctl.signal : undefined, noDraft: !iterBaseErr });
       if (!gen || !gen.ok) {
         cand.invalidReason = `gen ${(gen && gen.outcome) || 'failed'}: ${(gen && gen.reason) || ''}`.trim();
         iterState.candidates.push(cand);
@@ -3113,6 +3153,7 @@ function downloadIterLog() {
   if (!iterState) return;
   const log = buildIterationLog({
     at: iterState.at,
+    baseSnapshotErr: iterBaseErr,
     setup: { ...(batchRuns.train ? batchRuns.train.setup : {}), model: iterState.model || 'default', rounds: iterState.rounds },
     baseline: iterState.baseline,
     candidates: iterState.candidates.filter((c) => !c.isBaseline),
