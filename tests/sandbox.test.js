@@ -123,8 +123,16 @@ test('沙箱协议：批量作业回「一局一行摘要」，先后手由 who 
       ],
     },
   });
-  const m = out[0];
+  // 回包契约（2026-08-20 起）：批量作业先逐局回 progress，最后一条才是结果。
+  // 为什么要有 progress：整批 12 局在 Worker 里要跑好几秒，主线程一条消息都收不到时，
+  // 界面只能显示一行静止的「打 12 局评分」——与「卡死」无法区分。
+  const progress = out.filter((x) => typeof x.progress === 'number');
+  assert.deepEqual(progress.map((p) => p.progress), [1, 2], '每跑完一局回一条进度');
+  assert.equal(progress[0].total, 2, '进度要带总局数，界面才能显示 i/n');
+  assert.ok(progress.every((p) => p.ok !== true && !p.error), '进度消息不带 ok/error，主线程据此不当成收尾');
+  const m = out[out.length - 1];
   assert.equal(m.ok, true);
+  assert.equal(m.id, 3, '结果消息仍带作业 id');
   assert.equal(m.games.length, 2);
   assert.equal(m.games[0].win, true);   // who=0 且 winner=0 → 我方胜
   assert.equal(m.games[1].win, false);  // 换先后手后 winner=0 是对手
