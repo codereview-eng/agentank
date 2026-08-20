@@ -72,6 +72,23 @@ self.onmessage = function (e) {
   var m = e.data || {};
   var box = { count: 0, last: '' };
   try {
+    if (m.type === 'batch') {
+      // 批量试跑（同关卡同对手同技能、只换 seed）：Worker 内跑完直接出「一局一行摘要」，
+      // 不把全量事件回传主线程（12 局的事件有几 MB，回传既慢又没人看）。
+      // 摘要口径与主线程共用 summarizeGame，两条路胜率必须一致。
+      var games = [];
+      for (var bi = 0; bi < m.jobs.length; bi++) {
+        var bj = m.jobs[bi];
+        if (!bj.map) throw new Error('batch job requires map (摘要判定需要地形与出生点)');
+        var br = runMatch({ seed: bj.seed, botA: __pick(bj.a, box), botB: __pick(bj.b, box), map: bj.map, content: m.content || null });
+        games.push(summarizeGame({
+          map: bj.map, result: br, who: bj.who || 0,
+          seed: bj.seedStr || bj.seed, strategy: m.strategy || '',
+        }));
+      }
+      self.postMessage({ id: m.id, ok: true, games: games, errCount: box.count, errLast: box.last });
+      return;
+    }
     if (m.type === 'ladder') {
       var out = [];
       for (var i = 0; i < m.jobs.length; i++) {

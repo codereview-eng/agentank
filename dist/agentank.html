@@ -111,6 +111,146 @@ footer{
   font-size:11px; color:var(--dim); display:flex; gap:24px;
 }
 footer .mono{color:var(--muted)}
+
+/* ── 左栏重设计（方案 A）：作战台 = 固定头 + 独立滚动中段 + 粘底 CTA ── */
+.lp{position:relative}
+#lpScroll{flex:1; min-height:0; overflow:auto; display:flex; flex-direction:column;
+  scrollbar-width:thin; scrollbar-color:#3A4757 transparent}
+#lpScroll::-webkit-scrollbar{width:8px}
+#lpScroll::-webkit-scrollbar-thumb{background:#3A4757; border-radius:4px}
+#lpCta{flex:none; padding:10px 12px 12px; border-top:1px solid var(--line); background:var(--panel);
+  display:flex; flex-direction:column; gap:7px}
+#lpCta .row2{display:flex; gap:7px}
+#lpCta .row2 .btn{flex:1}
+/* 坦克切换器 */
+.tankbar{padding:8px 10px; border-bottom:1px solid var(--line); position:relative; flex:none}
+.tanksel{width:100%; display:flex; align-items:center; gap:8px; background:var(--panel-2);
+  border:1px solid var(--line); border-radius:8px; padding:7px 10px; cursor:pointer; color:var(--text); font-size:13px}
+.tanksel .nm{font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.tanksel .ver{color:var(--muted); font-size:11px; flex:none}
+.tanksel .sync{margin-left:auto; font-size:11px; color:var(--dim); flex:none}
+.tanksel .sync.on{color:var(--ok)}
+.tanksel .caret{color:var(--muted); font-size:10px; flex:none}
+.dd{position:absolute; left:10px; right:10px; top:46px; z-index:40; background:#0E1524; border:1px solid var(--line);
+  border-radius:10px; box-shadow:0 14px 40px rgba(0,0,0,.6); padding:6px; font-size:12px; max-height:52vh; overflow:auto}
+.dd[hidden]{display:none}
+.dd .it{display:flex; align-items:center; gap:8px; padding:7px 9px; border-radius:7px; cursor:pointer;
+  color:var(--muted); width:100%; background:transparent; border:none; text-align:left; font:inherit}
+.dd .it:hover{background:#182234; color:var(--text)}
+.dd .it.on .nm{color:var(--p1); font-weight:600}
+.dd .it .nm{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.dd .sep{height:1px; background:var(--line); margin:5px 2px}
+.dd .it.act{color:var(--accent)}
+/* 通知区：默认只显示 1 条 + 「还有 N 条」 */
+.notices{flex:none; border-bottom:1px solid var(--line)}
+.notices:empty{display:none}
+.nt-hidden{display:none !important}
+#noticeMore{display:block; width:100%; background:transparent; border:none; border-top:1px dashed var(--line);
+  color:var(--muted); font-size:11px; padding:5px 12px; cursor:pointer; text-align:left}
+#noticeMore[hidden]{display:none}
+/* 战术区 */
+.tacthead{display:flex; align-items:center; gap:6px; padding:9px 12px 4px; font-size:11px; color:var(--dim); letter-spacing:1px; flex:none}
+/* 对局设置：一行 chip + 气泡 */
+.setup{flex:none; padding:8px 12px; border-top:1px solid var(--line); display:flex; gap:6px; flex-wrap:wrap; position:relative}
+.schip{display:flex; align-items:center; gap:5px; border:1px solid var(--line); background:var(--panel-2);
+  border-radius:999px; padding:4px 10px; font-size:11.5px; color:var(--text); cursor:pointer; max-width:100%; font-family:inherit}
+.schip .k{color:var(--dim); flex:none}
+.schip .v{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.schip .caret{color:var(--muted); font-size:9px; flex:none}
+.schip.on{border-color:var(--accent); color:var(--accent)}
+.pop{position:absolute; left:12px; right:12px; bottom:44px; z-index:40; background:#0E1524; border:1px solid var(--line);
+  border-radius:10px; box-shadow:0 14px 40px rgba(0,0,0,.6); padding:10px; font-size:12px}
+.pop[hidden]{display:none}
+.pop .prow{display:none}
+.pop .prow.on{display:block}
+.pop .plabel{font-size:11px; color:var(--dim); margin-bottom:5px}
+.pop select{width:100%}
+/* 覆盖层：遮罩 / 弹窗 / 抽屉 */
+#overlayScrim{position:fixed; inset:0; background:rgba(6,10,16,.66); z-index:100}
+#overlayScrim[hidden]{display:none}
+.modal{position:fixed; z-index:101; left:50%; top:50%; transform:translate(-50%,-50%); width:720px; max-width:92vw;
+  max-height:82vh; background:var(--panel); border:1px solid var(--line); border-radius:14px;
+  box-shadow:0 30px 80px rgba(0,0,0,.7); display:flex; flex-direction:column; overflow:hidden}
+.modal[hidden],.drawer[hidden]{display:none}
+.drawer{position:fixed; z-index:101; top:62px; right:0; bottom:26px; width:min(1080px,78vw); background:var(--panel);
+  border-left:1px solid var(--line); box-shadow:-24px 0 70px rgba(0,0,0,.6); display:flex; flex-direction:column}
+.ovh{display:flex; align-items:center; gap:10px; padding:13px 18px; border-bottom:1px solid var(--line); flex:none}
+.ovh h3{font-size:14px; font-weight:700; letter-spacing:1px}
+.ovh .sub{font-size:11px; color:var(--dim)}
+.ovh .ovacts{margin-left:auto; display:flex; gap:8px; align-items:center}
+.ovh .x{width:26px; height:26px; border-radius:7px; border:1px solid var(--line); background:transparent;
+  color:var(--muted); cursor:pointer; font-size:13px; flex:none}
+.ovb{padding:14px 18px; overflow:auto; min-height:0; flex:1}
+.ovf{padding:11px 18px; border-top:1px solid var(--line); display:flex; gap:8px; align-items:center; flex:none}
+.ovf .spacer{flex:1}
+.drawer .dbody{flex:1; display:flex; min-height:0}
+.drawer #editor{flex:1; height:auto; min-height:0; width:auto; resize:none; font-size:12.5px}
+.drawer .dside{width:250px; border-left:1px solid var(--line); padding:12px 14px; font-size:11.5px;
+  color:var(--muted); overflow:auto; flex:none; display:flex; flex-direction:column; gap:8px; align-items:flex-start}
+.drawer .dside h4{font-size:11px; color:var(--dim); letter-spacing:1px; font-weight:600}
+.gcard{display:flex; align-items:center; gap:12px; border:1px solid var(--line); border-radius:10px;
+  padding:11px 13px; margin-bottom:9px; background:var(--panel-2)}
+.gcard.cur{border-color:#4C6B22; background:#1B2416}
+.gcard .meta{flex:1; min-width:0}
+.gcard .n{font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.gcard .n .tag{font-size:10px; color:#1A2408; background:var(--p1); border-radius:4px; padding:1px 6px; margin-left:7px; font-weight:700}
+.gcard .d{font-size:11px; color:var(--dim); margin-top:3px}
+.gcard .ops{display:flex; gap:6px; flex:none}
+.gcard .ops .btn{padding:4px 10px; font-size:11px; letter-spacing:0}
+/* ── 战报下载 + AI 复盘（胜率标尺区 / 复盘抽屉） ── */
+.logacts{display:flex; gap:6px; padding:0 14px 10px; flex:none}
+.logacts .btn{padding:5px 10px; font-size:11px; letter-spacing:0}
+.wrbox{padding:10px 14px 12px; display:flex; flex-direction:column; gap:9px; flex:none}
+.wrhead{display:flex; align-items:baseline; gap:8px}
+.wrnum{font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:30px; font-weight:700; color:var(--p1); font-variant-numeric:tabular-nums; line-height:1}
+.wrnum.na{color:var(--dim)}
+.wrsub{font-size:11px; color:var(--dim)}
+.wrmeta{font-size:11px; color:var(--muted); display:flex; flex-wrap:wrap; gap:4px 10px}
+.wrmeta:empty{display:none}
+.bars{display:grid; gap:5px}
+.bars:empty{display:none}
+.bar{display:grid; grid-template-columns:5.2em 1fr 2.6em; gap:7px; align-items:center; font-size:11px; color:var(--muted)}
+.bar i{display:block; height:8px; border-radius:4px; background:var(--bad)}
+.bar i.w{background:var(--warn)}
+.bar em{font-family:ui-monospace,Menlo,monospace; font-style:normal; text-align:right; color:var(--text)}
+.wrfail{border:1px solid var(--bad); border-radius:9px; padding:9px 11px; background:#2A1518; color:var(--bad); font-size:11.5px}
+.wrfail[hidden]{display:none}
+.wrfail .d{color:var(--muted); font-size:11px; margin-top:4px; font-family:ui-monospace,Menlo,monospace; word-break:break-all}
+.wracts{display:flex; gap:6px}
+.wracts .btn{padding:5px 10px; font-size:11px; letter-spacing:0}
+.wrhint{font-size:11px; color:var(--dim)}
+.fl{display:inline-flex; gap:4px; align-items:center; border:1px solid #54431C; color:var(--warn); border-radius:999px; padding:0 7px; font-size:10.5px; flex:none; letter-spacing:0; font-weight:400}
+.fl[hidden]{display:none} /* 作者样式的 display 会盖掉 hidden 属性的 UA display:none，必须显式补 */
+#reviewDrawer .dbody{display:grid; grid-template-columns:minmax(0,1fr) 340px}
+.rvmain{padding:14px 16px; overflow:auto; min-width:0}
+.rpt{background:var(--panel-2); border:1px solid var(--line); border-radius:9px; padding:11px 13px;
+  font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:11.5px; line-height:1.85; color:var(--text); white-space:pre-wrap; overflow-x:auto; margin:0}
+.tl{background:var(--panel-2); border:1px solid var(--line); border-radius:9px; padding:8px 10px; font-size:12px; line-height:1.85}
+.tl .ln{padding:1px 2px; border-radius:5px}
+.tl .ln .t{color:var(--dim); font-family:ui-monospace,Menlo,monospace; margin-right:6px}
+.tl .ln.dimd{opacity:.55}
+.tl .ln.flag{background:#2A2314; border:1px solid #54431C; padding:5px 7px; margin:3px 0}
+.tl .ln.flag .w{color:var(--warn); font-weight:700}
+.tl .ln.flag .why{display:block; color:var(--muted); font-size:11px; margin-top:3px}
+.diag{border:1px solid var(--line); border-radius:9px; padding:10px 12px; background:var(--panel-2); margin-bottom:8px}
+.diag .n{font-size:12px; color:var(--text); line-height:1.65}
+.diag .ev{font-size:11px; color:var(--dim); margin-top:4px; font-family:ui-monospace,Menlo,monospace}
+.cmp{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px}
+.cmpcol{border:1px solid var(--line); border-radius:9px; padding:10px 12px; background:var(--panel-2); font-size:12px; line-height:1.75; color:var(--muted); white-space:pre-wrap}
+.cmpcol.new{border-color:#4C6B22; background:#1B2416; color:var(--text)}
+.cmpcol h5{margin:0 0 6px; font-size:11px; color:var(--dim); letter-spacing:1px; font-weight:600}
+.ba{display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:9px; margin-bottom:12px}
+.bacard{border:1px solid var(--line); border-radius:9px; padding:10px 12px; background:var(--panel-2)}
+.bacard b{display:block; font-family:ui-monospace,Menlo,monospace; font-size:20px; font-variant-numeric:tabular-nums; color:var(--text)}
+.bacard.up b{color:var(--ok)}
+.bacard.flat b{color:var(--warn)}
+.bacard span{display:block; font-size:11px; color:var(--dim); margin-top:2px}
+@media (max-width:900px){
+  #reviewDrawer .dbody{grid-template-columns:minmax(0,1fr)}
+  main{grid-template-columns:1fr}
+  .modal{width:96vw}
+  .drawer{width:100vw; top:0; bottom:0}
+}
 </style>
 </head>
 <body>
@@ -131,9 +271,10 @@ footer .mono{color:var(--muted)}
   </div>
 </header>
 <main id="playMain">
-  <!-- 左：战术指挥（策略文本优先：默认只见策略描述；脚本细节折叠在「查看/编辑脚本」里） -->
-  <section class="panel" style="position:relative">
-    <h2><span class="dot"></span><span id="editorTitle">战术指挥 · 我的坦克 v1</span><button id="strategyHelpBtn" type="button" data-i18n="ui.strategyHelpBtn" data-i18n-title="ui.strategyHelpTitle" title="怎么写战术？" aria-label="how to write tactics" style="margin-left:auto;width:20px;height:20px;flex:none;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer;font-size:12px;line-height:1;padding:0">?</button></h2>
+  <!-- 左：作战台（方案 A · 2026-08-20）：只留每局都要碰的东西 —— 切换坦克 / 看提醒 / 写战术 / 配对局 / 开战。
+       车库、脚本编辑、账号与 Agent Key 三块低频功能已移出到弹窗与抽屉；中段独立滚动，CTA 粘底。 -->
+  <section class="panel lp">
+    <h2><span class="dot"></span><span id="editorTitle" data-i18n="ui.lpTitle">战术指挥</span><button id="strategyHelpBtn" type="button" data-i18n="ui.strategyHelpBtn" data-i18n-title="ui.strategyHelpTitle" title="怎么写战术？" aria-label="how to write tactics" style="margin-left:auto;width:20px;height:20px;flex:none;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer;font-size:12px;line-height:1;padding:0">?</button></h2>
     <div id="strategyHelpPop" hidden style="position:absolute;z-index:30;left:12px;right:12px;top:40px;background:#0E1524;border:1px solid var(--line);border-radius:10px;padding:12px 14px;box-shadow:0 10px 30px rgba(0,0,0,.55)">
       <div data-i18n="ui.strategyHelpTitle" style="font-weight:600;font-size:13px;margin-bottom:6px">怎么写战术？</div>
       <div data-i18n="ui.strategyHelpBody" style="font-size:12px;line-height:1.7;color:var(--muted);white-space:pre-line">用日常语言描述你想要的打法，AI 会把这段战术文字变成可运行的坦克代码（不是替你改写战术文字）。
@@ -144,75 +285,86 @@ footer .mono{color:var(--muted)}
 写完点下方「AI 由战术文字生成坦克代码」。</div>
       <button class="btn ghost" id="strategyHelpClose" type="button" data-i18n="ui.strategyHelpClose" style="margin-top:10px">知道了</button>
     </div>
-    <textarea id="strategyBox" spellcheck="false" data-i18n-ph="ui.strategyPh" placeholder="在这里用文字描述你的战术（点右上角 ? 看写法和示例）" style="flex:1;min-height:80px;padding:12px 14px;border:none;outline:none;resize:none;background:transparent;color:#C9D6E4;font-size:13px;line-height:1.7;font-family:inherit"></textarea>
-    <div style="display:flex;gap:8px;align-items:center;padding:0 14px 6px">
-      <button class="btn ghost" id="genBtn" data-i18n="ui.genBtn" style="flex:1;letter-spacing:0">⚡ AI 由战术文字生成坦克代码</button>
-      <button class="btn ghost" id="genLogBtn" data-i18n="ui.genLogBtn" data-i18n-title="ui.genLogTitle" hidden style="flex:none;letter-spacing:0">⬇ 下载诊断日志</button>
+
+    <!-- 坦克切换器：换坦克是高频动作，留在原地一击直达；管理类沉到下拉最后两行 -->
+    <div class="tankbar">
+      <button class="tanksel" id="tankSwitch" type="button" aria-haspopup="true" aria-expanded="false">
+        <span class="nm" id="tankSwitchName">我的坦克</span>
+        <span class="ver" id="tankSwitchVer">v1</span>
+        <span class="sync" id="tankSwitchSync" data-i18n="ui.tankSwitchLocal">仅存本机</span>
+        <span class="caret">▼</span>
+      </button>
+      <div class="dd" id="tankMenu" hidden>
+        <div id="tankMenuList"></div>
+        <div class="sep"></div>
+        <button class="it act" id="garageOpenBtn" type="button" data-i18n="ui.garageManage">🗂 管理车库…</button>
+        <button class="it act" id="tankNewBtn" type="button" data-i18n="ui.garageNew">＋ 新建坦克</button>
+      </div>
     </div>
-    <div id="genMsg" style="font-size:11px;color:var(--dim);padding:0 14px 8px;min-height:14px"></div>
-    <details id="codeBox" style="border-top:1px solid var(--line)">
-      <summary data-i18n="ui.codeBox" style="cursor:pointer;font-size:12px;color:var(--muted);padding:8px 14px">查看/编辑脚本（高级）</summary>
-      <textarea id="editor" spellcheck="false" style="width:100%;height:200px;flex:none;resize:vertical"></textarea>
-    </details>
-    <div class="err" id="scriptErr"></div>
-    <div class="skillhint" id="skillHint"><span id="skillHintText"></span><button id="skillHintBtn" type="button"></button></div>
-    <div class="skillhint" id="bridgeHint"><span id="bridgeText"></span><span id="bridgeBtns" style="display:flex;gap:6px;flex:none"></span></div>
-    <div class="ctrl">
-      <div class="row"><label data-i18n="ui.opponent">对手</label>
-        <select id="opp">
-          <option value="stealth">隐身偷袭流 (内置 · 技能：隐身)</option>
-          <option value="starGrabber">抢星流 (内置 · 技能：疾驰)</option>
-          <option value="camper">蹲草流 (内置 · 技能：冰冻)</option>
-          <option value="brawler">贴脸流 (内置 · 技能：超载)</option>
-        </select>
+
+    <!-- 通知区：脚本报错 / 技能不符 / 登录衔接三类统一排队，默认只露最紧急一条 -->
+    <div class="notices" id="noticeBox">
+      <div class="err notice" id="scriptErr"></div>
+      <div class="skillhint notice" id="skillHint"><span id="skillHintText"></span><button id="skillHintBtn" type="button"></button></div>
+      <div class="skillhint notice" id="bridgeHint"><span id="bridgeText"></span><span id="bridgeBtns" style="display:flex;gap:6px;flex:none"></span></div>
+      <button id="noticeMore" type="button" hidden></button>
+    </div>
+
+    <!-- 独立滚动中段：战术文字 + AI 生成（内容再多也只在这里滚，不会把开战按钮顶出屏幕） -->
+    <div id="lpScroll">
+      <div class="tacthead" data-i18n="ui.tactHead">战术描述（用大白话写打法）</div>
+      <textarea id="strategyBox" spellcheck="false" data-i18n-ph="ui.strategyPh" placeholder="在这里用文字描述你的战术（点右上角 ? 看写法和示例）" style="flex:1;min-height:120px;padding:2px 14px 10px;border:none;outline:none;resize:none;background:transparent;color:#C9D6E4;font-size:13px;line-height:1.7;font-family:inherit"></textarea>
+      <div style="display:flex;gap:8px;align-items:center;padding:0 14px 6px;flex:none">
+        <button class="btn ghost" id="genBtn" data-i18n="ui.genBtn" style="flex:1;letter-spacing:0">⚡ AI 由战术文字生成坦克代码</button>
+        <button class="btn ghost" id="genLogBtn" data-i18n="ui.genLogBtn" data-i18n-title="ui.genLogTitle" hidden style="flex:none;letter-spacing:0">⬇ 下载诊断日志</button>
       </div>
-      <div class="row"><label data-i18n="ui.mySkill">我的技能</label>
-        <select id="skillSel">
-          <option value="teleport" selected>传送（8 选 1）</option>
-          <option value="shield">护盾</option>
-          <option value="freeze">冰冻</option>
-          <option value="stun">眩晕</option>
-          <option value="overload">超载</option>
-          <option value="cloak">隐身</option>
-          <option value="poison">剧毒</option>
-          <option value="boost">疾驰</option>
-        </select>
+      <div id="genMsg" style="font-size:11px;color:var(--dim);padding:0 14px 8px;min-height:14px;flex:none"></div>
+    </div>
+
+    <!-- 对局设置：三行下拉压成一行 chip，点开才展开对应 select -->
+    <div class="setup" id="setupRow">
+      <button class="schip" id="chipOpp" type="button" data-pop="opp"><span class="k" data-i18n="ui.opponent">对手</span><span class="v"></span><span class="caret">▼</span></button>
+      <button class="schip" id="chipSkill" type="button" data-pop="skill"><span class="k" data-i18n="ui.mySkill">技能</span><span class="v"></span><span class="caret">▼</span></button>
+      <button class="schip" id="chipMap" type="button" data-pop="map"><span class="k" data-i18n="ui.map">地图</span><span class="v"></span><span class="caret">▼</span></button>
+      <div class="pop" id="setupPop" hidden>
+        <div class="prow" data-row="opp">
+          <div class="plabel" data-i18n="ui.opponent">对手</div>
+          <select id="opp">
+            <option value="stealth">隐身偷袭流 (内置 · 技能：隐身)</option>
+            <option value="starGrabber">抢星流 (内置 · 技能：疾驰)</option>
+            <option value="camper">蹲草流 (内置 · 技能：冰冻)</option>
+            <option value="brawler">贴脸流 (内置 · 技能：超载)</option>
+          </select>
+        </div>
+        <div class="prow" data-row="skill">
+          <div class="plabel" data-i18n="ui.mySkill">我的技能</div>
+          <select id="skillSel">
+            <option value="teleport" selected>传送（8 选 1）</option>
+            <option value="shield">护盾</option>
+            <option value="freeze">冰冻</option>
+            <option value="stun">眩晕</option>
+            <option value="overload">超载</option>
+            <option value="cloak">隐身</option>
+            <option value="poison">剧毒</option>
+            <option value="boost">疾驰</option>
+          </select>
+        </div>
+        <div class="prow" data-row="map">
+          <div class="plabel" data-i18n="ui.map">地图</div>
+          <select id="mapSel">
+            <option value="random" selected data-i18n="ui.mapRandom">随机（按种子生成）</option>
+          </select>
+        </div>
       </div>
-      <div class="row"><label data-i18n="ui.map">地图</label>
-        <select id="mapSel">
-          <option value="random" selected data-i18n="ui.mapRandom">随机（按种子生成）</option>
-        </select>
-      </div>
+    </div>
+
+    <!-- 粘底：开战永远看得见 -->
+    <div id="lpCta">
       <button class="btn" id="battleBtn" data-i18n="ui.battle">开 战</button>
-      <button class="btn ghost" id="saveBtn">保存为新版本</button>
-      <details id="garage" open style="margin-top:10px;border:1px solid var(--line);border-radius:8px;padding:8px">
-        <summary style="cursor:pointer;font-size:12px;color:var(--muted)"><span id="garageTitle" data-i18n="ui.garage">我的车库</span></summary>
-        <div id="garageMsg" style="font-size:11px;color:var(--dim);margin:4px 0;min-height:14px"></div>
-        <div id="garageList" style="margin-top:2px"></div>
-        <button class="btn ghost" id="garageNewBtn" data-i18n="ui.garageNew" style="margin-top:6px;padding:4px 10px;font-size:11px">新建坦克</button>
-      </details>
-      <details id="playPanel" open style="display:none;margin-top:10px;border:1px solid var(--line);border-radius:8px;padding:8px">
-        <summary data-i18n="play.panelTitle" style="cursor:pointer;font-size:12px;color:var(--muted)">我的坦克（云端）</summary>
-        <div id="playStatus" style="font-size:11px;color:var(--dim);margin:6px 0"></div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn ghost" id="playFillBtn" style="padding:4px 10px;font-size:11px" data-i18n="play.fill">回填默认流派代码</button>
-          <button class="btn ghost" id="playChallengeBtn" style="padding:4px 10px;font-size:11px" data-i18n="play.challenge">参加挑战赛</button>
-        </div>
-        <div id="playAgentKeys" style="display:none;margin-top:8px;border-top:1px dashed var(--line);padding-top:8px">
-          <div style="font-size:12px;color:var(--muted)" data-i18n="play.akTitle">Agent Key（给我的 agent 换临时票用）</div>
-          <div style="font-size:11px;color:var(--dim);margin:4px 0" data-i18n="play.akOnce">明文 key 只显示一次：请立即复制保存，关闭后无法再查看</div>
-          <button class="btn" id="akCreateBtn" style="padding:4px 10px;font-size:11px" data-i18n="play.akCreate">生成 Agent Key</button>
-          <div id="akNewKey" style="display:none;margin:6px 0;padding:6px;border:1px solid var(--line);border-radius:6px">
-            <code id="akNewKeyText" class="mono" style="font-size:11px;word-break:break-all"></code>
-            <button class="btn ghost" id="akCopyBtn" style="padding:2px 8px;font-size:11px;margin-left:6px" data-i18n="play.akCopy">复制</button>
-          </div>
-          <div id="akMsg" style="font-size:11px;color:var(--dim);margin:4px 0"></div>
-          <table>
-            <thead><tr><th data-i18n="play.akThId">键 ID</th><th data-i18n="play.akThStatus">状态</th><th data-i18n="play.akThCreated">创建时间</th><th data-i18n="play.akThLastUsed">最近使用</th><th data-i18n="play.akThAction">操作</th></tr></thead>
-            <tbody id="akListBody"></tbody>
-          </table>
-        </div>
-      </details>
+      <div class="row2">
+        <button class="btn ghost" id="saveBtn">保存为新版本</button>
+        <button class="btn ghost" id="scriptOpenBtn" data-i18n="ui.scriptOpen">&lt;/&gt; 查看脚本</button>
+      </div>
     </div>
   </section>
 
@@ -238,6 +390,22 @@ footer .mono{color:var(--muted)}
   <section class="panel">
     <h2><span class="dot"></span><span data-i18n="ui.liveLog">实时战报</span></h2>
     <div class="log" id="log"><div class="ln on"><span class="t mono">t=000</span><span data-i18n="ui.waiting">等待开战…</span></div></div>
+    <div class="logacts">
+      <button class="btn ghost" id="battleReviewBtn" data-i18n="ui.rvBattleReview" style="flex:1">🔍 复盘这一局</button>
+      <button class="btn ghost" id="battleJsonBtn" data-i18n="ui.rvBattleJson" style="flex:none">⬇ JSON</button>
+    </div>
+    <h2><span class="dot"></span><span data-i18n="ui.rvGauge">胜率标尺 · 同关卡同对手</span><span class="sp" id="wrFlagChip"></span></h2>
+    <div class="wrbox">
+      <div class="wrhead"><span class="wrnum na" id="wrNum">—%</span><span class="wrsub" id="wrSub" data-i18n="ui.rvNever">还没跑过</span></div>
+      <div class="wrmeta" id="wrMeta"></div>
+      <div class="bars" id="wrBars"></div>
+      <div class="wrfail" id="wrFail" hidden></div>
+      <div class="wracts">
+        <button class="btn ghost" id="wrRunBtn" style="flex:1">▶ 跑 12 局建立基线</button>
+        <button class="btn ghost" id="wrReviewBtn" data-i18n="ui.rvOpen" style="flex:none">🔍 复盘</button>
+      </div>
+      <div class="wrhint" id="wrHint"></div>
+    </div>
     <h2><span class="dot"></span><span data-i18n="ui.ladder">天梯 · 内置流派</span></h2>
     <table>
       <thead><tr><th>#</th><th data-i18n="ui.thTank">坦克</th><th data-i18n="ui.thStyle">流派</th><th data-i18n="ui.thElo">ELO</th><th data-i18n="ui.thWin">胜率</th></tr></thead>
@@ -247,6 +415,7 @@ footer .mono{color:var(--muted)}
     <div id="playChallenge" style="display:none;margin-top:10px">
       <h2><span class="dot"></span><span data-i18n="play.challengeTitle">我的挑战赛</span></h2>
       <div id="playChallengeSummary" style="font-size:11px;color:var(--dim);margin:4px 0" data-i18n="play.empty">尚未参赛</div>
+      <div style="padding:0 0 6px"><button class="btn ghost" id="playChallengeBtn" style="padding:4px 10px;font-size:11px" data-i18n="play.challenge">参加挑战赛</button></div>
       <table>
         <thead><tr><th data-i18n="play.thOpp">对手</th><th data-i18n="play.thW">胜</th><th data-i18n="play.thD">平</th><th data-i18n="play.thL">负</th></tr></thead>
         <tbody id="playChallengeBody"></tbody>
@@ -293,6 +462,96 @@ footer .mono{color:var(--muted)}
     </div>
   </section>
 </main>
+
+<!-- ── 覆盖层（方案 A）：低频功能从左栏搬到这里，横向空间从 320px 提到 720~1080px ── -->
+<div id="overlayScrim" hidden></div>
+
+<!-- 车库：整理坦克（切换/改名/新建）。高频的「换一台」在左栏切换器里，这里只管整理 -->
+<div class="modal" id="garageModal" hidden role="dialog" aria-modal="true" aria-labelledby="garageTitle">
+  <div class="ovh">
+    <h3 id="garageTitle" data-i18n="ui.garage">我的车库</h3>
+    <span class="sub" id="garageMsg"></span>
+    <div class="ovacts"><button class="x" type="button" data-close data-i18n-title="ui.overlayClose" title="关闭">✕</button></div>
+  </div>
+  <div class="ovb"><div id="garageList"></div></div>
+  <div class="ovf">
+    <span class="sub" style="font-size:11px;color:var(--dim)" data-i18n="ui.garageHint">车库只管「有哪些坦克」；改战术请回作战台</span>
+    <span class="spacer"></span>
+    <button class="btn ghost" id="garageNewBtn" data-i18n="ui.garageNew" style="padding:6px 14px;font-size:12px">新建坦克</button>
+  </div>
+</div>
+
+<!-- 脚本抽屉：代码天然需要宽度，320px 窄条是错误容器 -->
+<div class="drawer" id="scriptDrawer" hidden role="dialog" aria-modal="true" aria-labelledby="scriptDrawerTitle">
+  <div class="ovh">
+    <h3 id="scriptDrawerTitle" data-i18n="ui.scriptDrawerTitle">脚本编辑器</h3>
+    <span class="sub" id="scriptDrawerSub"></span>
+    <div class="ovacts">
+      <button class="btn ghost" id="playFillBtn" data-i18n="play.fill" style="padding:5px 12px;font-size:11.5px">回填默认流派代码</button>
+      <button class="x" type="button" data-close data-i18n-title="ui.overlayClose" title="关闭">✕</button>
+    </div>
+  </div>
+  <div class="dbody">
+    <textarea id="editor" spellcheck="false"></textarea>
+    <div class="dside">
+      <h4 data-i18n="ui.scriptApiTitle">可用 API</h4>
+      <div data-i18n="ui.scriptApiBody" style="line-height:1.7;white-space:pre-line">api.enemyVisible() / api.canFire()
+api.fireAt(api.enemy())
+api.useSkill()
+api.moveTo(x, y) / api.patrol()
+api.me() / api.stars()</div>
+      <h4 data-i18n="ui.scriptSandboxTitle">沙箱</h4>
+      <div data-i18n="ui.scriptSandboxBody" style="line-height:1.7">受限 API · 脚本报错 = 本拍待机</div>
+    </div>
+  </div>
+</div>
+
+<!-- 账号与密钥：这是账号设置，不是每局要碰的东西 -->
+<!-- 复盘抽屉：单局态（AI 批这一局哪几处不合理）/ 多局态（人读批量报告 + 胜率对比） -->
+<div class="drawer" id="reviewDrawer" hidden role="dialog" aria-modal="true" aria-labelledby="reviewTitle">
+  <div class="ovh">
+    <h3 id="reviewTitle" data-i18n="ui.rvTitleSingle">复盘这一局</h3>
+    <span class="sub" id="reviewSub"></span>
+    <div class="ovacts">
+      <span class="fl" id="reviewFlag" hidden></span>
+      <button class="btn ghost" id="reviewDlTextBtn" data-i18n="ui.rvDlText" style="padding:5px 12px;font-size:11px">⬇ 下载文字版</button>
+      <button class="btn ghost" id="reviewDlJsonBtn" data-i18n="ui.rvDlJson" style="padding:5px 12px;font-size:11px">⬇ JSON</button>
+      <button class="x" id="reviewCloseBtn">✕</button>
+    </div>
+  </div>
+  <div class="dbody">
+    <div class="rvmain" id="reviewMain"></div>
+    <div class="dside" id="reviewSide"></div>
+  </div>
+</div>
+
+<div class="modal" id="accountModal" hidden role="dialog" aria-modal="true" aria-labelledby="accountTitle">
+  <div class="ovh">
+    <h3 id="accountTitle" data-i18n="ui.accountTitle">账号与密钥</h3>
+    <span class="sub" id="accountSub"></span>
+    <div class="ovacts"><button class="x" type="button" data-close data-i18n-title="ui.overlayClose" title="关闭">✕</button></div>
+  </div>
+  <div class="ovb">
+    <div id="playPanel" style="display:none">
+      <div id="playStatus" style="font-size:12px;color:var(--muted);margin-bottom:10px"></div>
+      <div id="playAgentKeys" style="display:none;border-top:1px dashed var(--line);padding-top:10px">
+        <div style="font-size:12px;color:var(--muted)" data-i18n="play.akTitle">Agent Key（给我的 agent 换临时票用）</div>
+        <div style="font-size:11px;color:var(--dim);margin:4px 0 8px" data-i18n="play.akOnce">明文 key 只显示一次：请立即复制保存，关闭后无法再查看</div>
+        <button class="btn" id="akCreateBtn" style="padding:5px 12px;font-size:11px" data-i18n="play.akCreate">生成 Agent Key</button>
+        <div id="akNewKey" style="display:none;margin:8px 0;padding:8px;border:1px solid var(--line);border-radius:6px">
+          <code id="akNewKeyText" class="mono" style="font-size:11px;word-break:break-all"></code>
+          <button class="btn ghost" id="akCopyBtn" style="padding:2px 8px;font-size:11px;margin-left:6px" data-i18n="play.akCopy">复制</button>
+        </div>
+        <div id="akMsg" style="font-size:11px;color:var(--dim);margin:6px 0"></div>
+        <table>
+          <thead><tr><th data-i18n="play.akThId">键 ID</th><th data-i18n="play.akThStatus">状态</th><th data-i18n="play.akThCreated">创建时间</th><th data-i18n="play.akThLastUsed">最近使用</th><th data-i18n="play.akThAction">操作</th></tr></thead>
+          <tbody id="akListBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div id="accountAnon" style="font-size:12px;color:var(--dim)" data-i18n="ui.accountAnon">未登录：坦克只存在这台机器上。登录后可云端同步、用 AI 由战术文字生成代码。</div>
+  </div>
+</div>
 <footer>
   <span><span data-i18n="ui.footEngine">引擎</span> <span class="mono" id="footSeed">deterministic · seed=每局自动生成</span></span>
   <span><span data-i18n="ui.footLogPre">战报仅文字记录</span> <span class="mono" id="footLog">battle.log —</span><span data-i18n="ui.footLogPost">，回放由前端渲染</span></span>
@@ -1952,6 +2211,656 @@ function runMatch(opts = {}) {
   };
 }
 
+// ===== src/engine/analyze.js =====
+// 战报分析：把一局（或一批）对战的结构化事件，变成「AI 能批得动」的事实。
+//
+// 设计口径（老板 2026-08-20 定）：
+//   单局战报的用途 = 玩家看完回放后，让 AI 指出「战术在这一局哪几处表现不合理」，据此调方案。
+//   所以「不合理」必须是**引擎事件推导出的确定性判定**（下面 8 条规则），AI 只负责解释这些时刻
+//   意味着什么、战术该怎么改。绝不把「哪里不合理」交给模型自由发挥——那样它只会说空话，
+//   也无法复现、无法测试。
+//
+// 分工：
+//   replayStates   事件 → 每 tick 状态（位置/血量/冷却/毒圈/星/道具），单一权威重建口径
+//   buildMetrics   事件 → 单局指标（命中率、伤害收支、首星、技能命中…）
+//   detectMoments  状态+事件 → 可疑时刻（带触发时的快照与人话原因）
+//   buildBattleReport  单局 JSON（喂 AI 的那份，**不含人读文字**）
+//   aggregateBatch / renderBatchText  批量胜率聚合 + 人读文字报告（界面直接展示的那份）
+
+
+const azMan = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+const azR4 = (n) => Math.round(n * 10000) / 10000;
+
+// 攻击型技能 → 它的命中事件（用于判定「技能空放」）
+const AZ_ATTACK_SKILL_HIT = { freeze: 'freeze_hit', stun: 'stun_hit', poison: 'poison_hit' };
+
+// ---------- 敏感串打码（单一定义点：web/play.js 从这里导入，勿另写一份） ----------
+function redactSecrets(text) {
+  return String(text == null ? '' : text)
+    .replace(/\b(Bearer)\s+[A-Za-z0-9._-]+/gi, '$1 «redacted»')
+    .replace(/\b(ak1|gt1|sk|pk)_[A-Za-z0-9._-]{6,}/g, '$1_«redacted»')
+    .replace(/("?(?:access_)?token"?\s*[:=]\s*")([^"]{6,})(")/gi, '$1«redacted»$3')
+    .replace(/([?&](?:token|key|secret)=)[^&\s]{6,}/gi, '$1«redacted»');
+}
+
+// ---------- 批量试跑的两组固定种子（单一定义点：网页端与测量脚本都从这里取） ----------
+// 训练组 = AI 能看到战报的那 12 个；留出组 = AI 从没见过的另 12 个，验收只认它。
+// 分两组的原因：只看训练组会把「战术调成只赢这几个种子」误判成「变强了」。
+const BATCH_SEEDS = {
+  train: ['tr01', 'tr02', 'tr03', 'tr04', 'tr05', 'tr06', 'tr07', 'tr08', 'tr09', 'tr10', 'tr11', 'tr12'],
+  holdout: ['ho01', 'ho02', 'ho03', 'ho04', 'ho05', 'ho06', 'ho07', 'ho08', 'ho09', 'ho10', 'ho11', 'ho12'],
+};
+
+// ---------- 可疑时刻规则清单（顺序即 id 顺序，测试锁死） ----------
+const MOMENT_RULES = [
+  { id: 'star-ignored', severity: 'high', label: '该吃的星没吃' },
+  { id: 'zone-outward', severity: 'high', label: '缩圈了还不进圈' },
+  { id: 'cooldown-brawl', severity: 'mid', label: '冷却期硬拼' },
+  { id: 'heal-ignored', severity: 'high', label: '该回血没回' },
+  { id: 'wasted-shots', severity: 'mid', label: '白开炮' },
+  { id: 'skill-whiff', severity: 'mid', label: '技能空放' },
+  { id: 'static-under-fire', severity: 'mid', label: '挨打不动' },
+  { id: 'losing-melee', severity: 'high', label: '无谓贴身' },
+];
+const AZ_RULE_BY_ID = Object.fromEntries(MOMENT_RULES.map((r) => [r.id, r]));
+
+// 判定阈值集中在此，便于按实测调整（改这里就是改规则，测试会跟着红）
+const MOMENT_TUNING = {
+  starNear: 3,        // 「近星」判定：曼哈顿距离 ≤ 3
+  zoneRun: 4,         // 缩圈后连续多少拍仍在圈外才算不合理
+  brawlRun: 4,        // 冷却期处于中距离连续多少拍算硬拼
+  brawlBand: [3, 6],  // 「中距离」区间
+  healReach: 8,       // 急救包可达距离
+  healGrace: 12,      // 多少拍内真去捡了就不算
+  healDefault: 40,    // 战术里读不到阈值时的默认血线
+  wastedStreak: 3,    // 连续几发被挡算白开炮
+  wastedWindow: 30,   // 「连续」的时间窗（拍）：跨度超过它就不是同一段乱开火
+  whiffWindow: 3,     // 技能施放后多少拍内没命中算空放
+  staticGap: 15,      // 两次挨弹间隔在此之内才算「同一段挨打」
+  meleeGap: 20,       // 血量落后多少算劣势
+  meleeDist: 2,       // 贴身距离
+  maxMoments: 12,     // 单局最多留几条（喂 AI 的预算上限）
+};
+
+// 从玩家自己写的战术文字里读出血线：写了就按他写的，读不到就明确标成 default。
+// 为什么必须回传 source：这条规则的说法是「行为与你自己写的战术不符」——
+// 如果血线其实是我们的默认值，却说成「你的战术写了…」，那就是在事实层给 AI 编了一句玩家没说过的话。
+function healThresholdFrom(strategy) {
+  const raw = String(strategy || '');
+  // 逐句解析，不整段擦除：中文战术几乎都是逗号长句，「我方血量低于 35 就撤，对手血量 50 以下贴身」
+  // 若按整段剔除敌方主语，会把玩家写的 35 一起吞掉，然后断言「战术里没写血线」——那是反向的捏造。
+  const parts = raw.split(/[。；;.，,、！？!?\n]+/).map((x) => x.trim()).filter(Boolean);
+  // 「其他 / 其它」先中和，否则「他」会误杀「其他时候血量低于 30」这类正常写法
+  const norm = (x) => x.replace(/其他|其它/g, '_OTHER_');
+  const ENEMY = /(对手|敌方|敌人|对方|敌|他)/;
+  const MINE = /(我方|我的|自己|我)/;
+  const pats = [
+    /(?:血量?|hp|HP)\s*[<≤]?[^0-9%\n]{0,12}?(\d{1,3})\s*(?:%|以下|以内|以上)?/,
+    /(\d{1,3})\s*%?\s*血/,
+  ];
+  const pick = (list) => {
+    for (const seg of list) {
+      for (const re of pats) {
+        const m = seg.match(re);
+        if (m) {
+          const n = Number(m[1]);
+          if (n > 0 && n <= RULES.hp) return n;
+        }
+      }
+    }
+    return null;
+  };
+  const mine = parts.filter((x) => MINE.test(norm(x)) && !ENEMY.test(norm(x)));
+  const neutral = parts.filter((x) => !ENEMY.test(norm(x)));
+  const n = pick(mine) ?? pick(neutral); // 我方那句优先，其次是没提敌人的句子
+  if (n != null) return { value: n, source: 'parsed' };
+  return { value: MOMENT_TUNING.healDefault, source: 'default' };
+}
+
+function azSkillCdOf(name, pack) {
+  const entries = pack && Array.isArray(pack.entries) ? pack.entries : null;
+  const p = entries ? entries.find((e) => e.type === 'skill' && e.id === name) : null;
+  if (p && Number(p.cd) > 0) return Number(p.cd);
+  const built = RULES.skills[name];
+  return built && built.cd ? built.cd : 60;
+}
+
+function azZoneOf(map, ring, e) {
+  if (e && e.x0 != null) return { x0: e.x0, y0: e.y0, x1: e.x1, y1: e.y1 };
+  return { x0: 1 + ring, y0: 1 + ring, x1: map.width - 2 - ring, y1: map.height - 2 - ring };
+}
+const azInZone = (z, p) => !z || (p.x >= z.x0 && p.x <= z.x1 && p.y >= z.y0 && p.y <= z.y1);
+const azZoneCenter = (z) => ({ x: (z.x0 + z.x1) / 2, y: (z.y0 + z.y1) / 2 });
+
+// ---------- 事件 → 每 tick 状态 ----------
+function replayStates(map, result) {
+  const ticks = Number(result.ticks) || 0;
+  const byTick = Array.from({ length: ticks }, () => []);
+  for (const e of result.events || []) if (e.t >= 0 && e.t < ticks) byTick[e.t].push(e);
+
+  const pos = map.spawns.map((s) => ({ x: s.x, y: s.y }));
+  const hp = [RULES.hp, RULES.hp];
+  const held = [0, 0];
+  const cd = [{ fire: 0, skill: 0, bomb: 0 }, { fire: 0, skill: 0, bomb: 0 }];
+  const frozen = [0, 0];  // 冰冻/时钟：完全不能动（engine.js 里动作直接作废）
+  const stunned = [0, 0]; // 眩晕：方向被随机反转
+  const dead = [false, false];
+  const skills = Array.isArray(result.skills) ? result.skills.slice() : [];
+  let field = map.stars.slice(0, RULES.maxFieldStars ?? map.stars.length).map((s) => ({ x: s.x, y: s.y }));
+  let items = [];
+  let ring = 0;
+  let zone = null;
+  const states = [];
+
+  for (let t = 0; t < ticks; t++) {
+    for (const i of [0, 1]) {
+      for (const k of ['fire', 'skill', 'bomb']) if (cd[i][k] > 0) cd[i][k]--;
+      if (frozen[i] > 0) frozen[i]--;
+      if (stunned[i] > 0) stunned[i]--;
+    }
+    for (const e of byTick[t]) {
+      switch (e.type) {
+        case 'move':
+        case 'slide':
+          pos[e.who] = { x: e.x, y: e.y };
+          break;
+        case 'star':
+          field = field.filter((s) => !(s.x === e.x && s.y === e.y));
+          held[e.who] = e.total;
+          break;
+        case 'star_spawn': field = field.concat([{ x: e.x, y: e.y }]); break;
+        case 'star_gone': field = field.filter((s) => !(s.x === e.x && s.y === e.y)); break;
+        case 'item_spawn': items = items.concat([{ x: e.x, y: e.y, kind: e.kind }]); break;
+        case 'item_pick':
+          items = items.filter((s) => !(s.x === e.x && s.y === e.y));
+          if (e.kind === 'medkit' && e.hp != null) hp[e.who] = e.hp;
+          if (e.kind === 'clock') frozen[1 - e.who] = (RULES.items.clock && RULES.items.clock.dur) || 6;
+          break;
+        case 'item_gone': items = items.filter((s) => !(s.x === e.x && s.y === e.y)); break;
+        case 'zone_shrink':
+          ring = e.ring;
+          zone = azZoneOf(map, ring, e);
+          break;
+        case 'zone_hit': hp[e.target] = e.hp; break;
+        case 'poison_tick': if (e.hp != null) hp[e.target] = e.hp; break;
+        case 'hit': hp[e.target] = e.hp; break;
+        case 'fire': cd[e.who].fire = RULES.fireCd; break;
+        case 'bomb_place': cd[e.who].bomb = RULES.bombCd; break;
+        case 'bomb_explode':
+          for (const h of e.hits || []) hp[h.who] -= h.dmg;
+          break;
+        case 'skill':
+          cd[e.who].skill = azSkillCdOf(e.name, result.content);
+          if (e.name === 'teleport' && e.x != null) pos[e.who] = { x: e.x, y: e.y };
+          break;
+        case 'freeze_hit': frozen[e.target] = e.duration; break;
+        case 'stun_hit': stunned[e.target] = e.duration; break;
+        case 'death': dead[e.who] = true; break;
+        default: break;
+      }
+    }
+    states.push({
+      t,
+      pos: pos.map((p) => ({ ...p })),
+      hp: [...hp],
+      held: [...held],
+      cd: cd.map((c) => ({ ...c })),
+      frozen: [...frozen],
+      stunned: [...stunned],
+      ring,
+      zone: zone ? { ...zone } : null,
+      field: field.map((s) => ({ ...s })),
+      items: items.map((i) => ({ ...i })),
+      dead: [...dead],
+      skills,
+    });
+  }
+  return states;
+}
+
+// ---------- 单局指标 ----------
+function buildMetrics(map, result, who = 0) {
+  const foe = 1 - who;
+  let fires = 0; let hits = 0; let blocked = 0;
+  let dealt = 0; let taken = 0; let zoneDmg = 0;
+  let skillCasts = 0; let skillHits = 0;
+  let firstStarTick = null; let enemyFirstStarTick = null; let deathTick = null;
+  const bombOwner = new Map();
+  const poisonDmg = (RULES.skills.poison && RULES.skills.poison.dmg) || 2;
+
+  for (const e of result.events || []) {
+    switch (e.type) {
+      case 'fire': if (e.who === who) fires++; break;
+      case 'hit':
+        if (e.who === who) { hits++; dealt += e.dmg; }
+        if (e.target === who) taken += e.dmg;
+        break;
+      case 'bullet_end':
+        if (e.who === who && (e.reason === 'wall' || e.reason === 'mound')) blocked++;
+        break;
+      case 'zone_hit':
+        if (e.target === who) { taken += e.dmg; zoneDmg += e.dmg; }
+        break;
+      case 'poison_tick':
+        if (e.target === who) taken += (e.dmg ?? poisonDmg);
+        break;
+      case 'bomb_place': bombOwner.set(`${e.x},${e.y}`, e.who); break;
+      case 'bomb_explode': {
+        const owner = bombOwner.get(`${e.x},${e.y}`);
+        for (const h of e.hits || []) {
+          if (h.who === who) taken += h.dmg;
+          if (owner === who && h.who !== who) dealt += h.dmg;
+        }
+        break;
+      }
+      case 'skill': if (e.who === who) skillCasts++; break;
+      case 'freeze_hit':
+      case 'stun_hit':
+      case 'poison_hit':
+        if (e.target === foe) skillHits++;
+        break;
+      case 'shield_block': if (e.who === who) skillHits++; break;
+      case 'star':
+        if (e.who === who) { if (firstStarTick == null) firstStarTick = e.t; }
+        else if (enemyFirstStarTick == null) enemyFirstStarTick = e.t;
+        break;
+      case 'death': if (e.who === who) deathTick = e.t; break;
+      default: break;
+    }
+  }
+  return {
+    fires,
+    hits,
+    accuracy: fires ? azR4(hits / fires) : 0,
+    shotsBlocked: blocked,
+    dmgDealt: dealt,
+    dmgTaken: taken,
+    zoneDmg,
+    skillCasts,
+    skillHits,
+    firstStarTick,
+    enemyFirstStarTick,
+    deathTick,
+    ticks: Number(result.ticks) || 0,
+    stars: Array.isArray(result.stars) ? result.stars.slice() : [0, 0],
+  };
+}
+
+// ---------- 可疑时刻 ----------
+function azMkMoment(ruleId, t, snapshot, why) {
+  const r = AZ_RULE_BY_ID[ruleId];
+  return { t, rule: ruleId, label: r.label, severity: r.severity, why, snapshot };
+}
+
+function detectMoments(map, result, opts = {}) {
+  const who = opts.who ?? 0;
+  const foe = 1 - who;
+  const max = opts.max ?? MOMENT_TUNING.maxMoments;
+  const strategy = opts.strategy || '';
+  const states = opts.states || replayStates(map, result);
+  const ticks = states.length;
+  if (!ticks) return [];
+  const byTick = Array.from({ length: ticks }, () => []);
+  for (const e of result.events || []) if (e.t >= 0 && e.t < ticks) byTick[e.t].push(e);
+  const out = [];
+  const T = MOMENT_TUNING;
+
+  // 1 star-ignored：近处有星却奔向别处
+  let lastStarFlag = -99;
+  for (let t = 0; t < ticks; t++) {
+    for (const e of byTick[t]) {
+      if (e.type !== 'goal' || e.who !== who || e.tag === 'star') continue;
+      const st = states[t];
+      if (st.dead[who]) continue;
+      let near = null;
+      for (const s of st.field) {
+        const d = azMan(st.pos[who], s);
+        if (!near || d < near.dist) near = { x: s.x, y: s.y, dist: d };
+      }
+      if (!near || near.dist > T.starNear || t - lastStarFlag < 10) continue;
+      lastStarFlag = t;
+      out.push(azMkMoment('star-ignored', t, {
+        star: near,
+        chose: { x: e.x, y: e.y, tag: e.tag || 'move' },
+        pos: { ...st.pos[who] },
+      }, `${near.dist} 格内就有星，你却奔向 (${e.x},${e.y})——星数是判定链第二顺位，白送落后`));
+    }
+  }
+
+  // 2 zone-outward：缩圈后连续留在圈外且没往里走
+  let runStart = -1; let runBestDist = Infinity; let flaggedRing = -1;
+  for (let t = 0; t < ticks; t++) {
+    const st = states[t];
+    // 冻结期是「引擎不让你动」，不是「你不作为」：整段作废重新计数
+    if (!st.zone || st.ring <= 0 || st.dead[who] || st.frozen[who] > 0) { runStart = -1; runBestDist = Infinity; continue; }
+    const outside = !azInZone(st.zone, st.pos[who]);
+    const d = azMan(st.pos[who], azZoneCenter(st.zone));
+    if (!outside) { runStart = -1; runBestDist = Infinity; continue; }
+    if (runStart < 0) { runStart = t; runBestDist = d; }
+    const closing = d < runBestDist - 0.5;
+    if (closing) { runStart = t; runBestDist = d; continue; } // 确实在往里走，不算
+    if (t - runStart + 1 >= T.zoneRun && st.ring !== flaggedRing) {
+      flaggedRing = st.ring;
+      out.push(azMkMoment('zone-outward', t, {
+        ring: st.ring,
+        zone: { ...st.zone },
+        pos: { ...st.pos[who] },
+        stuckTicks: t - runStart + 1,
+      }, `毒圈第 ${st.ring} 圈已收，你在圈外待了 ${t - runStart + 1} 拍还没往里走——毒圈伤害逐圈递增，纯白给`));
+    }
+  }
+
+  // 3 cooldown-brawl：保命/位移技能冷却中，仍在中距离对射
+  let brawlStart = -1; let brawlFired = false; let lastBrawlFlag = -99;
+  for (let t = 0; t < ticks; t++) {
+    const st = states[t];
+    const dist = azMan(st.pos[who], st.pos[foe]);
+    const inBand = dist >= T.brawlBand[0] && dist <= T.brawlBand[1];
+    const cooling = st.cd[who].skill > 0;
+    if (st.dead[who] || st.dead[foe] || !inBand || !cooling || st.frozen[who] > 0) { brawlStart = -1; brawlFired = false; continue; }
+    if (brawlStart < 0) { brawlStart = t; brawlFired = false; }
+    if (byTick[t].some((e) => e.type === 'fire' && e.who === who)) brawlFired = true;
+    if (brawlFired && t - brawlStart + 1 >= T.brawlRun && t - lastBrawlFlag >= 20) {
+      lastBrawlFlag = t;
+      out.push(azMkMoment('cooldown-brawl', t, {
+        cdLeft: st.cd[who].skill,
+        dist,
+        skill: st.skills[who] ?? null,
+        pos: { ...st.pos[who] },
+      }, `${st.skills[who] ?? '技能'}还在冷却（剩 ${st.cd[who].skill} 拍），你在 ${dist} 格中距离硬对射——没有脱战手段时对射期望为负`));
+    }
+  }
+
+  // 4 heal-ignored：血低于「你自己写的」阈值，可达急救包却不去
+  const thrInfo = healThresholdFrom(strategy);
+  const thr = thrInfo.value;
+  let lastHealFlag = -99;
+  for (let t = 0; t < ticks; t++) {
+    const st = states[t];
+    if (st.dead[who] || st.hp[who] <= 0 || st.hp[who] >= thr) continue;
+    if (t - lastHealFlag < 30) continue;
+    let kit = null;
+    for (const it of st.items) {
+      if (it.kind !== 'medkit') continue;
+      const d = azMan(st.pos[who], it);
+      if (!kit || d < kit.dist) kit = { x: it.x, y: it.y, dist: d };
+    }
+    if (!kit || kit.dist > T.healReach) continue;
+    let picked = false;
+    for (let k = t; k < Math.min(ticks, t + T.healGrace + 1); k++) {
+      if (byTick[k].some((e) => e.type === 'item_pick' && e.who === who && e.kind === 'medkit')) { picked = true; break; }
+    }
+    if (picked) continue;
+    lastHealFlag = t;
+    out.push(azMkMoment('heal-ignored', t, {
+      hp: st.hp[who],
+      threshold: thr,
+      thresholdSource: thrInfo.source, // parsed=战术里写了；default=战术没写，按默认判定
+      medkit: kit,
+      pos: { ...st.pos[who] },
+    }, thrInfo.source === 'parsed'
+      ? `血只剩 ${st.hp[who]}，${kit.dist} 格外就有急救包却没去——你的战术写了血量低于 ${thr} 要回血，实际行为与战术不符`
+      : `血只剩 ${st.hp[who]}，${kit.dist} 格外就有急救包却没去——战术里没写血线，这里按默认 ${thr} 判定`));
+  }
+
+  // 5 wasted-shots：连续被墙/土堆挡下
+  let streak = 0;
+  let streakStart = -99;
+  for (let t = 0; t < ticks; t++) {
+    for (const e of byTick[t]) {
+      if (e.type === 'hit' && e.who === who) { streak = 0; continue; }
+      if (e.type !== 'bullet_end' || e.who !== who) continue;
+      if (e.reason === 'wall' || e.reason === 'mound') {
+        // 「连续」必须有时间窗：跨 45 拍的三发不是同一段乱开火（实测 median 13 / max 45）
+        if (streak === 0 || t - streakStart > T.wastedWindow) { streak = 1; streakStart = t; } else streak++;
+        if (streak >= T.wastedStreak) {
+          out.push(azMkMoment('wasted-shots', t, {
+            streak,
+            reason: e.reason,
+            pos: { ...states[t].pos[who] },
+          }, `连续 ${streak} 发子弹被${e.reason === 'wall' ? '墙' : '土堆'}挡下——暴露位置又白等冷却`));
+          streak = 0;
+        }
+      } else streak = 0; // 命中 / 飞出场外都不算「被挡」，重新计数
+    }
+  }
+
+  // 6 skill-whiff：攻击型技能放空
+  for (let t = 0; t < ticks; t++) {
+    for (const e of byTick[t]) {
+      if (e.type !== 'skill' || e.who !== who) continue;
+      const hitType = AZ_ATTACK_SKILL_HIT[e.name];
+      if (!hitType) continue;
+      let landed = false;
+      for (let k = t; k < Math.min(ticks, t + T.whiffWindow + 1); k++) {
+        if (byTick[k].some((x) => x.type === hitType && x.target === foe)) { landed = true; break; }
+      }
+      if (landed) continue;
+      out.push(azMkMoment('skill-whiff', t, {
+        skill: e.name,
+        dist: azMan(states[t].pos[who], states[t].pos[foe]),
+        pos: { ...states[t].pos[who] },
+      }, `${e.name} 放出去没打到人——关键技能空放，等于少一条命`));
+    }
+  }
+
+  // 7 static-under-fire：连挨两发还站原地
+  let prevHit = null;
+  for (let t = 0; t < ticks; t++) {
+    for (const e of byTick[t]) {
+      if (e.type !== 'hit' || e.target !== who) continue;
+      const p = states[t].pos[who];
+      if (prevHit && t - prevHit.t <= T.staticGap && prevHit.pos.x === p.x && prevHit.pos.y === p.y) {
+        out.push(azMkMoment('static-under-fire', t, {
+          since: prevHit.t,
+          pos: { ...p },
+          hp: states[t].hp[who],
+        }, `第 ${prevHit.t} 拍挨过一发，到第 ${t} 拍还站在同一格又挨一发——对手已经锁定弹道`));
+        prevHit = null;
+        continue;
+      }
+      prevHit = { t, pos: { ...p } };
+    }
+  }
+
+  // 8 losing-melee：血量劣势还主动贴身
+  let lastMeleeFlag = -99;
+  for (let t = 0; t < ticks; t++) {
+    for (const e of byTick[t]) {
+      const moved = (e.type === 'move' || e.type === 'slide' || (e.type === 'skill' && e.name === 'teleport'));
+      if (!moved || e.who !== who) continue;
+      const st = states[t];
+      const dist = azMan(st.pos[who], st.pos[foe]);
+      if (dist > T.meleeDist) continue;
+      if (st.hp[who] >= st.hp[foe] - T.meleeGap) continue;
+      if (t - lastMeleeFlag < 15) continue;
+      lastMeleeFlag = t;
+      out.push(azMkMoment('losing-melee', t, {
+        hp: st.hp[who],
+        enemyHp: st.hp[foe],
+        dist,
+        pos: { ...st.pos[who] },
+      }, `你 ${st.hp[who]} 血、对手 ${st.hp[foe]} 血，还主动贴到 ${dist} 格——劣势方贴身等于加速结算`));
+    }
+  }
+
+  // 预算上限：先按「严重程度 → 时间」挑，再按时间排回去（读起来是一条时间线）
+  const rank = { high: 0, mid: 1 };
+  const kept = out
+    .slice()
+    .sort((a, b) => (rank[a.severity] - rank[b.severity]) || (a.t - b.t))
+    .slice(0, max)
+    .sort((a, b) => a.t - b.t);
+  return kept;
+}
+
+// ---------- 单局 JSON（喂 AI 的那份；不含人读文字，老板定的口径） ----------
+function buildBattleReport(o) {
+  const map = o.map;
+  const result = o.result;
+  const who = o.who ?? 0;
+  const setup = o.setup || {};
+  const states = replayStates(map, result);
+  const metrics = buildMetrics(map, result, who);
+  const moments = detectMoments(map, result, { who, strategy: setup.strategy || '', states, max: o.max });
+  return {
+    kind: 'agentank-battle',
+    schema: 1,
+    at: o.at || new Date().toISOString(),
+    setup: {
+      seed: String(setup.seed ?? ''),
+      mapKey: String(setup.mapKey ?? ''),
+      opponent: String(setup.opponent ?? ''),
+      tank: String(setup.tank ?? ''),
+      skills: Array.isArray(result.skills) ? result.skills.slice() : [],
+      strategy: redactSecrets(setup.strategy || ''),
+      codeHash: String(setup.codeHash ?? ''),
+      who,
+    },
+    result: {
+      win: result.winner === who,
+      winner: result.winner,
+      reason: result.reason,
+      ticks: result.ticks,
+      stars: Array.isArray(result.stars) ? result.stars.slice() : [0, 0],
+    },
+    metrics,
+    moments,
+    events: result.events || [],
+  };
+}
+
+// 批量试跑里「一局 → 一行摘要」的单一权威口径：
+// 沙箱 Worker（线上禁 eval 时）与主线程（本地）都必须调它，否则两条路会给出不同的胜率口径。
+// 只回摘要不回全量事件：12 局的完整事件几 MB，postMessage 回主线程既慢又没人看。
+function summarizeGame(o) {
+  const map = o.map;
+  const result = o.result;
+  const who = o.who ?? 0;
+  const states = replayStates(map, result);
+  return {
+    seed: String(o.seed ?? result.seed ?? ''),
+    win: result.winner === who,
+    reason: result.reason,
+    ticks: result.ticks,
+    metrics: buildMetrics(map, result, who),
+    moments: detectMoments(map, result, { who, strategy: o.strategy || '', states, max: o.max ?? 6 }),
+  };
+}
+
+const azPad2 = (n) => String(n).padStart(2, '0');
+function azStamp(now) {
+  const d = now instanceof Date ? now : new Date(now || Date.now());
+  return `${d.getFullYear()}${azPad2(d.getMonth() + 1)}${azPad2(d.getDate())}-${azPad2(d.getHours())}${azPad2(d.getMinutes())}${azPad2(d.getSeconds())}`;
+}
+const azSafeSeed = (s) => String(s || 'seed').replace(/[^A-Za-z0-9_-]+/g, '') || 'seed';
+
+function battleReportFilename(now, seed) {
+  return `agentank-battle-${azSafeSeed(seed)}-${azStamp(now)}.json`;
+}
+function batchReportFilename(now, ext = 'txt') {
+  return `agentank-report-${azStamp(now)}.${ext}`;
+}
+
+// ---------- 批量聚合 ----------
+// games[i] = { seed, win, reason, ticks, metrics, moments? }
+function aggregateBatch(games) {
+  const list = Array.isArray(games) ? games : [];
+  const n = list.length;
+  if (!n) {
+    return { games: 0, wins: 0, losses: 0, winRate: null, lossBuckets: {}, avg: {}, topMomentRules: [] };
+  }
+  const wins = list.filter((g) => g.win).length;
+  const lossBuckets = {};
+  for (const g of list) if (!g.win) lossBuckets[g.reason] = (lossBuckets[g.reason] || 0) + 1;
+  const keys = ['accuracy', 'dmgDealt', 'dmgTaken', 'zoneDmg', 'skillCasts', 'skillHits', 'shotsBlocked'];
+  const avg = {};
+  for (const k of keys) {
+    let sum = 0; let cnt = 0;
+    for (const g of list) { const v = g.metrics && g.metrics[k]; if (typeof v === 'number') { sum += v; cnt++; } }
+    avg[k] = cnt ? azR4(sum / cnt) : null;
+  }
+  for (const k of ['firstStarTick', 'enemyFirstStarTick', 'ticks']) {
+    let sum = 0; let cnt = 0;
+    for (const g of list) {
+      const v = k === 'ticks' ? g.ticks : (g.metrics && g.metrics[k]);
+      if (typeof v === 'number') { sum += v; cnt++; }
+    }
+    avg[k] = cnt ? Math.round(sum / cnt) : null;
+  }
+  const ruleCount = {};
+  for (const g of list) for (const m of g.moments || []) ruleCount[m.rule] = (ruleCount[m.rule] || 0) + 1;
+  const topMomentRules = Object.entries(ruleCount)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([rule, count]) => ({ rule, count, label: (AZ_RULE_BY_ID[rule] || {}).label || rule }));
+  // winRate 不做四舍五入：它是对比「改前/改后」的比值，展示层再格式化（早期取整会把 1/12 的差异抹平）
+  return { games: n, wins, losses: n - wins, winRate: wins / n, lossBuckets, avg, topMomentRules };
+}
+
+// ---------- 人读批量报告（界面直接展示的那份；下载文字版与它一字不差） ----------
+const AZ_REASON_CN = { kill: '被打死', stars: '星数少', hp: '血量判定', damage: '输出判定', center: '圈心判定', coin: '种子掷签', zone: '毒圈拖死' };
+const AZ_SEEDSET_CN = { train: '训练组', holdout: '留出组' };
+const azPct = (x) => `${Math.round(x * 1000) / 10}%`;
+
+function renderBatchText(batch) {
+  const b = batch || {};
+  const s = b.setup || {};
+  const games = Array.isArray(b.games) ? b.games : [];
+  const agg = aggregateBatch(games);
+  const at = String(b.at || '').replace('T', ' ').slice(0, 16);
+  const setName = AZ_SEEDSET_CN[s.seedSet] || s.seedSet || '自定义';
+  const lines = [];
+  lines.push(`AgenTank 批量战报 · ${setName} ${games.length} 局`);
+  lines.push(`生成 ${at} · 坦克 ${s.tank || '—'} · 对手 ${s.opponent || '—'} · 技能 ${s.skill || '—'} · 地图 ${s.mapKey || '—'}`);
+  lines.push('');
+
+  lines.push('总览');
+  if (!agg.games) {
+    lines.push('  本次没有跑出任何一局（沙箱失败或被中断）——没有数据可看，不拿旧结果冒充。');
+    lines.push('');
+    return lines;
+  }
+  lines.push(`  胜率 ${azPct(agg.winRate)}（${agg.wins} 胜 ${agg.losses} 负）  平均时长 ${agg.avg.ticks} 拍`);
+  lines.push(`  命中率 ${azPct(agg.avg.accuracy || 0)}  伤害 打出 ${agg.avg.dmgDealt} / 挨了 ${agg.avg.dmgTaken}  平均首星 第 ${agg.avg.firstStarTick ?? '—'} 拍（对手 ${agg.avg.enemyFirstStarTick ?? '—'}）`);
+  lines.push('');
+
+  lines.push(`输在哪（${agg.losses} 负）`);
+  if (!agg.losses) lines.push('  本组全胜。');
+  else {
+    for (const [reason, count] of Object.entries(agg.lossBuckets).sort((a, b) => b[1] - a[1])) {
+      lines.push(`  ${AZ_REASON_CN[reason] || reason} ${count} 局`);
+    }
+  }
+  if (agg.topMomentRules.length) {
+    lines.push('  最常见的不合理操作：' + agg.topMomentRules.slice(0, 3).map((r) => `${r.label} ×${r.count}`).join('、'));
+  }
+  lines.push('');
+
+  lines.push('逐局');
+  for (const g of games) {
+    const m = g.metrics || {};
+    lines.push(
+      `  seed ${g.seed}  ${g.win ? '胜' : '负'}  ${AZ_REASON_CN[g.reason] || g.reason}`
+      + `  命中 ${azPct(m.accuracy || 0)}  打${m.dmgDealt ?? '—'}/挨${m.dmgTaken ?? '—'}`
+      + `  星${(m.stars || [0, 0])[0]}:${(m.stars || [0, 0])[1]}`,
+    );
+  }
+  lines.push('');
+
+  const worst = games.filter((g) => !g.win && (g.moments || []).length)
+    .sort((a, b) => (b.moments.length - a.moments.length))
+    .slice(0, 3);
+  if (worst.length) {
+    lines.push('最值得看的 3 局（转折点）');
+    for (const g of worst) {
+      lines.push(`  seed ${g.seed}`);
+      for (const m of g.moments.slice(0, 4)) lines.push(`    t=${String(m.t).padStart(3, '0')} ${m.label}：${m.why}`);
+    }
+    lines.push('');
+  }
+  return lines;
+}
+
 // ===== src/engine/report.js =====
 // 战报文本渲染：把结构化事件数组渲染成可读文字行（供前端回放/展示）。
 
@@ -2275,6 +3184,68 @@ const LOCALES = {
       genBtn: '⚡ AI 由战术文字生成坦克代码',
       genLogBtn: '⬇ 下载诊断日志',
       genLogTitle: '把这次生成的完整记录存成 JSON 文件，发给我们即可定位问题',
+      // 战报下载 + AI 复盘（单局：批这一局；批量：同关卡同对手同技能只换种子，看胜率）
+      rvGauge: '胜率标尺 · 同关卡同对手',
+      rvNever: '还没跑过',
+      rvRun: '▶ 跑 {n} 局建立基线',
+      rvRerun: '↻ 重跑 {n} 局',
+      rvOpen: '🔍 复盘',
+      rvWins: '{w} 胜 / {n} 局',
+      rvRunning: '正在跑第 {i}/{n} 局…',
+      rvLocalHint: '{n} 局全部在你的浏览器里算，不上传',
+      rvStale: '对局设置变了，胜率需重跑',
+      rvFail: '批量试跑失败：{msg}',
+      rvFailNote: '不会拿旧数字冒充本轮结果',
+      rvNoBattle: '先打一局再复盘',
+      rvBattleReview: '🔍 复盘这一局',
+      rvBattleJson: '⬇ JSON',
+      rvFlag: '⚠ {n} 处可疑',
+      rvFlagBatch: '⚠ {n} 处可疑 / {g} 局',
+      rvRunBoth: '▶ 跑基线（两组各 {n} 局）',
+      rvRerunBoth: '↻ 重跑基线（两组各 {n} 局）',
+      rvRunningSet: '正在跑{set}第 {i}/{n} 局…',
+      rvHoldoutLine: '留出组 {p}',
+      rvHoldoutNone: '留出组未跑',
+      rvNoBaseline: '没有「改前」基线，无法判定是否提升 —— 先点「跑基线」把两组种子都跑一遍',
+      rvSetupChanged: '改前与改后的对局设置不一致（换过对手/技能/地图），这个对比不成立',
+      rvNoAfter: '「改后」这两批没跑成（脚本报错或超时已丢弃），无法判定是否提升',
+      rvBaselineStale: '现在的基线是别的对局设置下跑的 —— 先重跑基线再采纳，否则对比不成立',
+      rvScriptErr: '本批有 {n} 拍脚本报错：{msg} —— 这批数字不可信，已丢弃',
+      rvAdoptNoSdk: '战术已写入战术框，但这个环境没有 AI 通道，代码仍是旧版 —— 胜率不会变，请自行重生成代码后再跑基线',
+      rvAdoptGenFail: '战术已写入战术框，但代码重生成失败（{msg}），代码仍是旧版 —— 跳过胜率对比',
+      rvAdoptNoChange: '战术已写入战术框，但代码没有变化（{msg}）—— 跳过一个必然无差异的对比',
+      rvBusy: '批量正在跑，先等它跑完',
+      rvNoFlag: '本局没标出可疑操作',
+      rvTitleSingle: '复盘这一局',
+      rvTitleBatch: '战术复盘',
+      rvDlText: '⬇ 下载文字版',
+      rvDlJson: '⬇ JSON',
+      rvAi: '⚡ 让 AI 复盘',
+      rvAiRunning: 'AI 正在读战报…',
+      rvOld: '现在的战术',
+      rvNew: 'AI 改写',
+      rvAdopt: '采纳并重跑对比',
+      rvDiscard: '放弃',
+      rvNeedLogin: '登录后可用 AI 复盘',
+      rvNoSdk: '当前环境没有 AI 通道（本地单文件版），可下载报告自己丢给 AI',
+      rvAiFail: 'AI 复盘失败：{msg}',
+      rvBadReply: 'AI 回复里没有可用的战术改写，本轮不动你的战术',
+      rvDiagTitle: 'AI 的判断（基于上面这份战报）',
+      rvDiagEmpty: '还没让 AI 看过这份战报',
+      rvRuleNote: '这些标注是引擎按规则算出的确定性事实；AI 只负责解释与给改法',
+      rvTrain: '训练组',
+      rvHoldout: '留出组',
+      rvBefore: '改前',
+      rvAfter: '改后',
+      rvNoGain: '本轮没有提升（训练组 {a}，留出组 {b}）——很可能只是学会了赢那几个种子',
+      rvGain: '留出组胜率 {before} → {after}（这个才算数）',
+      rvHist: '复盘历史',
+      rvCurrent: '当前',
+      rvRound: '第 {n} 轮',
+      rvAdopted: '已写入战术框，正在重跑两组种子…',
+      rvCost: '本次消耗 1 次 AI 调用 · 报告摘要 {kb}KB',
+      rvWin: '胜',
+      rvLoss: '负',
       codeBox: '查看/编辑脚本（高级）',
       myTank: '我的坦克',
       opponent: '对手',
@@ -2289,6 +3260,27 @@ const LOCALES = {
       tankN: '坦克{n}',
       garage: '我的车库',
       garageCount: '我的车库（{n} 台）',
+      garageManage: '🗂 管理车库…',
+      garageHint: '车库只管「有哪些坦克」；改战术请回作战台',
+      lpTitle: '战术指挥',
+      tactHead: '战术描述（用大白话写打法）',
+      tankSwitchLocal: '仅存本机',
+      tankSwitchCloud: '☁ 已同步',
+      scriptOpen: '</> 查看脚本',
+      scriptDrawerTitle: '脚本编辑器',
+      scriptApiTitle: '可用 API',
+      scriptApiBody: 'api.enemyVisible() / api.canFire()\napi.fireAt(api.enemy())\napi.useSkill()\napi.moveTo(x, y) / api.patrol()\napi.me() / api.stars()',
+      scriptSandboxTitle: '沙箱',
+      scriptSandboxBody: '受限 API · 脚本报错 = 本拍待机',
+      accountTitle: '账号与密钥',
+      accountAnon: '未登录：坦克只存在这台机器上。登录后可云端同步、用 AI 由战术文字生成代码。',
+      overlayClose: '关闭',
+      noticeMore: '还有 {n} 条提醒 ▾',
+      noticeLess: '收起提醒 ▴',
+      garageStrategyChars: '战术 {n} 字',
+      garageNoStrategy: '暂无战术文字',
+      saveShort: '💾 保存 v{v}',
+      saveFirstShort: '💾 保存为 v1',
       garageEmpty: '还没有坦克：点「新建坦克」，或直接「保存」把当前脚本存为第一台',
       garageActive: '出战中',
       garageUse: '出战',
@@ -2558,6 +3550,67 @@ function decide(api) {
       genBtn: '⚡ Generate tank code from tactics text (AI)',
       genLogBtn: '⬇ Download diagnostic log',
       genLogTitle: 'Save the full record of this generation as JSON and send it to us to pin the problem',
+      rvGauge: 'Win-rate gauge · same stage & rival',
+      rvNever: 'not measured yet',
+      rvRun: '▶ Run {n} battles for a baseline',
+      rvRerun: '↻ Re-run {n} battles',
+      rvOpen: '🔍 Review',
+      rvWins: '{w} wins / {n} battles',
+      rvRunning: 'running battle {i}/{n}…',
+      rvLocalHint: 'all {n} battles run in your browser, nothing uploaded',
+      rvStale: 'match setup changed — re-run to refresh the win rate',
+      rvFail: 'Batch run failed: {msg}',
+      rvFailNote: 'old numbers are never passed off as this run',
+      rvNoBattle: 'Play a battle first, then review it',
+      rvBattleReview: '🔍 Review this battle',
+      rvBattleJson: '⬇ JSON',
+      rvFlag: '⚠ {n} suspicious',
+      rvFlagBatch: '⚠ {n} suspicious / {g} battles',
+      rvRunBoth: '▶ Run baseline ({n} battles per set)',
+      rvRerunBoth: '↻ Re-run baseline ({n} battles per set)',
+      rvRunningSet: 'running {set} battle {i}/{n}…',
+      rvHoldoutLine: 'hold-out {p}',
+      rvHoldoutNone: 'hold-out not run',
+      rvNoBaseline: 'No "before" baseline, so no gain can be claimed — run the baseline over both seed sets first',
+      rvSetupChanged: 'Before and after used different match setups (rival/skill/map changed) — this comparison does not hold',
+      rvNoAfter: 'The "after" batches did not complete (script errors or timeout, discarded) — no gain can be judged',
+      rvBaselineStale: 'The current baseline was run under a different match setup — re-run the baseline before adopting',
+      rvScriptErr: '{n} script errors in this batch: {msg} — these numbers are untrustworthy and were discarded',
+      rvAdoptNoSdk: 'Tactics written to the box, but this environment has no AI channel, so the code is still the old one — the win rate cannot change until you regenerate the code',
+      rvAdoptGenFail: 'Tactics written to the box, but regenerating the code failed ({msg}) — the code is still the old one, comparison skipped',
+      rvAdoptNoChange: 'Tactics written to the box, but the code did not change ({msg}) — skipping a comparison that is guaranteed to show no difference',
+      rvBusy: 'A batch is still running — wait for it to finish',
+      rvNoFlag: 'no suspicious moves flagged',
+      rvTitleSingle: 'Review this battle',
+      rvTitleBatch: 'Tactics review',
+      rvDlText: '⬇ Download text',
+      rvDlJson: '⬇ JSON',
+      rvAi: '⚡ Ask AI to review',
+      rvAiRunning: 'AI is reading the report…',
+      rvOld: 'Current tactics',
+      rvNew: 'AI rewrite',
+      rvAdopt: 'Adopt & re-run',
+      rvDiscard: 'Discard',
+      rvNeedLogin: 'Log in to use AI review',
+      rvNoSdk: 'No AI channel here (standalone file) — download the report and feed it to any AI',
+      rvAiFail: 'AI review failed: {msg}',
+      rvBadReply: 'No usable tactics rewrite in the AI reply — your tactics are unchanged',
+      rvDiagTitle: 'What the AI reads from this report',
+      rvDiagEmpty: 'AI has not looked at this report yet',
+      rvRuleNote: 'Flags are deterministic engine facts; the AI only explains them and proposes fixes',
+      rvTrain: 'Train set',
+      rvHoldout: 'Hold-out set',
+      rvBefore: 'before',
+      rvAfter: 'after',
+      rvNoGain: 'No gain this round (train {a}, hold-out {b}) — likely just memorised those seeds',
+      rvGain: 'Hold-out win rate {before} → {after} (this is the one that counts)',
+      rvHist: 'Review history',
+      rvCurrent: 'current',
+      rvRound: 'round {n}',
+      rvAdopted: 'Written into the tactics box — re-running both seed sets…',
+      rvCost: '1 AI call this round · report digest {kb}KB',
+      rvWin: 'win',
+      rvLoss: 'loss',
       codeBox: 'View/edit script (advanced)',
       myTank: 'My Tank',
       opponent: 'Opponent',
@@ -2572,6 +3625,27 @@ function decide(api) {
       tankN: 'Tank {n}',
       garage: 'My Garage',
       garageCount: 'My Garage ({n} tanks)',
+      garageManage: '🗂 Manage garage…',
+      garageHint: 'The garage only tracks which tanks exist; edit tactics back in the HQ',
+      lpTitle: 'Tactics HQ',
+      tactHead: 'Tactics — describe your play in plain words',
+      tankSwitchLocal: 'this device only',
+      tankSwitchCloud: '☁ synced',
+      scriptOpen: '</> View script',
+      scriptDrawerTitle: 'Script editor',
+      scriptApiTitle: 'Available API',
+      scriptApiBody: 'api.enemyVisible() / api.canFire()\napi.fireAt(api.enemy())\napi.useSkill()\napi.moveTo(x, y) / api.patrol()\napi.me() / api.stars()',
+      scriptSandboxTitle: 'Sandbox',
+      scriptSandboxBody: 'Limited API · script error = idle that tick',
+      accountTitle: 'Account & keys',
+      accountAnon: 'Not signed in: tanks live only on this device. Sign in for cloud sync and AI code generation from your tactics text.',
+      overlayClose: 'Close',
+      noticeMore: '{n} more notices ▾',
+      noticeLess: 'Collapse ▴',
+      garageStrategyChars: 'tactics {n} chars',
+      garageNoStrategy: 'no tactics text yet',
+      saveShort: '💾 Save v{v}',
+      saveFirstShort: '💾 Save as v1',
       garageEmpty: 'No tanks yet: click "New tank", or just "Save" to store the current script as your first one',
       garageActive: 'deployed',
       garageUse: 'deploy',
@@ -2800,6 +3874,8 @@ function decide(api) {
 // 运行时部分 initPlay(ctx)：仅在 play 部署环境动态注入 SDK 脚本节点（src 指向 __sdk/v1.js），
 // dist 静态产物零外链；SDK 不可用/未登录时所有现有功能零回归（匿名照旧）。
 
+
+
 // 注入决策：file: 一律不注入；?play=1 显式开启直接注入；http(s) 无 flag 先探测 __sdk/v1.js 可用性
 function sdkInjectDecision(loc) {
   const protocol = (loc && loc.protocol) || '';
@@ -2846,6 +3922,160 @@ function buildLlmPrompt(opts) {
     feedback ? `- 上一次生成的代码编译失败，错误：${feedback}。请修正后重新输出完整代码块。` : '',
     `玩家策略描述：${strategy}`,
   ].filter(Boolean).join('\n');
+}
+
+// ---------- AI 复盘（战报 → 战术调整）：提示词合同 + 回复解析 ----------
+// 分工纪律：「哪里不合理」由引擎的确定性规则判定（src/engine/analyze.js 的 moments），
+// AI 只做两件事——解释这些时刻意味着什么、把玩家的战术文字改写掉。
+// 所以提示词里必须带上已标好的时刻与指标，且**不塞全量事件**（预算 + 防模型自由发挥）。
+const REVIEW_MAX_STRATEGY = 4000;
+
+const pctS = (x) => `${Math.round((Number(x) || 0) * 100)}%`;
+
+// 单局 JSON → 复盘载荷（丢掉 events，只留判定所需）
+function reviewPayloadFromBattle(rep) {
+  const r = rep || {};
+  const s = r.setup || {};
+  const m = r.metrics || {};
+  return {
+    kind: 'single',
+    setup: {
+      seed: s.seed, mapKey: s.mapKey, opponent: s.opponent, tank: s.tank,
+      skills: Array.isArray(s.skills) ? s.skills.slice() : [],
+    },
+    result: r.result || {},
+    metrics: m,
+    moments: (r.moments || []).map((x) => ({ t: x.t, label: x.label, severity: x.severity, why: x.why })),
+  };
+}
+
+// 批量结果 → 复盘载荷（胜率 + 败因 + 逐局一行 + 高频不合理操作）
+function reviewPayloadFromBatch(batch) {
+  const b = batch || {};
+  const games = Array.isArray(b.games) ? b.games : [];
+  const agg = aggregateBatch(games);
+  const ruleCount = {};
+  for (const g of games) for (const mo of g.moments || []) {
+    const k = mo.label || mo.rule;
+    ruleCount[k] = (ruleCount[k] || 0) + 1;
+  }
+  return {
+    kind: 'batch',
+    setup: b.setup || {},
+    agg,
+    games: games.map((g) => ({
+      seed: g.seed, win: g.win, reason: g.reason,
+      accuracy: (g.metrics || {}).accuracy, dmgDealt: (g.metrics || {}).dmgDealt,
+      dmgTaken: (g.metrics || {}).dmgTaken, stars: (g.metrics || {}).stars,
+    })),
+    topMoments: Object.entries(ruleCount).sort((a, b2) => b2[1] - a[1]).slice(0, 5).map(([label, count]) => ({ label, count })),
+  };
+}
+
+const REVIEW_CONTRACT = [
+  '合同（必须严格遵守）：',
+  '- 只输出一个 ```json 代码块，形如：',
+  '  {"diagnoses":[{"title":"一句话病灶","detail":"为什么这样不好","evidence":"t=34 或指标数字"}],',
+  '   "strategy":"改写后的完整战术文字（中文，给玩家读，不是代码）","changes":["一句话说明改了什么"]}',
+  '- diagnoses 每条都必须引用下面给出的时刻（t=…）或指标数字，不许凭空推断。',
+  '- strategy 要保留玩家原本合理的部分，只改该改的；不要写代码。',
+  '- 不要输出代码块以外的任何解释文字。',
+];
+
+function buildReviewPrompt(opts) {
+  const o = opts || {};
+  const mode = o.mode;
+  if (mode !== 'single' && mode !== 'batch') throw new Error(`buildReviewPrompt: unknown mode ${mode}`);
+  const p = o.payload || {};
+  const s = p.setup || {};
+  const lines = [];
+  lines.push('你是坦克对战游戏的战术教练。下面是引擎判定出的确定性事实（不是猜测）。');
+  lines.push(mode === 'single'
+    ? '任务：指出玩家写的战术在这一局里哪几处表现不合理，并改写战术文字。'
+    : '任务：从这一批对局（同关卡、同对手、同技能，只有随机种子不同）里找出系统性毛病，并改写战术文字，目标是提升胜率。');
+  lines.push(...REVIEW_CONTRACT);
+  lines.push('');
+  lines.push('玩家现在的战术：');
+  lines.push(String(o.strategy || '（空）'));
+  lines.push('');
+
+  if (mode === 'single') {
+    const r = p.result || {};
+    const m = p.metrics || {};
+    lines.push(`这一局：seed=${s.seed} 地图=${s.mapKey} 对手=${s.opponent} 我方技能=${(s.skills || [])[0] ?? '—'}`);
+    lines.push(`结果：${r.win ? '胜' : '负'}（${r.reason}，共 ${r.ticks} 拍）星 ${(r.stars || [0, 0]).join(':')}`);
+    lines.push(`指标：命中率 ${pctS(m.accuracy)}（${m.fires} 发中 ${m.hits}）｜伤害 打出 ${m.dmgDealt} / 挨了 ${m.dmgTaken}｜子弹被挡 ${m.shotsBlocked}`
+      + `｜毒圈挨伤 ${m.zoneDmg}｜技能 ${m.skillCasts} 放 ${m.skillHits} 中｜我首星 t=${m.firstStarTick ?? '—'}，对手 t=${m.enemyFirstStarTick ?? '—'}`
+      + `｜阵亡 t=${m.deathTick ?? '无'}`);
+    lines.push('');
+    lines.push('引擎标出的不合理时刻：');
+    if (!(p.moments || []).length) lines.push('（本局没有标出可疑时刻——若战术仍有问题，请从指标里找）');
+    for (const mo of p.moments || []) lines.push(`- t=${mo.t} ${mo.label}（${mo.severity === 'high' ? '重' : '中'}）：${mo.why}`);
+  } else {
+    const a = p.agg || {};
+    lines.push(`这一批：对手=${s.opponent} 技能=${s.skill} 地图=${s.mapKey} 种子集=${s.seedSet} 共 ${a.games || 0} 局`);
+    lines.push(a.games
+      ? `胜率 ${pctS(a.winRate)}（${a.wins} 胜 ${a.losses} 负）｜平均 命中率 ${pctS((a.avg || {}).accuracy)}，打出 ${(a.avg || {}).dmgDealt} / 挨了 ${(a.avg || {}).dmgTaken}，首星 t=${(a.avg || {}).firstStarTick ?? '—'}（对手 ${(a.avg || {}).enemyFirstStarTick ?? '—'}）`
+      : '（本批没有跑出任何一局）');
+    const buckets = Object.entries(a.lossBuckets || {});
+    if (buckets.length) lines.push(`败因分桶：${buckets.map(([k, v]) => `${k} ${v} 局`).join('，')}`);
+    if ((p.topMoments || []).length) lines.push(`高频不合理操作：${p.topMoments.map((x) => `${x.label} ×${x.count}`).join('，')}`);
+    lines.push('');
+    lines.push('逐局：');
+    for (const g of p.games || []) {
+      lines.push(`- seed ${g.seed} ${g.win ? '胜' : '负'} ${g.reason} 命中 ${pctS(g.accuracy)} 打${g.dmgDealt}/挨${g.dmgTaken} 星${(g.stars || [0, 0]).join(':')}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+// 回复 → {diagnoses, strategy, changes, truncated}；拿不到可用结构一律 null（fail-closed）
+function parseReviewReply(text) {
+  const raw = String(text || '');
+  let jsonText = null;
+  const fenced = raw.match(/```(?:json)?\s*\n([\s\S]*?)```/);
+  if (fenced) jsonText = fenced[1];
+  else {
+    const i = raw.indexOf('{');
+    const j = raw.lastIndexOf('}');
+    if (i >= 0 && j > i) jsonText = raw.slice(i, j + 1);
+  }
+  if (!jsonText) return null;
+  let obj;
+  try { obj = JSON.parse(jsonText); } catch { return null; }
+  if (!obj || typeof obj !== 'object') return null;
+  let strategy = typeof obj.strategy === 'string' ? obj.strategy.trim() : '';
+  if (!strategy) return null;
+  let truncated = false;
+  if (strategy.length > REVIEW_MAX_STRATEGY) { strategy = strategy.slice(0, REVIEW_MAX_STRATEGY); truncated = true; }
+  const diagnoses = (Array.isArray(obj.diagnoses) ? obj.diagnoses : [])
+    .filter((d) => d && typeof d === 'object' && typeof d.title === 'string' && d.title.trim())
+    .slice(0, 6)
+    .map((d) => ({
+      title: String(d.title).trim().slice(0, 200),
+      detail: typeof d.detail === 'string' ? d.detail.trim().slice(0, 600) : '',
+      evidence: typeof d.evidence === 'string' ? d.evidence.trim().slice(0, 120) : '',
+    }));
+  const changes = (Array.isArray(obj.changes) ? obj.changes : [])
+    .filter((c) => typeof c === 'string' && c.trim())
+    .slice(0, 8)
+    .map((c) => c.trim().slice(0, 200));
+  return { diagnoses, strategy, changes, truncated };
+}
+
+// 改前/改后胜率对比的结论判定（纯函数，脱离 DOM 才能被测试钉住）。
+// 五个态一个都不能省：任一侧缺数据、或两侧不是同一套对局设置，都**不许**给出「有没有提升」的定性结论。
+// 教训：第一轮只挡了 before 缺失，after 缺失（脚本报错/沙箱超时被丢弃）照样印「本轮没有提升」——
+// 在没有数据时给确定性否定判决，和编造提升是同一种谎。
+function compareVerdict(o) {
+  const before = (o && o.before) || {};
+  const after = (o && o.after) || {};
+  const cur = o && o.curKey;
+  const keys = (o && Array.isArray(o.keys) ? o.keys : []).filter((k) => k != null && k !== '');
+  if (cur != null && keys.some((k) => k !== cur)) return { state: 'setup-changed', gained: false };
+  if (before.train == null || before.holdout == null) return { state: 'no-before', gained: false };
+  if (after.train == null || after.holdout == null) return { state: 'no-after', gained: false };
+  return after.holdout > before.holdout ? { state: 'gain', gained: true } : { state: 'no-gain', gained: false };
 }
 
 // LLM 输出 → 代码：优先取 ```js 围栏块；裸输出须含 decide 入口，否则 null（fail-closed）
@@ -2945,13 +4175,7 @@ function scriptGate(code, opts) {
 // ---------- 生成诊断日志：失败时一键下载交给产品方分析 ----------
 // 只装“定位问题必需”的东西：环境能力（CSP/eval/SDK）、每次尝试的形状与错误、玩家自己的策略文本与产出代码。
 // 绝不装凭证：落盘前统一过 redactSecrets（Bearer / ak1_ / gt1_ / token 字段一律打码）。
-function redactSecrets(text) {
-  return String(text == null ? '' : text)
-    .replace(/\b(Bearer)\s+[A-Za-z0-9._-]+/gi, '$1 «redacted»')
-    .replace(/\b(ak1|gt1|sk|pk)_[A-Za-z0-9._-]{6,}/g, '$1_«redacted»')
-    .replace(/("?(?:access_)?token"?\s*[:=]\s*")([^"]{6,})(")/gi, '$1«redacted»$3')
-    .replace(/([?&](?:token|key|secret)=)[^&\s]{6,}/gi, '$1«redacted»');
-}
+{ redactSecrets }; // 单一定义点在 src/engine/analyze.js（战报 JSON 与生成日志共用同一套打码，勿另写）
 
 function genLogFilename(now) {
   const d = now instanceof Date ? now : new Date(now || Date.now());
@@ -3618,6 +4842,23 @@ self.onmessage = function (e) {
   var m = e.data || {};
   var box = { count: 0, last: '' };
   try {
+    if (m.type === 'batch') {
+      // 批量试跑（同关卡同对手同技能、只换 seed）：Worker 内跑完直接出「一局一行摘要」，
+      // 不把全量事件回传主线程（12 局的事件有几 MB，回传既慢又没人看）。
+      // 摘要口径与主线程共用 summarizeGame，两条路胜率必须一致。
+      var games = [];
+      for (var bi = 0; bi < m.jobs.length; bi++) {
+        var bj = m.jobs[bi];
+        if (!bj.map) throw new Error('batch job requires map (摘要判定需要地形与出生点)');
+        var br = runMatch({ seed: bj.seed, botA: __pick(bj.a, box), botB: __pick(bj.b, box), map: bj.map, content: m.content || null });
+        games.push(summarizeGame({
+          map: bj.map, result: br, who: bj.who || 0,
+          seed: bj.seedStr || bj.seed, strategy: m.strategy || '',
+        }));
+      }
+      self.postMessage({ id: m.id, ok: true, games: games, errCount: box.count, errLast: box.last });
+      return;
+    }
     if (m.type === 'ladder') {
       var out = [];
       for (var i = 0; i < m.jobs.length; i++) {
@@ -4221,8 +5462,23 @@ async function saveVersion() {
 }
 function updateVersionUi() {
   const t = curTank();
-  saveBtn.textContent = t ? T('ui.save', { name: t.name, v: t.v + 1 }) : T('ui.saveFirst');
-  editorTitle.textContent = T('ui.editorTitle', { name: myTankLabel() });
+  // 粘底 CTA 是半宽按钮：这里用短文案（长文案会换行把 CTA 撑高、压小滚动区），完整说明进 title
+  saveBtn.textContent = t ? T('ui.saveShort', { v: t.v + 1 }) : T('ui.saveFirstShort');
+  saveBtn.title = t ? T('ui.save', { name: t.name, v: t.v + 1 }) : T('ui.saveFirst');
+  // 坦克身份挪到左栏顶部切换器（h2 固定为「战术指挥」）：一行显示名字 + 版本 + 云端状态
+  const nameEl = $id('tankSwitchName');
+  const verEl = $id('tankSwitchVer');
+  const syncEl = $id('tankSwitchSync');
+  if (nameEl) nameEl.textContent = t ? t.name : T('ui.myTank');
+  if (verEl) verEl.textContent = t ? `v${t.v}` : '';
+  if (syncEl) {
+    const cloud = garage.mode === 'cloud';
+    syncEl.textContent = T(cloud ? 'ui.tankSwitchCloud' : 'ui.tankSwitchLocal');
+    syncEl.classList.toggle('on', cloud);
+  }
+  const drawerSub = $id('scriptDrawerSub');
+  if (drawerSub) drawerSub.textContent = t ? `${t.name} v${t.v}` : myTankLabel();
+  renderTankMenu();
 }
 
 // ---------- 我的车库 UI（列表 / 切换出战 / 新建 / 重命名） ----------
@@ -4308,29 +5564,201 @@ function renderGarage() {
     p.style.cssText = 'font-size:11px;color:var(--dim)';
     p.textContent = T('ui.garageEmpty');
     garageListEl.appendChild(p);
+    renderTankMenu();
     return;
   }
   for (const t of garage.tanks) {
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;gap:6px;align-items:center;font-size:11px;margin:2px 0;color:var(--muted)';
-    const label = document.createElement('span');
-    label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
     const isCur = t.name === garage.cur;
-    label.textContent = isCur ? `${t.name} v${t.v} · ${T('ui.garageActive')}` : `${t.name} v${t.v}`;
-    if (isCur) label.style.color = 'var(--p1)';
-    row.appendChild(label);
+    // 弹窗里空间够（720px）：每台坦克显示版本 / 技能 / 战术字数，而不是旧左栏那条挤成一行的窄条
+    const row = document.createElement('div');
+    row.className = isCur ? 'gcard cur' : 'gcard';
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    const n = document.createElement('div');
+    n.className = 'n';
+    n.textContent = t.name;
+    if (isCur) {
+      const tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = T('ui.garageActive');
+      n.appendChild(tag);
+    }
+    const d = document.createElement('div');
+    d.className = 'd';
+    const chars = String(t.strategy || '').trim().length;
+    d.textContent = [
+      `v${t.v}`,
+      skillLabel(t.skill || 'teleport'),
+      chars ? T('ui.garageStrategyChars', { n: chars }) : T('ui.garageNoStrategy'),
+    ].join(' · ');
+    meta.appendChild(n);
+    meta.appendChild(d);
+    row.appendChild(meta);
+    const ops = document.createElement('div');
+    ops.className = 'ops';
     const mkBtn = (text, fn) => {
       const b = document.createElement('button');
       b.className = 'btn ghost';
-      b.style.cssText = 'padding:1px 8px;font-size:11px;min-width:0';
+      b.type = 'button';
       b.textContent = text;
       b.addEventListener('click', fn);
-      row.appendChild(b);
+      ops.appendChild(b);
     };
     if (!isCur) mkBtn(T('ui.garageUse'), () => { switchTank(t.name); });
     mkBtn(T('ui.garageRename'), () => { renameTank(t.name); });
+    row.appendChild(ops);
     garageListEl.appendChild(row);
   }
+  renderTankMenu();
+}
+
+// ---------- 左栏作战台外壳（方案 A）：坦克切换器 / 覆盖层 / 通知队列 / 对局设置 chip ----------
+// 设计约束：左栏只留每局都碰的东西；低频功能进覆盖层。任何状态下 #lpScroll 独立滚动、#lpCta 粘底，
+// 不再出现旧版「内容溢出被 body{overflow:hidden} 裁掉且没有滚动条」的情况。
+const scrimEl = $id('overlayScrim');
+const tankMenuEl = $id('tankMenu');
+const tankSwitchEl = $id('tankSwitch');
+const setupPopEl = $id('setupPop');
+let openedOverlay = null;
+
+function openOverlay(el) {
+  if (!el) return;
+  if (openedOverlay && openedOverlay !== el) openedOverlay.hidden = true;
+  openedOverlay = el;
+  el.hidden = false;
+  if (scrimEl) scrimEl.hidden = false;
+  const first = el.querySelector('textarea, select, input, button');
+  if (first) { try { first.focus(); } catch { /* 忽略 */ } }
+}
+function closeOverlay() {
+  if (openedOverlay) openedOverlay.hidden = true;
+  openedOverlay = null;
+  if (scrimEl) scrimEl.hidden = true;
+}
+function tankMenuHide() {
+  if (tankMenuEl) tankMenuEl.hidden = true;
+  if (tankSwitchEl) tankSwitchEl.setAttribute('aria-expanded', 'false');
+}
+function setupPopHide() {
+  if (setupPopEl) setupPopEl.hidden = true;
+  for (const c of document.querySelectorAll('#setupRow .schip')) c.classList.remove('on');
+}
+function renderTankMenu() { // 切换器下拉：高频「换一台」一击直达，管理类沉到最后两行
+  const list = $id('tankMenuList');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!garage.tanks.length) {
+    const p = document.createElement('div');
+    p.style.cssText = 'font-size:11px;color:var(--dim);padding:6px 9px';
+    p.textContent = T('ui.garageEmpty');
+    list.appendChild(p);
+    return;
+  }
+  for (const t of garage.tanks) {
+    const isCur = t.name === garage.cur;
+    const it = document.createElement('button');
+    it.type = 'button';
+    it.className = isCur ? 'it on' : 'it';
+    const nm = document.createElement('span');
+    nm.className = 'nm';
+    nm.textContent = `${t.name} v${t.v}`;
+    it.appendChild(nm);
+    if (isCur) {
+      const tag = document.createElement('span');
+      tag.style.cssText = 'font-size:11px;color:var(--p1)';
+      tag.textContent = T('ui.garageActive');
+      it.appendChild(tag);
+    }
+    it.addEventListener('click', () => { tankMenuHide(); if (!isCur) switchTank(t.name); });
+    list.appendChild(it);
+  }
+}
+
+// 通知队列：脚本报错 / 技能不符 / 登录衔接三条横幅曾能同时出现（叠加约 120px 把设置项顶下去）；
+// 现在默认只露最紧急一条，其余折进「还有 N 条」。各处仍按老办法 toggle .show，这里用观察器兜住所有入口。
+const noticeBoxEl = $id('noticeBox');
+const noticeMoreEl = $id('noticeMore');
+let noticesOpen = false;
+let noticeBusy = false;
+function renderNotices() {
+  if (!noticeBoxEl || !noticeMoreEl || noticeBusy) return;
+  noticeBusy = true;
+  try {
+    const all = [...noticeBoxEl.querySelectorAll('.notice')];
+    const shown = all.filter((el) => el.classList.contains('show'));
+    for (const el of all) el.classList.remove('nt-hidden');
+    if (!noticesOpen) for (const el of shown.slice(1)) el.classList.add('nt-hidden');
+    noticeMoreEl.hidden = shown.length <= 1;
+    noticeMoreEl.textContent = noticesOpen ? T('ui.noticeLess') : T('ui.noticeMore', { n: shown.length - 1 });
+  } finally {
+    setTimeout(() => { noticeBusy = false; }, 0); // 自身改 class 不再回环触发观察器
+  }
+}
+function syncSetupChips() { // chip 只显示选项主名（括号里的说明在气泡里看）
+  const short = (sel) => {
+    if (!sel) return '';
+    const txt = sel.selectedOptions && sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : '';
+    return String(txt || sel.value).split(/[（(]/)[0].trim();
+  };
+  const set = (id, sel) => {
+    const v = $id(id) && $id(id).querySelector('.v');
+    if (v) v.textContent = short(sel);
+  };
+  set('chipOpp', oppSelect);
+  set('chipSkill', skillSel);
+  set('chipMap', mapSel);
+}
+
+if (scrimEl) scrimEl.addEventListener('click', closeOverlay);
+for (const b of document.querySelectorAll('[data-close]')) b.addEventListener('click', closeOverlay);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { // 覆盖层 > 下拉/气泡：逐层收起，键盘可达
+    if (openedOverlay) closeOverlay();
+    else { tankMenuHide(); setupPopHide(); }
+  }
+});
+$id('garageOpenBtn')?.addEventListener('click', () => { tankMenuHide(); openOverlay($id('garageModal')); });
+$id('tankNewBtn')?.addEventListener('click', () => { tankMenuHide(); newTank(); });
+$id('scriptOpenBtn')?.addEventListener('click', () => openOverlay($id('scriptDrawer')));
+{
+  const userChip = $id('playUserChip');
+  if (userChip) {
+    userChip.style.cursor = 'pointer';
+    userChip.addEventListener('click', () => openOverlay($id('accountModal')));
+  }
+}
+if (tankSwitchEl && tankMenuEl) {
+  tankSwitchEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const willShow = tankMenuEl.hidden;
+    setupPopHide();
+    if (willShow) renderTankMenu();
+    tankMenuEl.hidden = !willShow;
+    tankSwitchEl.setAttribute('aria-expanded', String(willShow));
+  });
+}
+document.addEventListener('click', (e) => { // 点空白收起下拉/气泡
+  if (tankMenuEl && !tankMenuEl.hidden && !tankMenuEl.contains(e.target) && !(tankSwitchEl && tankSwitchEl.contains(e.target))) tankMenuHide();
+  if (setupPopEl && !setupPopEl.hidden && !setupPopEl.contains(e.target) && !(e.target.closest && e.target.closest('#setupRow .schip'))) setupPopHide();
+});
+for (const chip of document.querySelectorAll('#setupRow .schip')) {
+  chip.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const wasOn = chip.classList.contains('on');
+    setupPopHide();
+    tankMenuHide();
+    if (wasOn || !setupPopEl) return;
+    chip.classList.add('on');
+    for (const r of setupPopEl.querySelectorAll('.prow')) r.classList.toggle('on', r.dataset.row === chip.dataset.pop);
+    setupPopEl.hidden = false;
+  });
+}
+for (const sel of [oppSelect, skillSel, mapSel]) {
+  if (sel) sel.addEventListener('change', () => { syncSetupChips(); setupPopHide(); });
+}
+if (noticeMoreEl) noticeMoreEl.addEventListener('click', () => { noticesOpen = !noticesOpen; renderNotices(); });
+if (noticeBoxEl && typeof MutationObserver === 'function') {
+  new MutationObserver(renderNotices).observe(noticeBoxEl, { attributes: true, attributeFilter: ['class'], subtree: true });
 }
 
 // ---------- 登录时刻衔接（方案 v2）：横幅流程 + 云端车库接管 ----------
@@ -5588,7 +7016,7 @@ function generationGate(code) {
 
 async function generateScript() {
   if (!genBtn) return;
-  if (llmCtl && llmCtl.needLogin) { llmCtl.login(); return; } // 未登录：按钮即登录入口
+  if (llmCtl && llmCtl.needLogin) { llmCtl.login(); return { ok: false, outcome: 'need-login', reason: 'not logged in' }; } // 未登录：按钮即登录入口
   const strategy = (strategyEl ? strategyEl.value : '').trim();
   const skill = userSkill();
   const t0 = Date.now();
@@ -5599,7 +7027,7 @@ async function generateScript() {
   if (!llmCtl || typeof llmCtl.chat !== 'function') {
     genMsg(T('play.genUnavailable'), true);
     setGenLog(mkLog('no-sdk', 'play SDK llm.chat unavailable'));
-    return;
+    return { ok: false, outcome: 'no-sdk', reason: 'play SDK llm.chat unavailable' };
   }
   if (!strategy) { genMsg(T('play.genEmpty'), true); return; }
   genBtn.disabled = true;
@@ -5644,10 +7072,11 @@ async function generateScript() {
         genMsg(T('play.genDoneNoRun'), true);
         setGenLog(mkLog('ok-cannot-run', 'host forbids dynamic compilation (CSP without unsafe-eval)'));
       }
-      return;
+      return { ok: true, outcome: CUSTOM_SCRIPT_OK ? 'ok' : 'ok-cannot-run', reason: '' };
     }
     genMsg(T('play.genFail', { msg: feedback }), true);
     setGenLog(mkLog('invalid-output', feedback));
+    return { ok: false, outcome: 'invalid-output', reason: feedback };
   } catch (e) {
     const m = mapLlmError(e);
     genMsg(T(m.key, m.vars), true);
@@ -5656,7 +7085,9 @@ async function generateScript() {
       last.errorKind = 'sdk-error';
       last.error = `${(e && e.code) || ''} ${String((e && (e.hint || e.message)) || e)}`.trim();
     }
-    setGenLog(mkLog('sdk-error', `${(e && e.code) || ''} ${String((e && (e.hint || e.message)) || e)}`.trim()));
+    const reason = `${(e && e.name) || 'Error'}: ${(e && e.code) || ''} ${String((e && (e.hint || e.message)) || e)}`.trim();
+    setGenLog(mkLog('sdk-error', reason));
+    return { ok: false, outcome: 'sdk-error', reason };
   } finally { genBtn.disabled = false; }
 }
 if (genBtn) genBtn.addEventListener('click', () => { generateScript(); });
@@ -5790,6 +7221,8 @@ setupCanvas(previewMap);
 requestAnimationFrame(loop);
 scheduleLadder();
 refreshSkillHint(); // 启动即检（含 ?script=/?skill= 深链落定后的状态）
+syncSetupChips(); // chip 初值：必须在深链 ?opp=/?skill=/?map= 与内容包选项注入之后取，否则 chip 是空的
+renderNotices(); // 通知队列初始化（启动即可能有脚本报错/技能不符）
 if (qp.get('autoplay') === '1') {
   startBattle();
   if (match) { // 跳到中局并停住，便于截图/演示（双方坦克在场、战报点亮过半）
@@ -5797,6 +7230,512 @@ if (qp.get('autoplay') === '1') {
     setPlaying(false);
   }
 }
+
+// ---------- 战报下载 + AI 复盘 ----------
+// 两种复盘，分工明确：
+//   单局复盘 = 你刚看完这局回放 → 引擎把「不合理时刻」标出来 → AI 解释并改写战术（快而具体）；
+//   多局复盘 = 同关卡同对手同技能只换种子跑 12 局 → 出胜率与败因 → AI 找系统性毛病（慢而可信）。
+// 验收只认「留出组」（AI 没见过的另 12 个种子），防止把战术调成只赢训练那几个种子。
+const BATCH_N = BATCH_SEEDS.train.length;
+const batchRuns = { train: null, holdout: null };
+let batchBusy = false;
+let batchFailMsg = '';
+let reviewMode = 'single';
+let reviewProposal = null;
+let reviewBusy = false;
+let reviewMsgText = '';
+let reviewMsgBad = false;
+let reviewHistory = [];
+let lastCompare = null;
+
+const pctText = (x) => (x == null ? '—' : `${Math.round(x * 100)}%`);
+const codeHashOf = (s) => seedFromString(String(s || '')).toString(16);
+const setupKey = () => `${oppSelect.value}|${userSkill()}|${userMapKey()}|${myTankLabel()}`;
+
+function downloadText(name, text, mime) {
+  const blob = new Blob([text], { type: mime || 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+// 对手解析（与开战同口径）：内置流派直接给函数，工坊 bot 以源码随行
+function resolveOpp() {
+  const key = oppSelect.value;
+  if (key.startsWith('pack:')) {
+    const d = PACK.entries.find((e) => e.type === 'bot' && e.id === key.slice(5));
+    if (!d) throw new Error(T('err.noDecide'));
+    return { fn: EVAL_OK ? compileBot(d) : null, code: d.code, spec: { kind: 'code', skill: d.skill ?? 'shield' }, style: d.name };
+  }
+  const opp = ROSTER.find((r) => r.key === key) || ROSTER[0];
+  return { fn: opp.fn, code: null, spec: { kind: 'builtin', key: opp.key }, style: T('ladder.styleTag', { style: opp.style }) };
+}
+
+function mapLabel() {
+  const opt = mapSel && mapSel.options[mapSel.selectedIndex];
+  const txt = opt ? String(opt.textContent || '').split('（')[0].split(' (')[0].trim() : '';
+  return txt || userMapKey();
+}
+
+function batchSetup(seedSet, style) {
+  return { opponent: style, skill: userSkill(), mapKey: mapLabel(), tank: myTankLabel(), seedSet, seeds: BATCH_SEEDS[seedSet].slice() };
+}
+
+// 降级可观测纪律：批量失败一律记下异常名与内容（不是一句「出错了」），并进诊断日志
+function batchFail(seedSet, e) {
+  const name = (e && e.name) || 'Error';
+  const msg = String((e && e.message) || e);
+  batchFailMsg = `${name}: ${msg}`;
+  batchRuns[seedSet] = null;
+  setGenLog(buildGenLog({
+    outcome: 'batch-failed', reason: batchFailMsg, env: genEnv(),
+    strategy: strategyEl ? strategyEl.value : '', skill: userSkill(), attempts: [],
+  }));
+  renderGauge();
+}
+
+function gaugeProgress(i, seedSet) {
+  const sub = $id('wrSub');
+  if (!sub) return;
+  sub.textContent = seedSet
+    ? T('ui.rvRunningSet', { set: T(seedSet === 'holdout' ? 'ui.rvHoldout' : 'ui.rvTrain'), i, n: BATCH_N })
+    : T('ui.rvRunning', { i, n: BATCH_N });
+}
+
+async function runBatch(seedSet) {
+  if (batchBusy) return null;
+  batchBusy = true;
+  batchFailMsg = '';
+  renderGauge();
+  const strategy = strategyEl ? strategyEl.value : '';
+  const t0 = Date.now();
+  try {
+    const opp = resolveOpp();
+    const mine = { kind: 'user', skill: userSkill() };
+    const jobs = BATCH_SEEDS[seedSet].map((s, i) => {
+      const seed = seedFromString(s);
+      const who = i % 2; // 先后手各 6 局，避免出生位偏袒
+      return { seed, seedStr: s, map: makeMap(seed), who, a: who === 0 ? mine : opp.spec, b: who === 0 ? opp.spec : mine };
+    });
+    let games;
+    let errCount = 0;
+    let errLast = '';
+    if (EVAL_OK) { // 本地/开发版：主线程直跑
+      const fn = compileScript(editorEl.value);
+      const box = { count: 0, last: '' };
+      const guarded = guardWrap(fn, box);
+      guarded.skill = userSkill();
+      games = [];
+      for (let i = 0; i < jobs.length; i++) {
+        const j = jobs[i];
+        const r = runMatch({
+          seed: j.seed, map: j.map, content: PACK,
+          botA: j.who === 0 ? guarded : opp.fn,
+          botB: j.who === 0 ? opp.fn : guarded,
+        });
+        games.push(summarizeGame({ map: j.map, result: r, who: j.who, seed: j.seedStr, strategy }));
+        if (i % 3 === 2) { gaugeProgress(i + 1, seedSet); await new Promise((res) => setTimeout(res, 0)); } // 分片，不卡界面
+      }
+      errCount = box.count;
+      errLast = box.last;
+    } else if (SANDBOX_OK) { // 线上（禁 eval）：整批丢进 blob Worker，回「一局一行摘要」
+      gaugeProgress(0, seedSet);
+      const r = await sandboxRun({ type: 'batch', jobs, content: PACK, strategy }, { userCode: editorEl.value, oppCode: opp.code, timeoutMs: 120000 });
+      games = r.games || [];
+      errCount = r.errCount || 0;
+      errLast = r.errLast || '';
+    } else {
+      throw new Error(T('err.cspEval'));
+    }
+    // 脚本每拍抛异常时 guardWrap 会返回 null，12 局全负 → 界面会显示一个「看起来正常的 0%」。
+    // 那是本机纪律点名的静默降级形态（无异常、无红字、功能消失），必须显式报错并丢弃这批数字。
+    if (errCount > 0) {
+      const err = new Error(T('ui.rvScriptErr', { n: errCount, msg: errLast || '(no message)' }));
+      err.name = 'ScriptRuntimeError';
+      throw err;
+    }
+    batchRuns[seedSet] = {
+      games, agg: aggregateBatch(games), setup: batchSetup(seedSet, opp.style),
+      at: new Date().toISOString(), key: setupKey(), ms: Date.now() - t0,
+    };
+    renderGauge();
+    return batchRuns[seedSet];
+  } catch (e) {
+    batchFail(seedSet, e);
+    return null;
+  } finally {
+    batchBusy = false;
+    renderGauge();
+  }
+}
+
+// 基线 = 训练组 + 留出组各跑一遍。只跑训练组的话，采纳后的「留出组改前」永远是空，
+// 对比卡片就会不管涨没涨都印「本轮没有提升」——那是凭空成立的否定结论（评审 B1）。
+async function runBaseline() {
+  const a = await runBatch('train');
+  if (!a) return null; // 失败已在 gauge 明示，不继续跑第二组
+  return runBatch('holdout');
+}
+
+function renderGauge() {
+  const num = $id('wrNum');
+  const sub = $id('wrSub');
+  const meta = $id('wrMeta');
+  const bars = $id('wrBars');
+  const fail = $id('wrFail');
+  const runBtn = $id('wrRunBtn');
+  const hint = $id('wrHint');
+  const flag = $id('wrFlagChip');
+  if (!num || !sub) return;
+  const run = batchRuns.train;
+  const stale = run && run.key !== setupKey();
+  if (runBtn) {
+    runBtn.textContent = run ? T('ui.rvRerunBoth', { n: BATCH_N }) : T('ui.rvRunBoth', { n: BATCH_N });
+    runBtn.disabled = batchBusy;
+  }
+  if (fail) {
+    fail.hidden = !batchFailMsg;
+    if (batchFailMsg) fail.innerHTML = `${esc(T('ui.rvFail', { msg: '' }))}<div class="d">${esc(batchFailMsg)}</div><div class="d">${esc(T('ui.rvFailNote'))}</div>`;
+  }
+  if (!run || !run.agg.games) {
+    num.textContent = '—%';
+    num.classList.add('na');
+    if (!batchBusy) sub.textContent = T('ui.rvNever');
+    if (meta) meta.textContent = '';
+    if (bars) bars.innerHTML = '';
+    if (hint) hint.textContent = T('ui.rvLocalHint', { n: BATCH_N });
+    if (flag) flag.hidden = true;
+    return;
+  }
+  num.textContent = pctText(run.agg.winRate);
+  num.classList.remove('na');
+  if (!batchBusy) sub.textContent = T('ui.rvWins', { w: run.agg.wins, n: run.agg.games });
+  if (meta) {
+    const ho = batchRuns.holdout;
+    const hoText = ho && ho.agg.games ? T('ui.rvHoldoutLine', { p: pctText(ho.agg.winRate) }) : T('ui.rvHoldoutNone');
+    meta.innerHTML = [run.setup.opponent, run.setup.skill, run.setup.mapKey, run.setup.tank, hoText]
+      .map((x) => `<span>${esc(String(x))}</span>`).join('');
+  }
+  if (bars) {
+    const entries = Object.entries(run.agg.lossBuckets).sort((a, b) => b[1] - a[1]);
+    const top = entries.length ? entries[0][1] : 1;
+    bars.innerHTML = entries.map(([reason, n], i) => {
+      const label = REASON_CN[reason] || reason;
+      return `<div class="bar"><span>${esc(label)}</span><i class="${i ? 'w' : ''}" style="width:${Math.round((n / top) * 100)}%"></i><em>${n}</em></div>`;
+    }).join('');
+  }
+  if (hint) hint.textContent = stale ? T('ui.rvStale') : T('ui.rvLocalHint', { n: BATCH_N });
+  if (flag) {
+    const total = run.games.reduce((s, g) => s + (g.moments || []).length, 0);
+    flag.hidden = !total;
+    flag.textContent = T('ui.rvFlagBatch', { n: total, g: run.agg.games });
+  }
+}
+
+// 单局报告（喂 AI 的那份；懒算一次挂在 match 上）
+function currentBattleReport() {
+  if (!match) return null;
+  if (match.report) return match.report;
+  match.report = buildBattleReport({
+    map: match.map,
+    result: match.result,
+    who: 0,
+    setup: {
+      seed: match.seedStr, mapKey: userMapKey(), opponent: match.names[1], tank: match.names[0],
+      strategy: strategyEl ? strategyEl.value : '', codeHash: codeHashOf(editorEl.value),
+    },
+  });
+  return match.report;
+}
+
+function currentBatch() {
+  const run = batchRuns.train;
+  return run ? { setup: run.setup, at: run.at, games: run.games } : null;
+}
+
+const reviewMsg = (text, bad) => { reviewMsgText = text || ''; reviewMsgBad = !!bad; };
+
+function renderReviewMain() {
+  const main = $id('reviewMain');
+  if (!main) return;
+  if (reviewMode === 'single') {
+    const rep = currentBattleReport();
+    if (!rep) { main.innerHTML = `<div class="rpt">${esc(T('ui.rvNoBattle'))}</div>`; return; }
+    const ctx = new Map((match.entries || []).map((e) => [e.t, e.html]));
+    const rows = [];
+    for (const mo of rep.moments) {
+      const near = ctx.get(mo.t);
+      if (near) rows.push(`<div class="ln dimd"><span class="t">t=${String(mo.t).padStart(3, '0')}</span>${near}</div>`);
+      rows.push(
+        `<div class="ln flag"><span class="t">t=${String(mo.t).padStart(3, '0')}</span>`
+        + `<span class="w">⚠ ${esc(mo.label)}</span><span class="why">${esc(mo.why)}</span></div>`,
+      );
+    }
+    if (!rows.length) rows.push(`<div class="ln dimd">${esc(T('ui.rvNoFlag'))}</div>`);
+    const last = (match.entries || [])[(match.entries || []).length - 1];
+    if (last) rows.push(`<div class="ln dimd"><span class="t">t=${String(last.t).padStart(3, '0')}</span>${last.html}</div>`);
+    main.innerHTML = `<div class="tl">${rows.join('')}</div><div class="wrhint" style="margin-top:8px">${esc(T('ui.rvRuleNote'))}</div>`;
+    return;
+  }
+  const batch = currentBatch();
+  const cmp = lastCompare ? renderCompare() : '';
+  if (!batch) {
+    const why = batchFailMsg ? T('ui.rvFail', { msg: batchFailMsg }) : T('ui.rvNever');
+    main.innerHTML = `${cmp}<div class="rpt">${esc(why)}</div>`;
+    return;
+  }
+  main.innerHTML = `${cmp}<pre class="rpt">${esc(renderBatchText(batch).join('\n'))}</pre>${renderHistory()}`;
+}
+
+function renderCompare() {
+  const c = lastCompare;
+  if (!c) return '';
+  const warn = (msg) => `<div class="wrfail" style="border-color:var(--warn);background:#2A2314;color:var(--warn);margin-bottom:12px">${esc(msg)}</div>`;
+  const card = (label, before, after) => { // 任一侧为空时只显示有的那侧，不假装有对比
+    const up = before != null && after != null && after > before;
+    const flat = before != null && after != null && after <= before;
+    return `<div class="bacard ${up ? 'up' : flat ? 'flat' : ''}"><b>${pctText(before)} → ${pctText(after)}</b>`
+      + `<span>${esc(label)} · ${esc(T('ui.rvBefore'))}→${esc(T('ui.rvAfter'))}</span></div>`;
+  };
+  const cards = `<div class="ba">${card(T('ui.rvTrain'), c.before.train, c.after.train)}${card(T('ui.rvHoldout'), c.before.holdout, c.after.holdout)}</div>`;
+  const v = compareVerdict({ before: c.before, after: c.after, keys: c.keys, curKey: setupKey() });
+  if (v.state === 'setup-changed') return `${cards}${warn(T('ui.rvSetupChanged'))}`;
+  if (v.state === 'no-before') return `${cards}${warn(T('ui.rvNoBaseline'))}`;
+  if (v.state === 'no-after') return `${cards}${warn(T('ui.rvNoAfter'))}`;
+  const note = v.gained
+    ? T('ui.rvGain', { before: pctText(c.before.holdout), after: pctText(c.after.holdout) })
+    : T('ui.rvNoGain', {
+      a: `${pctText(c.before.train)}→${pctText(c.after.train)}`,
+      b: `${pctText(c.before.holdout)}→${pctText(c.after.holdout)}`,
+    });
+  return `${cards}<div class="wrhint" style="margin-bottom:12px;color:${v.gained ? 'var(--ok)' : 'var(--warn)'}">${esc(note)}</div>`;
+}
+
+function renderHistory() {
+  if (!reviewHistory.length) return '';
+  const rows = reviewHistory.map((h, i) => `<tr><td>${esc(i === reviewHistory.length - 1 ? T('ui.rvCurrent') : T('ui.rvRound', { n: h.round }))}</td>`
+    + `<td>${pctText(h.after.train)}</td><td>${pctText(h.after.holdout)}</td></tr>`).join('');
+  return `<h4 style="font-size:12px;color:var(--dim);letter-spacing:1px;margin:16px 0 6px">${esc(T('ui.rvHist'))}</h4>`
+    + `<table><thead><tr><th>#</th><th>${esc(T('ui.rvTrain'))}</th><th>${esc(T('ui.rvHoldout'))}</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderReviewSide() {
+  const side = $id('reviewSide');
+  if (!side) return;
+  const st = sdkState();
+  const aiLabel = st === 'need-login' ? T('ui.rvNeedLogin') : T('ui.rvAi');
+  const parts = [];
+  parts.push(`<h4>${esc(T('ui.rvDiagTitle'))}</h4>`);
+  if (reviewProposal && reviewProposal.diagnoses.length) {
+    for (const d of reviewProposal.diagnoses) {
+      parts.push(`<div class="diag"><div class="n">${esc(d.title)}${d.detail ? `：${esc(d.detail)}` : ''}</div>`
+        + `${d.evidence ? `<div class="ev">${esc(d.evidence)}</div>` : ''}</div>`);
+    }
+  } else {
+    parts.push(`<div class="wrhint">${esc(T('ui.rvDiagEmpty'))}</div>`);
+  }
+  parts.push(`<button class="btn ghost" id="rvAiBtn" style="padding:5px 12px;font-size:11px"${reviewBusy || st === 'absent' ? ' disabled' : ''}>${esc(reviewBusy ? T('ui.rvAiRunning') : aiLabel)}</button>`);
+  if (st === 'absent') parts.push(`<div class="wrhint">${esc(T('ui.rvNoSdk'))}</div>`);
+  if (reviewMsgText) parts.push(`<div class="wrhint" style="color:${reviewMsgBad ? 'var(--bad)' : 'var(--dim)'}">${esc(reviewMsgText)}</div>`);
+  if (reviewProposal) {
+    parts.push(`<div class="cmp" style="grid-template-columns:1fr">
+      <div class="cmpcol"><h5>${esc(T('ui.rvOld'))}</h5>${esc(strategyEl ? strategyEl.value : '')}</div>
+      <div class="cmpcol new"><h5>${esc(T('ui.rvNew'))}</h5>${esc(reviewProposal.strategy)}</div>
+    </div>`);
+    parts.push(`<div style="display:flex;gap:6px;margin-top:8px">
+      <button class="btn ghost" id="rvAdoptBtn"${batchBusy ? ' disabled' : ''} style="padding:5px 12px;font-size:11px;border-color:#4C6B22;color:var(--p1)">${esc(T('ui.rvAdopt'))}</button>
+      <button class="btn ghost" id="rvDropBtn" style="padding:5px 12px;font-size:11px">${esc(T('ui.rvDiscard'))}</button>
+    </div>`);
+  }
+  side.innerHTML = parts.join('');
+  const ai = $id('rvAiBtn');
+  if (ai) ai.addEventListener('click', runAiReview);
+  const adopt = $id('rvAdoptBtn');
+  if (adopt) adopt.addEventListener('click', adoptProposal);
+  const drop = $id('rvDropBtn');
+  if (drop) drop.addEventListener('click', () => { reviewProposal = null; reviewMsg(''); renderReview(); });
+}
+
+function renderReview() {
+  const title = $id('reviewTitle');
+  const sub = $id('reviewSub');
+  const flag = $id('reviewFlag');
+  if (title) title.textContent = T(reviewMode === 'single' ? 'ui.rvTitleSingle' : 'ui.rvTitleBatch');
+  if (sub) {
+    if (reviewMode === 'single' && match) {
+      const rep = currentBattleReport();
+      sub.textContent = `seed ${match.seedStr} · ${match.names[0]} · ${match.names[1]} · ${T(rep.result.win ? 'ui.rvWin' : 'ui.rvLoss')}（${rep.result.reason}，t=${rep.result.ticks - 1}）`;
+    } else if (reviewMode === 'batch' && batchRuns.train) {
+      const s = batchRuns.train.setup;
+      sub.textContent = `${s.tank} · ${s.opponent} · ${s.skill} · ${s.mapKey}`;
+    } else sub.textContent = '';
+  }
+  if (flag) {
+    const rep = reviewMode === 'single' ? currentBattleReport() : null;
+    const n = rep ? rep.moments.length : 0;
+    flag.hidden = !n;
+    flag.textContent = T('ui.rvFlag', { n });
+  }
+  const dlText = $id('reviewDlTextBtn');
+  if (dlText) dlText.hidden = reviewMode !== 'batch'; // 单局按老板口径只给 JSON
+  renderReviewMain();
+  renderReviewSide();
+}
+
+function openReview(mode) {
+  if (mode === 'single' && !match) { showErr(T('ui.rvNoBattle')); return; }
+  reviewMode = mode;
+  reviewProposal = null;
+  reviewMsg('');
+  renderReview();
+  openOverlay($id('reviewDrawer'));
+}
+
+async function runAiReview() {
+  const st = sdkState();
+  if (st === 'need-login') { if (llmCtl && llmCtl.login) llmCtl.login(); return; }
+  if (st !== 'ready') { reviewMsg(T('ui.rvNoSdk'), true); renderReview(); return; }
+  const strategy = strategyEl ? strategyEl.value : '';
+  let prompt;
+  try {
+    if (reviewMode === 'single') {
+      const rep = currentBattleReport();
+      if (!rep) { reviewMsg(T('ui.rvNoBattle'), true); renderReview(); return; }
+      prompt = buildReviewPrompt({ mode: 'single', payload: reviewPayloadFromBattle(rep), strategy });
+    } else {
+      const batch = currentBatch();
+      if (!batch) { reviewMsg(T('ui.rvNever'), true); renderReview(); return; }
+      prompt = buildReviewPrompt({ mode: 'batch', payload: reviewPayloadFromBatch(batch), strategy });
+    }
+  } catch (e) { reviewMsg(T('ui.rvAiFail', { msg: String((e && e.message) || e) }), true); renderReview(); return; }
+  reviewBusy = true;
+  reviewMsg(T('ui.rvAiRunning'));
+  renderReview();
+  const t0 = Date.now();
+  try {
+    const { text } = await llmCtl.chat(prompt);
+    const parsed = parseReviewReply(text);
+    if (!parsed) {
+      reviewMsg(T('ui.rvBadReply'), true);
+      setGenLog(buildGenLog({
+        outcome: 'review-unparsable', reason: 'parseReviewReply returned null', at: t0, durationMs: Date.now() - t0,
+        env: genEnv(), strategy, skill: userSkill(),
+        attempts: [{ n: 1, promptChars: prompt.length, replyChars: String(text || '').length, replyHead: String(text || '').slice(0, 500), extracted: false }],
+      }));
+    } else {
+      reviewProposal = parsed;
+      reviewMsg(T('ui.rvCost', { kb: (prompt.length / 1024).toFixed(1) }));
+    }
+  } catch (e) {
+    const m = mapLlmError(e);
+    reviewMsg(T(m.key, m.vars), true);
+    setGenLog(buildGenLog({
+      outcome: 'review-sdk-error',
+      reason: `${(e && e.name) || 'Error'}: ${String((e && (e.hint || e.message)) || e)}`,
+      at: t0, durationMs: Date.now() - t0, env: genEnv(), strategy, skill: userSkill(), attempts: [],
+    }));
+  } finally {
+    reviewBusy = false;
+    renderReview();
+  }
+}
+
+// 采纳：写回战术框 → 用现有「AI 由战术文字生成代码」把它变成脚本 → 重跑两组种子出对比。
+// 只改战术文字而不重生成代码，胜率不会有任何变化——那样的「对比」是自欺，所以这里必须联动生成。
+async function adoptProposal() {
+  if (!reviewProposal || !strategyEl) return;
+  if (batchBusy) { reviewMsg(T('ui.rvBusy'), true); renderReview(); return; } // 跑批期间采纳会读到上一轮旧数字
+  const curKey = setupKey();
+  // 基线必须是「当前这套对局设置」下跑的：否则「A 对手的改前」和「B 对手的改后」并列出来是假对比
+  const baseKeys = [batchRuns.train && batchRuns.train.key, batchRuns.holdout && batchRuns.holdout.key].filter(Boolean);
+  if (baseKeys.length && baseKeys.some((k) => k !== curKey)) {
+    reviewMsg(T('ui.rvBaselineStale'), true);
+    renderReview();
+    return;
+  }
+  const before = {
+    train: batchRuns.train ? batchRuns.train.agg.winRate : null,
+    holdout: batchRuns.holdout ? batchRuns.holdout.agg.winRate : null,
+  };
+  strategyEl.value = reviewProposal.strategy;
+  saveDraft();
+  reviewProposal = null;
+  reviewMsg(T('ui.rvAdopted'));
+  renderReview();
+  const codeBefore = editorEl.value;
+  if (sdkState() !== 'ready') { // 态①：没有 AI 通道 —— 战术已写入，但代码还是旧版，胜率不可能变
+    reviewMsg(T('ui.rvAdoptNoSdk'), true);
+    setGenLog(buildGenLog({
+      outcome: 'adopt-no-sdk', reason: `sdk=${sdkState()}; strategy written, code unchanged`,
+      env: genEnv(), strategy: strategyEl.value, skill: userSkill(), attempts: [],
+    }));
+    renderReview();
+    return;
+  }
+  // generateScript 自己吞掉所有失败并把真因（哪次尝试、模型回了什么、gate 报什么错、401 还是没代码块）
+  // 写进诊断日志，所以这里靠它的返回值分流，且**不再覆盖**那份日志——否则用户下载到的只剩一句「代码没变」。
+  const gen = await generateScript();
+  if (gen && !gen.ok) { // 态②：生成失败 —— 归因用真实 outcome，诊断日志保留 generateScript 写的载荷
+    reviewMsg(T('ui.rvAdoptGenFail', { msg: `${gen.outcome}: ${gen.reason || ''}`.trim() }), true);
+    renderReview();
+    return;
+  }
+  if (editorEl.value === codeBefore) { // 态③：生成成功但代码没变 —— 不做一个必然无差异的对比
+    reviewMsg(T('ui.rvAdoptNoChange', { msg: (gen && gen.outcome) || 'unknown' }), true);
+    if (lastGenLog) setGenLog({ ...lastGenLog, adopt: { outcome: 'adopt-code-unchanged', genOutcome: (gen && gen.outcome) || null } });
+    else setGenLog(buildGenLog({ outcome: 'adopt-code-unchanged', reason: 'editor content identical after generateScript', env: genEnv(), strategy: strategyEl.value, skill: userSkill(), attempts: [] }));
+    renderReview();
+    return;
+  }
+  await runBatch('train');
+  await runBatch('holdout');
+  const after = {
+    train: batchRuns.train ? batchRuns.train.agg.winRate : null,
+    holdout: batchRuns.holdout ? batchRuns.holdout.agg.winRate : null,
+  };
+  lastCompare = {
+    before,
+    after,
+    // 对比是否成立，看的是被比较数据自身的 setup key（不是「采纳开始/结束」两个时刻的 key）
+    keys: [curKey, batchRuns.train && batchRuns.train.key, batchRuns.holdout && batchRuns.holdout.key].filter(Boolean),
+  };
+  reviewHistory = reviewHistory.concat([{ round: reviewHistory.length + 1, before, after }]);
+  reviewMode = 'batch';
+  reviewMsg('');
+  renderReview();
+}
+
+$id('battleJsonBtn')?.addEventListener('click', () => {
+  const rep = currentBattleReport();
+  if (!rep) { showErr(T('ui.rvNoBattle')); return; }
+  downloadText(battleReportFilename(new Date(), match.seedStr), JSON.stringify(rep, null, 2), 'application/json');
+});
+$id('battleReviewBtn')?.addEventListener('click', () => openReview('single'));
+$id('wrRunBtn')?.addEventListener('click', () => { runBaseline(); });
+$id('wrReviewBtn')?.addEventListener('click', () => openReview('batch'));
+$id('reviewCloseBtn')?.addEventListener('click', closeOverlay);
+$id('reviewDlTextBtn')?.addEventListener('click', () => {
+  const batch = currentBatch();
+  if (!batch) return;
+  downloadText(batchReportFilename(new Date(), 'txt'), renderBatchText(batch).join('\n'), 'text/plain;charset=utf-8');
+});
+$id('reviewDlJsonBtn')?.addEventListener('click', () => {
+  if (reviewMode === 'single') {
+    const rep = currentBattleReport();
+    if (!rep) return;
+    downloadText(battleReportFilename(new Date(), match.seedStr), JSON.stringify(rep, null, 2), 'application/json');
+    return;
+  }
+  const batch = currentBatch();
+  if (!batch) return;
+  downloadText(batchReportFilename(new Date(), 'json'), JSON.stringify({ kind: 'agentank-batch', schema: 1, ...batch, agg: aggregateBatch(batch.games) }, null, 2), 'application/json');
+});
+renderGauge();
 
 // ---------- Play 用户支持（仅 play 部署环境激活；file:/匿名/SDK 不可用时零回归） ----------
 initPlay({

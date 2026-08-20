@@ -1,9 +1,9 @@
 // AgenTank 网页端 UI：本地跑引擎对战 + canvas 逐 tick 回放 + 实时战报 + 天梯。
 // 开发版经 <script type="module"> 加载；发布版由 scripts/build-web.mjs 去 import/export 内联进单文件。
-import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS, presetMap, validateContent, makePack, serializePack, parsePack, promoteStage, resolvePackMap, compileBot, OFFICIAL_CONTENT } from '../src/engine/index.js';
+import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS, presetMap, validateContent, makePack, serializePack, parsePack, promoteStage, resolvePackMap, compileBot, OFFICIAL_CONTENT, buildBattleReport, summarizeGame, aggregateBatch, renderBatchText, battleReportFilename, batchReportFilename, BATCH_SEEDS } from '../src/engine/index.js';
 import { bots } from '../bots/index.js';
 import { LOCALES, LANGS, fmt, resolveLang } from './i18n.js';
-import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError, scriptGate, buildGenLog, genLogFilename, resolveEditorState, draftIsClean } from './play.js';
+import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError, scriptGate, buildGenLog, genLogFilename, resolveEditorState, draftIsClean, buildReviewPrompt, parseReviewReply, reviewPayloadFromBattle, reviewPayloadFromBatch, compareVerdict } from './play.js';
 import { extractEngineSource, buildWorkerSource } from './sandbox.js';
 
 // 单文件产物里，本脚本自身的源码文本（引擎源从中切出，喂给无 eval 沙箱 Worker）。
@@ -567,8 +567,23 @@ async function saveVersion() {
 }
 function updateVersionUi() {
   const t = curTank();
-  saveBtn.textContent = t ? T('ui.save', { name: t.name, v: t.v + 1 }) : T('ui.saveFirst');
-  editorTitle.textContent = T('ui.editorTitle', { name: myTankLabel() });
+  // 粘底 CTA 是半宽按钮：这里用短文案（长文案会换行把 CTA 撑高、压小滚动区），完整说明进 title
+  saveBtn.textContent = t ? T('ui.saveShort', { v: t.v + 1 }) : T('ui.saveFirstShort');
+  saveBtn.title = t ? T('ui.save', { name: t.name, v: t.v + 1 }) : T('ui.saveFirst');
+  // 坦克身份挪到左栏顶部切换器（h2 固定为「战术指挥」）：一行显示名字 + 版本 + 云端状态
+  const nameEl = $id('tankSwitchName');
+  const verEl = $id('tankSwitchVer');
+  const syncEl = $id('tankSwitchSync');
+  if (nameEl) nameEl.textContent = t ? t.name : T('ui.myTank');
+  if (verEl) verEl.textContent = t ? `v${t.v}` : '';
+  if (syncEl) {
+    const cloud = garage.mode === 'cloud';
+    syncEl.textContent = T(cloud ? 'ui.tankSwitchCloud' : 'ui.tankSwitchLocal');
+    syncEl.classList.toggle('on', cloud);
+  }
+  const drawerSub = $id('scriptDrawerSub');
+  if (drawerSub) drawerSub.textContent = t ? `${t.name} v${t.v}` : myTankLabel();
+  renderTankMenu();
 }
 
 // ---------- 我的车库 UI（列表 / 切换出战 / 新建 / 重命名） ----------
@@ -654,29 +669,201 @@ function renderGarage() {
     p.style.cssText = 'font-size:11px;color:var(--dim)';
     p.textContent = T('ui.garageEmpty');
     garageListEl.appendChild(p);
+    renderTankMenu();
     return;
   }
   for (const t of garage.tanks) {
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;gap:6px;align-items:center;font-size:11px;margin:2px 0;color:var(--muted)';
-    const label = document.createElement('span');
-    label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
     const isCur = t.name === garage.cur;
-    label.textContent = isCur ? `${t.name} v${t.v} · ${T('ui.garageActive')}` : `${t.name} v${t.v}`;
-    if (isCur) label.style.color = 'var(--p1)';
-    row.appendChild(label);
+    // 弹窗里空间够（720px）：每台坦克显示版本 / 技能 / 战术字数，而不是旧左栏那条挤成一行的窄条
+    const row = document.createElement('div');
+    row.className = isCur ? 'gcard cur' : 'gcard';
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    const n = document.createElement('div');
+    n.className = 'n';
+    n.textContent = t.name;
+    if (isCur) {
+      const tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = T('ui.garageActive');
+      n.appendChild(tag);
+    }
+    const d = document.createElement('div');
+    d.className = 'd';
+    const chars = String(t.strategy || '').trim().length;
+    d.textContent = [
+      `v${t.v}`,
+      skillLabel(t.skill || 'teleport'),
+      chars ? T('ui.garageStrategyChars', { n: chars }) : T('ui.garageNoStrategy'),
+    ].join(' · ');
+    meta.appendChild(n);
+    meta.appendChild(d);
+    row.appendChild(meta);
+    const ops = document.createElement('div');
+    ops.className = 'ops';
     const mkBtn = (text, fn) => {
       const b = document.createElement('button');
       b.className = 'btn ghost';
-      b.style.cssText = 'padding:1px 8px;font-size:11px;min-width:0';
+      b.type = 'button';
       b.textContent = text;
       b.addEventListener('click', fn);
-      row.appendChild(b);
+      ops.appendChild(b);
     };
     if (!isCur) mkBtn(T('ui.garageUse'), () => { switchTank(t.name); });
     mkBtn(T('ui.garageRename'), () => { renameTank(t.name); });
+    row.appendChild(ops);
     garageListEl.appendChild(row);
   }
+  renderTankMenu();
+}
+
+// ---------- 左栏作战台外壳（方案 A）：坦克切换器 / 覆盖层 / 通知队列 / 对局设置 chip ----------
+// 设计约束：左栏只留每局都碰的东西；低频功能进覆盖层。任何状态下 #lpScroll 独立滚动、#lpCta 粘底，
+// 不再出现旧版「内容溢出被 body{overflow:hidden} 裁掉且没有滚动条」的情况。
+const scrimEl = $id('overlayScrim');
+const tankMenuEl = $id('tankMenu');
+const tankSwitchEl = $id('tankSwitch');
+const setupPopEl = $id('setupPop');
+let openedOverlay = null;
+
+function openOverlay(el) {
+  if (!el) return;
+  if (openedOverlay && openedOverlay !== el) openedOverlay.hidden = true;
+  openedOverlay = el;
+  el.hidden = false;
+  if (scrimEl) scrimEl.hidden = false;
+  const first = el.querySelector('textarea, select, input, button');
+  if (first) { try { first.focus(); } catch { /* 忽略 */ } }
+}
+function closeOverlay() {
+  if (openedOverlay) openedOverlay.hidden = true;
+  openedOverlay = null;
+  if (scrimEl) scrimEl.hidden = true;
+}
+function tankMenuHide() {
+  if (tankMenuEl) tankMenuEl.hidden = true;
+  if (tankSwitchEl) tankSwitchEl.setAttribute('aria-expanded', 'false');
+}
+function setupPopHide() {
+  if (setupPopEl) setupPopEl.hidden = true;
+  for (const c of document.querySelectorAll('#setupRow .schip')) c.classList.remove('on');
+}
+function renderTankMenu() { // 切换器下拉：高频「换一台」一击直达，管理类沉到最后两行
+  const list = $id('tankMenuList');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!garage.tanks.length) {
+    const p = document.createElement('div');
+    p.style.cssText = 'font-size:11px;color:var(--dim);padding:6px 9px';
+    p.textContent = T('ui.garageEmpty');
+    list.appendChild(p);
+    return;
+  }
+  for (const t of garage.tanks) {
+    const isCur = t.name === garage.cur;
+    const it = document.createElement('button');
+    it.type = 'button';
+    it.className = isCur ? 'it on' : 'it';
+    const nm = document.createElement('span');
+    nm.className = 'nm';
+    nm.textContent = `${t.name} v${t.v}`;
+    it.appendChild(nm);
+    if (isCur) {
+      const tag = document.createElement('span');
+      tag.style.cssText = 'font-size:11px;color:var(--p1)';
+      tag.textContent = T('ui.garageActive');
+      it.appendChild(tag);
+    }
+    it.addEventListener('click', () => { tankMenuHide(); if (!isCur) switchTank(t.name); });
+    list.appendChild(it);
+  }
+}
+
+// 通知队列：脚本报错 / 技能不符 / 登录衔接三条横幅曾能同时出现（叠加约 120px 把设置项顶下去）；
+// 现在默认只露最紧急一条，其余折进「还有 N 条」。各处仍按老办法 toggle .show，这里用观察器兜住所有入口。
+const noticeBoxEl = $id('noticeBox');
+const noticeMoreEl = $id('noticeMore');
+let noticesOpen = false;
+let noticeBusy = false;
+function renderNotices() {
+  if (!noticeBoxEl || !noticeMoreEl || noticeBusy) return;
+  noticeBusy = true;
+  try {
+    const all = [...noticeBoxEl.querySelectorAll('.notice')];
+    const shown = all.filter((el) => el.classList.contains('show'));
+    for (const el of all) el.classList.remove('nt-hidden');
+    if (!noticesOpen) for (const el of shown.slice(1)) el.classList.add('nt-hidden');
+    noticeMoreEl.hidden = shown.length <= 1;
+    noticeMoreEl.textContent = noticesOpen ? T('ui.noticeLess') : T('ui.noticeMore', { n: shown.length - 1 });
+  } finally {
+    setTimeout(() => { noticeBusy = false; }, 0); // 自身改 class 不再回环触发观察器
+  }
+}
+function syncSetupChips() { // chip 只显示选项主名（括号里的说明在气泡里看）
+  const short = (sel) => {
+    if (!sel) return '';
+    const txt = sel.selectedOptions && sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : '';
+    return String(txt || sel.value).split(/[（(]/)[0].trim();
+  };
+  const set = (id, sel) => {
+    const v = $id(id) && $id(id).querySelector('.v');
+    if (v) v.textContent = short(sel);
+  };
+  set('chipOpp', oppSelect);
+  set('chipSkill', skillSel);
+  set('chipMap', mapSel);
+}
+
+if (scrimEl) scrimEl.addEventListener('click', closeOverlay);
+for (const b of document.querySelectorAll('[data-close]')) b.addEventListener('click', closeOverlay);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { // 覆盖层 > 下拉/气泡：逐层收起，键盘可达
+    if (openedOverlay) closeOverlay();
+    else { tankMenuHide(); setupPopHide(); }
+  }
+});
+$id('garageOpenBtn')?.addEventListener('click', () => { tankMenuHide(); openOverlay($id('garageModal')); });
+$id('tankNewBtn')?.addEventListener('click', () => { tankMenuHide(); newTank(); });
+$id('scriptOpenBtn')?.addEventListener('click', () => openOverlay($id('scriptDrawer')));
+{
+  const userChip = $id('playUserChip');
+  if (userChip) {
+    userChip.style.cursor = 'pointer';
+    userChip.addEventListener('click', () => openOverlay($id('accountModal')));
+  }
+}
+if (tankSwitchEl && tankMenuEl) {
+  tankSwitchEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const willShow = tankMenuEl.hidden;
+    setupPopHide();
+    if (willShow) renderTankMenu();
+    tankMenuEl.hidden = !willShow;
+    tankSwitchEl.setAttribute('aria-expanded', String(willShow));
+  });
+}
+document.addEventListener('click', (e) => { // 点空白收起下拉/气泡
+  if (tankMenuEl && !tankMenuEl.hidden && !tankMenuEl.contains(e.target) && !(tankSwitchEl && tankSwitchEl.contains(e.target))) tankMenuHide();
+  if (setupPopEl && !setupPopEl.hidden && !setupPopEl.contains(e.target) && !(e.target.closest && e.target.closest('#setupRow .schip'))) setupPopHide();
+});
+for (const chip of document.querySelectorAll('#setupRow .schip')) {
+  chip.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const wasOn = chip.classList.contains('on');
+    setupPopHide();
+    tankMenuHide();
+    if (wasOn || !setupPopEl) return;
+    chip.classList.add('on');
+    for (const r of setupPopEl.querySelectorAll('.prow')) r.classList.toggle('on', r.dataset.row === chip.dataset.pop);
+    setupPopEl.hidden = false;
+  });
+}
+for (const sel of [oppSelect, skillSel, mapSel]) {
+  if (sel) sel.addEventListener('change', () => { syncSetupChips(); setupPopHide(); });
+}
+if (noticeMoreEl) noticeMoreEl.addEventListener('click', () => { noticesOpen = !noticesOpen; renderNotices(); });
+if (noticeBoxEl && typeof MutationObserver === 'function') {
+  new MutationObserver(renderNotices).observe(noticeBoxEl, { attributes: true, attributeFilter: ['class'], subtree: true });
 }
 
 // ---------- 登录时刻衔接（方案 v2）：横幅流程 + 云端车库接管 ----------
@@ -1934,7 +2121,7 @@ function generationGate(code) {
 
 async function generateScript() {
   if (!genBtn) return;
-  if (llmCtl && llmCtl.needLogin) { llmCtl.login(); return; } // 未登录：按钮即登录入口
+  if (llmCtl && llmCtl.needLogin) { llmCtl.login(); return { ok: false, outcome: 'need-login', reason: 'not logged in' }; } // 未登录：按钮即登录入口
   const strategy = (strategyEl ? strategyEl.value : '').trim();
   const skill = userSkill();
   const t0 = Date.now();
@@ -1945,7 +2132,7 @@ async function generateScript() {
   if (!llmCtl || typeof llmCtl.chat !== 'function') {
     genMsg(T('play.genUnavailable'), true);
     setGenLog(mkLog('no-sdk', 'play SDK llm.chat unavailable'));
-    return;
+    return { ok: false, outcome: 'no-sdk', reason: 'play SDK llm.chat unavailable' };
   }
   if (!strategy) { genMsg(T('play.genEmpty'), true); return; }
   genBtn.disabled = true;
@@ -1990,10 +2177,11 @@ async function generateScript() {
         genMsg(T('play.genDoneNoRun'), true);
         setGenLog(mkLog('ok-cannot-run', 'host forbids dynamic compilation (CSP without unsafe-eval)'));
       }
-      return;
+      return { ok: true, outcome: CUSTOM_SCRIPT_OK ? 'ok' : 'ok-cannot-run', reason: '' };
     }
     genMsg(T('play.genFail', { msg: feedback }), true);
     setGenLog(mkLog('invalid-output', feedback));
+    return { ok: false, outcome: 'invalid-output', reason: feedback };
   } catch (e) {
     const m = mapLlmError(e);
     genMsg(T(m.key, m.vars), true);
@@ -2002,7 +2190,9 @@ async function generateScript() {
       last.errorKind = 'sdk-error';
       last.error = `${(e && e.code) || ''} ${String((e && (e.hint || e.message)) || e)}`.trim();
     }
-    setGenLog(mkLog('sdk-error', `${(e && e.code) || ''} ${String((e && (e.hint || e.message)) || e)}`.trim()));
+    const reason = `${(e && e.name) || 'Error'}: ${(e && e.code) || ''} ${String((e && (e.hint || e.message)) || e)}`.trim();
+    setGenLog(mkLog('sdk-error', reason));
+    return { ok: false, outcome: 'sdk-error', reason };
   } finally { genBtn.disabled = false; }
 }
 if (genBtn) genBtn.addEventListener('click', () => { generateScript(); });
@@ -2136,6 +2326,8 @@ setupCanvas(previewMap);
 requestAnimationFrame(loop);
 scheduleLadder();
 refreshSkillHint(); // 启动即检（含 ?script=/?skill= 深链落定后的状态）
+syncSetupChips(); // chip 初值：必须在深链 ?opp=/?skill=/?map= 与内容包选项注入之后取，否则 chip 是空的
+renderNotices(); // 通知队列初始化（启动即可能有脚本报错/技能不符）
 if (qp.get('autoplay') === '1') {
   startBattle();
   if (match) { // 跳到中局并停住，便于截图/演示（双方坦克在场、战报点亮过半）
@@ -2143,6 +2335,512 @@ if (qp.get('autoplay') === '1') {
     setPlaying(false);
   }
 }
+
+// ---------- 战报下载 + AI 复盘 ----------
+// 两种复盘，分工明确：
+//   单局复盘 = 你刚看完这局回放 → 引擎把「不合理时刻」标出来 → AI 解释并改写战术（快而具体）；
+//   多局复盘 = 同关卡同对手同技能只换种子跑 12 局 → 出胜率与败因 → AI 找系统性毛病（慢而可信）。
+// 验收只认「留出组」（AI 没见过的另 12 个种子），防止把战术调成只赢训练那几个种子。
+const BATCH_N = BATCH_SEEDS.train.length;
+const batchRuns = { train: null, holdout: null };
+let batchBusy = false;
+let batchFailMsg = '';
+let reviewMode = 'single';
+let reviewProposal = null;
+let reviewBusy = false;
+let reviewMsgText = '';
+let reviewMsgBad = false;
+let reviewHistory = [];
+let lastCompare = null;
+
+const pctText = (x) => (x == null ? '—' : `${Math.round(x * 100)}%`);
+const codeHashOf = (s) => seedFromString(String(s || '')).toString(16);
+const setupKey = () => `${oppSelect.value}|${userSkill()}|${userMapKey()}|${myTankLabel()}`;
+
+function downloadText(name, text, mime) {
+  const blob = new Blob([text], { type: mime || 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+// 对手解析（与开战同口径）：内置流派直接给函数，工坊 bot 以源码随行
+function resolveOpp() {
+  const key = oppSelect.value;
+  if (key.startsWith('pack:')) {
+    const d = PACK.entries.find((e) => e.type === 'bot' && e.id === key.slice(5));
+    if (!d) throw new Error(T('err.noDecide'));
+    return { fn: EVAL_OK ? compileBot(d) : null, code: d.code, spec: { kind: 'code', skill: d.skill ?? 'shield' }, style: d.name };
+  }
+  const opp = ROSTER.find((r) => r.key === key) || ROSTER[0];
+  return { fn: opp.fn, code: null, spec: { kind: 'builtin', key: opp.key }, style: T('ladder.styleTag', { style: opp.style }) };
+}
+
+function mapLabel() {
+  const opt = mapSel && mapSel.options[mapSel.selectedIndex];
+  const txt = opt ? String(opt.textContent || '').split('（')[0].split(' (')[0].trim() : '';
+  return txt || userMapKey();
+}
+
+function batchSetup(seedSet, style) {
+  return { opponent: style, skill: userSkill(), mapKey: mapLabel(), tank: myTankLabel(), seedSet, seeds: BATCH_SEEDS[seedSet].slice() };
+}
+
+// 降级可观测纪律：批量失败一律记下异常名与内容（不是一句「出错了」），并进诊断日志
+function batchFail(seedSet, e) {
+  const name = (e && e.name) || 'Error';
+  const msg = String((e && e.message) || e);
+  batchFailMsg = `${name}: ${msg}`;
+  batchRuns[seedSet] = null;
+  setGenLog(buildGenLog({
+    outcome: 'batch-failed', reason: batchFailMsg, env: genEnv(),
+    strategy: strategyEl ? strategyEl.value : '', skill: userSkill(), attempts: [],
+  }));
+  renderGauge();
+}
+
+function gaugeProgress(i, seedSet) {
+  const sub = $id('wrSub');
+  if (!sub) return;
+  sub.textContent = seedSet
+    ? T('ui.rvRunningSet', { set: T(seedSet === 'holdout' ? 'ui.rvHoldout' : 'ui.rvTrain'), i, n: BATCH_N })
+    : T('ui.rvRunning', { i, n: BATCH_N });
+}
+
+async function runBatch(seedSet) {
+  if (batchBusy) return null;
+  batchBusy = true;
+  batchFailMsg = '';
+  renderGauge();
+  const strategy = strategyEl ? strategyEl.value : '';
+  const t0 = Date.now();
+  try {
+    const opp = resolveOpp();
+    const mine = { kind: 'user', skill: userSkill() };
+    const jobs = BATCH_SEEDS[seedSet].map((s, i) => {
+      const seed = seedFromString(s);
+      const who = i % 2; // 先后手各 6 局，避免出生位偏袒
+      return { seed, seedStr: s, map: makeMap(seed), who, a: who === 0 ? mine : opp.spec, b: who === 0 ? opp.spec : mine };
+    });
+    let games;
+    let errCount = 0;
+    let errLast = '';
+    if (EVAL_OK) { // 本地/开发版：主线程直跑
+      const fn = compileScript(editorEl.value);
+      const box = { count: 0, last: '' };
+      const guarded = guardWrap(fn, box);
+      guarded.skill = userSkill();
+      games = [];
+      for (let i = 0; i < jobs.length; i++) {
+        const j = jobs[i];
+        const r = runMatch({
+          seed: j.seed, map: j.map, content: PACK,
+          botA: j.who === 0 ? guarded : opp.fn,
+          botB: j.who === 0 ? opp.fn : guarded,
+        });
+        games.push(summarizeGame({ map: j.map, result: r, who: j.who, seed: j.seedStr, strategy }));
+        if (i % 3 === 2) { gaugeProgress(i + 1, seedSet); await new Promise((res) => setTimeout(res, 0)); } // 分片，不卡界面
+      }
+      errCount = box.count;
+      errLast = box.last;
+    } else if (SANDBOX_OK) { // 线上（禁 eval）：整批丢进 blob Worker，回「一局一行摘要」
+      gaugeProgress(0, seedSet);
+      const r = await sandboxRun({ type: 'batch', jobs, content: PACK, strategy }, { userCode: editorEl.value, oppCode: opp.code, timeoutMs: 120000 });
+      games = r.games || [];
+      errCount = r.errCount || 0;
+      errLast = r.errLast || '';
+    } else {
+      throw new Error(T('err.cspEval'));
+    }
+    // 脚本每拍抛异常时 guardWrap 会返回 null，12 局全负 → 界面会显示一个「看起来正常的 0%」。
+    // 那是本机纪律点名的静默降级形态（无异常、无红字、功能消失），必须显式报错并丢弃这批数字。
+    if (errCount > 0) {
+      const err = new Error(T('ui.rvScriptErr', { n: errCount, msg: errLast || '(no message)' }));
+      err.name = 'ScriptRuntimeError';
+      throw err;
+    }
+    batchRuns[seedSet] = {
+      games, agg: aggregateBatch(games), setup: batchSetup(seedSet, opp.style),
+      at: new Date().toISOString(), key: setupKey(), ms: Date.now() - t0,
+    };
+    renderGauge();
+    return batchRuns[seedSet];
+  } catch (e) {
+    batchFail(seedSet, e);
+    return null;
+  } finally {
+    batchBusy = false;
+    renderGauge();
+  }
+}
+
+// 基线 = 训练组 + 留出组各跑一遍。只跑训练组的话，采纳后的「留出组改前」永远是空，
+// 对比卡片就会不管涨没涨都印「本轮没有提升」——那是凭空成立的否定结论（评审 B1）。
+async function runBaseline() {
+  const a = await runBatch('train');
+  if (!a) return null; // 失败已在 gauge 明示，不继续跑第二组
+  return runBatch('holdout');
+}
+
+function renderGauge() {
+  const num = $id('wrNum');
+  const sub = $id('wrSub');
+  const meta = $id('wrMeta');
+  const bars = $id('wrBars');
+  const fail = $id('wrFail');
+  const runBtn = $id('wrRunBtn');
+  const hint = $id('wrHint');
+  const flag = $id('wrFlagChip');
+  if (!num || !sub) return;
+  const run = batchRuns.train;
+  const stale = run && run.key !== setupKey();
+  if (runBtn) {
+    runBtn.textContent = run ? T('ui.rvRerunBoth', { n: BATCH_N }) : T('ui.rvRunBoth', { n: BATCH_N });
+    runBtn.disabled = batchBusy;
+  }
+  if (fail) {
+    fail.hidden = !batchFailMsg;
+    if (batchFailMsg) fail.innerHTML = `${esc(T('ui.rvFail', { msg: '' }))}<div class="d">${esc(batchFailMsg)}</div><div class="d">${esc(T('ui.rvFailNote'))}</div>`;
+  }
+  if (!run || !run.agg.games) {
+    num.textContent = '—%';
+    num.classList.add('na');
+    if (!batchBusy) sub.textContent = T('ui.rvNever');
+    if (meta) meta.textContent = '';
+    if (bars) bars.innerHTML = '';
+    if (hint) hint.textContent = T('ui.rvLocalHint', { n: BATCH_N });
+    if (flag) flag.hidden = true;
+    return;
+  }
+  num.textContent = pctText(run.agg.winRate);
+  num.classList.remove('na');
+  if (!batchBusy) sub.textContent = T('ui.rvWins', { w: run.agg.wins, n: run.agg.games });
+  if (meta) {
+    const ho = batchRuns.holdout;
+    const hoText = ho && ho.agg.games ? T('ui.rvHoldoutLine', { p: pctText(ho.agg.winRate) }) : T('ui.rvHoldoutNone');
+    meta.innerHTML = [run.setup.opponent, run.setup.skill, run.setup.mapKey, run.setup.tank, hoText]
+      .map((x) => `<span>${esc(String(x))}</span>`).join('');
+  }
+  if (bars) {
+    const entries = Object.entries(run.agg.lossBuckets).sort((a, b) => b[1] - a[1]);
+    const top = entries.length ? entries[0][1] : 1;
+    bars.innerHTML = entries.map(([reason, n], i) => {
+      const label = REASON_CN[reason] || reason;
+      return `<div class="bar"><span>${esc(label)}</span><i class="${i ? 'w' : ''}" style="width:${Math.round((n / top) * 100)}%"></i><em>${n}</em></div>`;
+    }).join('');
+  }
+  if (hint) hint.textContent = stale ? T('ui.rvStale') : T('ui.rvLocalHint', { n: BATCH_N });
+  if (flag) {
+    const total = run.games.reduce((s, g) => s + (g.moments || []).length, 0);
+    flag.hidden = !total;
+    flag.textContent = T('ui.rvFlagBatch', { n: total, g: run.agg.games });
+  }
+}
+
+// 单局报告（喂 AI 的那份；懒算一次挂在 match 上）
+function currentBattleReport() {
+  if (!match) return null;
+  if (match.report) return match.report;
+  match.report = buildBattleReport({
+    map: match.map,
+    result: match.result,
+    who: 0,
+    setup: {
+      seed: match.seedStr, mapKey: userMapKey(), opponent: match.names[1], tank: match.names[0],
+      strategy: strategyEl ? strategyEl.value : '', codeHash: codeHashOf(editorEl.value),
+    },
+  });
+  return match.report;
+}
+
+function currentBatch() {
+  const run = batchRuns.train;
+  return run ? { setup: run.setup, at: run.at, games: run.games } : null;
+}
+
+const reviewMsg = (text, bad) => { reviewMsgText = text || ''; reviewMsgBad = !!bad; };
+
+function renderReviewMain() {
+  const main = $id('reviewMain');
+  if (!main) return;
+  if (reviewMode === 'single') {
+    const rep = currentBattleReport();
+    if (!rep) { main.innerHTML = `<div class="rpt">${esc(T('ui.rvNoBattle'))}</div>`; return; }
+    const ctx = new Map((match.entries || []).map((e) => [e.t, e.html]));
+    const rows = [];
+    for (const mo of rep.moments) {
+      const near = ctx.get(mo.t);
+      if (near) rows.push(`<div class="ln dimd"><span class="t">t=${String(mo.t).padStart(3, '0')}</span>${near}</div>`);
+      rows.push(
+        `<div class="ln flag"><span class="t">t=${String(mo.t).padStart(3, '0')}</span>`
+        + `<span class="w">⚠ ${esc(mo.label)}</span><span class="why">${esc(mo.why)}</span></div>`,
+      );
+    }
+    if (!rows.length) rows.push(`<div class="ln dimd">${esc(T('ui.rvNoFlag'))}</div>`);
+    const last = (match.entries || [])[(match.entries || []).length - 1];
+    if (last) rows.push(`<div class="ln dimd"><span class="t">t=${String(last.t).padStart(3, '0')}</span>${last.html}</div>`);
+    main.innerHTML = `<div class="tl">${rows.join('')}</div><div class="wrhint" style="margin-top:8px">${esc(T('ui.rvRuleNote'))}</div>`;
+    return;
+  }
+  const batch = currentBatch();
+  const cmp = lastCompare ? renderCompare() : '';
+  if (!batch) {
+    const why = batchFailMsg ? T('ui.rvFail', { msg: batchFailMsg }) : T('ui.rvNever');
+    main.innerHTML = `${cmp}<div class="rpt">${esc(why)}</div>`;
+    return;
+  }
+  main.innerHTML = `${cmp}<pre class="rpt">${esc(renderBatchText(batch).join('\n'))}</pre>${renderHistory()}`;
+}
+
+function renderCompare() {
+  const c = lastCompare;
+  if (!c) return '';
+  const warn = (msg) => `<div class="wrfail" style="border-color:var(--warn);background:#2A2314;color:var(--warn);margin-bottom:12px">${esc(msg)}</div>`;
+  const card = (label, before, after) => { // 任一侧为空时只显示有的那侧，不假装有对比
+    const up = before != null && after != null && after > before;
+    const flat = before != null && after != null && after <= before;
+    return `<div class="bacard ${up ? 'up' : flat ? 'flat' : ''}"><b>${pctText(before)} → ${pctText(after)}</b>`
+      + `<span>${esc(label)} · ${esc(T('ui.rvBefore'))}→${esc(T('ui.rvAfter'))}</span></div>`;
+  };
+  const cards = `<div class="ba">${card(T('ui.rvTrain'), c.before.train, c.after.train)}${card(T('ui.rvHoldout'), c.before.holdout, c.after.holdout)}</div>`;
+  const v = compareVerdict({ before: c.before, after: c.after, keys: c.keys, curKey: setupKey() });
+  if (v.state === 'setup-changed') return `${cards}${warn(T('ui.rvSetupChanged'))}`;
+  if (v.state === 'no-before') return `${cards}${warn(T('ui.rvNoBaseline'))}`;
+  if (v.state === 'no-after') return `${cards}${warn(T('ui.rvNoAfter'))}`;
+  const note = v.gained
+    ? T('ui.rvGain', { before: pctText(c.before.holdout), after: pctText(c.after.holdout) })
+    : T('ui.rvNoGain', {
+      a: `${pctText(c.before.train)}→${pctText(c.after.train)}`,
+      b: `${pctText(c.before.holdout)}→${pctText(c.after.holdout)}`,
+    });
+  return `${cards}<div class="wrhint" style="margin-bottom:12px;color:${v.gained ? 'var(--ok)' : 'var(--warn)'}">${esc(note)}</div>`;
+}
+
+function renderHistory() {
+  if (!reviewHistory.length) return '';
+  const rows = reviewHistory.map((h, i) => `<tr><td>${esc(i === reviewHistory.length - 1 ? T('ui.rvCurrent') : T('ui.rvRound', { n: h.round }))}</td>`
+    + `<td>${pctText(h.after.train)}</td><td>${pctText(h.after.holdout)}</td></tr>`).join('');
+  return `<h4 style="font-size:12px;color:var(--dim);letter-spacing:1px;margin:16px 0 6px">${esc(T('ui.rvHist'))}</h4>`
+    + `<table><thead><tr><th>#</th><th>${esc(T('ui.rvTrain'))}</th><th>${esc(T('ui.rvHoldout'))}</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderReviewSide() {
+  const side = $id('reviewSide');
+  if (!side) return;
+  const st = sdkState();
+  const aiLabel = st === 'need-login' ? T('ui.rvNeedLogin') : T('ui.rvAi');
+  const parts = [];
+  parts.push(`<h4>${esc(T('ui.rvDiagTitle'))}</h4>`);
+  if (reviewProposal && reviewProposal.diagnoses.length) {
+    for (const d of reviewProposal.diagnoses) {
+      parts.push(`<div class="diag"><div class="n">${esc(d.title)}${d.detail ? `：${esc(d.detail)}` : ''}</div>`
+        + `${d.evidence ? `<div class="ev">${esc(d.evidence)}</div>` : ''}</div>`);
+    }
+  } else {
+    parts.push(`<div class="wrhint">${esc(T('ui.rvDiagEmpty'))}</div>`);
+  }
+  parts.push(`<button class="btn ghost" id="rvAiBtn" style="padding:5px 12px;font-size:11px"${reviewBusy || st === 'absent' ? ' disabled' : ''}>${esc(reviewBusy ? T('ui.rvAiRunning') : aiLabel)}</button>`);
+  if (st === 'absent') parts.push(`<div class="wrhint">${esc(T('ui.rvNoSdk'))}</div>`);
+  if (reviewMsgText) parts.push(`<div class="wrhint" style="color:${reviewMsgBad ? 'var(--bad)' : 'var(--dim)'}">${esc(reviewMsgText)}</div>`);
+  if (reviewProposal) {
+    parts.push(`<div class="cmp" style="grid-template-columns:1fr">
+      <div class="cmpcol"><h5>${esc(T('ui.rvOld'))}</h5>${esc(strategyEl ? strategyEl.value : '')}</div>
+      <div class="cmpcol new"><h5>${esc(T('ui.rvNew'))}</h5>${esc(reviewProposal.strategy)}</div>
+    </div>`);
+    parts.push(`<div style="display:flex;gap:6px;margin-top:8px">
+      <button class="btn ghost" id="rvAdoptBtn"${batchBusy ? ' disabled' : ''} style="padding:5px 12px;font-size:11px;border-color:#4C6B22;color:var(--p1)">${esc(T('ui.rvAdopt'))}</button>
+      <button class="btn ghost" id="rvDropBtn" style="padding:5px 12px;font-size:11px">${esc(T('ui.rvDiscard'))}</button>
+    </div>`);
+  }
+  side.innerHTML = parts.join('');
+  const ai = $id('rvAiBtn');
+  if (ai) ai.addEventListener('click', runAiReview);
+  const adopt = $id('rvAdoptBtn');
+  if (adopt) adopt.addEventListener('click', adoptProposal);
+  const drop = $id('rvDropBtn');
+  if (drop) drop.addEventListener('click', () => { reviewProposal = null; reviewMsg(''); renderReview(); });
+}
+
+function renderReview() {
+  const title = $id('reviewTitle');
+  const sub = $id('reviewSub');
+  const flag = $id('reviewFlag');
+  if (title) title.textContent = T(reviewMode === 'single' ? 'ui.rvTitleSingle' : 'ui.rvTitleBatch');
+  if (sub) {
+    if (reviewMode === 'single' && match) {
+      const rep = currentBattleReport();
+      sub.textContent = `seed ${match.seedStr} · ${match.names[0]} · ${match.names[1]} · ${T(rep.result.win ? 'ui.rvWin' : 'ui.rvLoss')}（${rep.result.reason}，t=${rep.result.ticks - 1}）`;
+    } else if (reviewMode === 'batch' && batchRuns.train) {
+      const s = batchRuns.train.setup;
+      sub.textContent = `${s.tank} · ${s.opponent} · ${s.skill} · ${s.mapKey}`;
+    } else sub.textContent = '';
+  }
+  if (flag) {
+    const rep = reviewMode === 'single' ? currentBattleReport() : null;
+    const n = rep ? rep.moments.length : 0;
+    flag.hidden = !n;
+    flag.textContent = T('ui.rvFlag', { n });
+  }
+  const dlText = $id('reviewDlTextBtn');
+  if (dlText) dlText.hidden = reviewMode !== 'batch'; // 单局按老板口径只给 JSON
+  renderReviewMain();
+  renderReviewSide();
+}
+
+function openReview(mode) {
+  if (mode === 'single' && !match) { showErr(T('ui.rvNoBattle')); return; }
+  reviewMode = mode;
+  reviewProposal = null;
+  reviewMsg('');
+  renderReview();
+  openOverlay($id('reviewDrawer'));
+}
+
+async function runAiReview() {
+  const st = sdkState();
+  if (st === 'need-login') { if (llmCtl && llmCtl.login) llmCtl.login(); return; }
+  if (st !== 'ready') { reviewMsg(T('ui.rvNoSdk'), true); renderReview(); return; }
+  const strategy = strategyEl ? strategyEl.value : '';
+  let prompt;
+  try {
+    if (reviewMode === 'single') {
+      const rep = currentBattleReport();
+      if (!rep) { reviewMsg(T('ui.rvNoBattle'), true); renderReview(); return; }
+      prompt = buildReviewPrompt({ mode: 'single', payload: reviewPayloadFromBattle(rep), strategy });
+    } else {
+      const batch = currentBatch();
+      if (!batch) { reviewMsg(T('ui.rvNever'), true); renderReview(); return; }
+      prompt = buildReviewPrompt({ mode: 'batch', payload: reviewPayloadFromBatch(batch), strategy });
+    }
+  } catch (e) { reviewMsg(T('ui.rvAiFail', { msg: String((e && e.message) || e) }), true); renderReview(); return; }
+  reviewBusy = true;
+  reviewMsg(T('ui.rvAiRunning'));
+  renderReview();
+  const t0 = Date.now();
+  try {
+    const { text } = await llmCtl.chat(prompt);
+    const parsed = parseReviewReply(text);
+    if (!parsed) {
+      reviewMsg(T('ui.rvBadReply'), true);
+      setGenLog(buildGenLog({
+        outcome: 'review-unparsable', reason: 'parseReviewReply returned null', at: t0, durationMs: Date.now() - t0,
+        env: genEnv(), strategy, skill: userSkill(),
+        attempts: [{ n: 1, promptChars: prompt.length, replyChars: String(text || '').length, replyHead: String(text || '').slice(0, 500), extracted: false }],
+      }));
+    } else {
+      reviewProposal = parsed;
+      reviewMsg(T('ui.rvCost', { kb: (prompt.length / 1024).toFixed(1) }));
+    }
+  } catch (e) {
+    const m = mapLlmError(e);
+    reviewMsg(T(m.key, m.vars), true);
+    setGenLog(buildGenLog({
+      outcome: 'review-sdk-error',
+      reason: `${(e && e.name) || 'Error'}: ${String((e && (e.hint || e.message)) || e)}`,
+      at: t0, durationMs: Date.now() - t0, env: genEnv(), strategy, skill: userSkill(), attempts: [],
+    }));
+  } finally {
+    reviewBusy = false;
+    renderReview();
+  }
+}
+
+// 采纳：写回战术框 → 用现有「AI 由战术文字生成代码」把它变成脚本 → 重跑两组种子出对比。
+// 只改战术文字而不重生成代码，胜率不会有任何变化——那样的「对比」是自欺，所以这里必须联动生成。
+async function adoptProposal() {
+  if (!reviewProposal || !strategyEl) return;
+  if (batchBusy) { reviewMsg(T('ui.rvBusy'), true); renderReview(); return; } // 跑批期间采纳会读到上一轮旧数字
+  const curKey = setupKey();
+  // 基线必须是「当前这套对局设置」下跑的：否则「A 对手的改前」和「B 对手的改后」并列出来是假对比
+  const baseKeys = [batchRuns.train && batchRuns.train.key, batchRuns.holdout && batchRuns.holdout.key].filter(Boolean);
+  if (baseKeys.length && baseKeys.some((k) => k !== curKey)) {
+    reviewMsg(T('ui.rvBaselineStale'), true);
+    renderReview();
+    return;
+  }
+  const before = {
+    train: batchRuns.train ? batchRuns.train.agg.winRate : null,
+    holdout: batchRuns.holdout ? batchRuns.holdout.agg.winRate : null,
+  };
+  strategyEl.value = reviewProposal.strategy;
+  saveDraft();
+  reviewProposal = null;
+  reviewMsg(T('ui.rvAdopted'));
+  renderReview();
+  const codeBefore = editorEl.value;
+  if (sdkState() !== 'ready') { // 态①：没有 AI 通道 —— 战术已写入，但代码还是旧版，胜率不可能变
+    reviewMsg(T('ui.rvAdoptNoSdk'), true);
+    setGenLog(buildGenLog({
+      outcome: 'adopt-no-sdk', reason: `sdk=${sdkState()}; strategy written, code unchanged`,
+      env: genEnv(), strategy: strategyEl.value, skill: userSkill(), attempts: [],
+    }));
+    renderReview();
+    return;
+  }
+  // generateScript 自己吞掉所有失败并把真因（哪次尝试、模型回了什么、gate 报什么错、401 还是没代码块）
+  // 写进诊断日志，所以这里靠它的返回值分流，且**不再覆盖**那份日志——否则用户下载到的只剩一句「代码没变」。
+  const gen = await generateScript();
+  if (gen && !gen.ok) { // 态②：生成失败 —— 归因用真实 outcome，诊断日志保留 generateScript 写的载荷
+    reviewMsg(T('ui.rvAdoptGenFail', { msg: `${gen.outcome}: ${gen.reason || ''}`.trim() }), true);
+    renderReview();
+    return;
+  }
+  if (editorEl.value === codeBefore) { // 态③：生成成功但代码没变 —— 不做一个必然无差异的对比
+    reviewMsg(T('ui.rvAdoptNoChange', { msg: (gen && gen.outcome) || 'unknown' }), true);
+    if (lastGenLog) setGenLog({ ...lastGenLog, adopt: { outcome: 'adopt-code-unchanged', genOutcome: (gen && gen.outcome) || null } });
+    else setGenLog(buildGenLog({ outcome: 'adopt-code-unchanged', reason: 'editor content identical after generateScript', env: genEnv(), strategy: strategyEl.value, skill: userSkill(), attempts: [] }));
+    renderReview();
+    return;
+  }
+  await runBatch('train');
+  await runBatch('holdout');
+  const after = {
+    train: batchRuns.train ? batchRuns.train.agg.winRate : null,
+    holdout: batchRuns.holdout ? batchRuns.holdout.agg.winRate : null,
+  };
+  lastCompare = {
+    before,
+    after,
+    // 对比是否成立，看的是被比较数据自身的 setup key（不是「采纳开始/结束」两个时刻的 key）
+    keys: [curKey, batchRuns.train && batchRuns.train.key, batchRuns.holdout && batchRuns.holdout.key].filter(Boolean),
+  };
+  reviewHistory = reviewHistory.concat([{ round: reviewHistory.length + 1, before, after }]);
+  reviewMode = 'batch';
+  reviewMsg('');
+  renderReview();
+}
+
+$id('battleJsonBtn')?.addEventListener('click', () => {
+  const rep = currentBattleReport();
+  if (!rep) { showErr(T('ui.rvNoBattle')); return; }
+  downloadText(battleReportFilename(new Date(), match.seedStr), JSON.stringify(rep, null, 2), 'application/json');
+});
+$id('battleReviewBtn')?.addEventListener('click', () => openReview('single'));
+$id('wrRunBtn')?.addEventListener('click', () => { runBaseline(); });
+$id('wrReviewBtn')?.addEventListener('click', () => openReview('batch'));
+$id('reviewCloseBtn')?.addEventListener('click', closeOverlay);
+$id('reviewDlTextBtn')?.addEventListener('click', () => {
+  const batch = currentBatch();
+  if (!batch) return;
+  downloadText(batchReportFilename(new Date(), 'txt'), renderBatchText(batch).join('\n'), 'text/plain;charset=utf-8');
+});
+$id('reviewDlJsonBtn')?.addEventListener('click', () => {
+  if (reviewMode === 'single') {
+    const rep = currentBattleReport();
+    if (!rep) return;
+    downloadText(battleReportFilename(new Date(), match.seedStr), JSON.stringify(rep, null, 2), 'application/json');
+    return;
+  }
+  const batch = currentBatch();
+  if (!batch) return;
+  downloadText(batchReportFilename(new Date(), 'json'), JSON.stringify({ kind: 'agentank-batch', schema: 1, ...batch, agg: aggregateBatch(batch.games) }, null, 2), 'application/json');
+});
+renderGauge();
 
 // ---------- Play 用户支持（仅 play 部署环境激活；file:/匿名/SDK 不可用时零回归） ----------
 initPlay({

@@ -97,8 +97,11 @@ test('strategy/DOM 契约：策略区、生成按钮、折叠脚本窗（默认�
   assert.match(html, /id="strategyBox"/);
   assert.match(html, /id="genBtn"/);
   assert.match(html, /id="genMsg"/);
-  assert.match(html, /<details id="codeBox"/);
-  assert.ok(!/<details id="codeBox"[^>]*\bopen\b/.test(html), 'codeBox 必须默认折叠（脚本细节默认隐藏）');
+  // 左栏重设计（方案 A，2026-08-20）：脚本细节从左栏折叠块升级为独立抽屉，
+  // 「默认隐藏」这条语义不变 —— 只是容器从 <details id="codeBox"> 换成 <div id="scriptDrawer" hidden>。
+  assert.ok(!/id="codeBox"/.test(html), '旧的左栏折叠脚本窗应已移除（改为脚本抽屉）');
+  assert.match(html, /id="scriptDrawer"[^>]*hidden/, '脚本抽屉必须默认隐藏（脚本细节默认不打扰）');
+  assert.match(html, /id="scriptOpenBtn"/, '左栏需保留进入脚本抽屉的入口');
   assert.match(html, /id="editor"/);
   // 战术写法帮助：? 按钮在，弹窗在且默认 hidden
   assert.match(html, /id="strategyHelpBtn"/);
