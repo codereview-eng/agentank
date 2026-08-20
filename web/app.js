@@ -1,9 +1,9 @@
 // AgenTank 网页端 UI：本地跑引擎对战 + canvas 逐 tick 回放 + 实时战报 + 天梯。
 // 开发版经 <script type="module"> 加载；发布版由 scripts/build-web.mjs 去 import/export 内联进单文件。
-import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS, presetMap, validateContent, makePack, serializePack, parsePack, promoteStage, resolvePackMap, compileBot, OFFICIAL_CONTENT } from '../src/engine/index.js';
+import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS, presetMap, validateContent, makePack, serializePack, parsePack, promoteStage, resolvePackMap, compileBot, OFFICIAL_CONTENT, buildBattleReport, summarizeGame, aggregateBatch, renderBatchText, battleReportFilename, batchReportFilename, BATCH_SEEDS } from '../src/engine/index.js';
 import { bots } from '../bots/index.js';
 import { LOCALES, LANGS, fmt, resolveLang } from './i18n.js';
-import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError, scriptGate, buildGenLog, genLogFilename, resolveEditorState, draftIsClean } from './play.js';
+import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError, scriptGate, buildGenLog, genLogFilename, resolveEditorState, draftIsClean, buildReviewPrompt, parseReviewReply, reviewPayloadFromBattle, reviewPayloadFromBatch } from './play.js';
 import { extractEngineSource, buildWorkerSource } from './sandbox.js';
 
 // 单文件产物里，本脚本自身的源码文本（引擎源从中切出，喂给无 eval 沙箱 Worker）。
@@ -2332,6 +2332,445 @@ if (qp.get('autoplay') === '1') {
     setPlaying(false);
   }
 }
+
+// ---------- 战报下载 + AI 复盘 ----------
+// 两种复盘，分工明确：
+//   单局复盘 = 你刚看完这局回放 → 引擎把「不合理时刻」标出来 → AI 解释并改写战术（快而具体）；
+//   多局复盘 = 同关卡同对手同技能只换种子跑 12 局 → 出胜率与败因 → AI 找系统性毛病（慢而可信）。
+// 验收只认「留出组」（AI 没见过的另 12 个种子），防止把战术调成只赢训练那几个种子。
+const BATCH_N = BATCH_SEEDS.train.length;
+const batchRuns = { train: null, holdout: null };
+let batchBusy = false;
+let batchFailMsg = '';
+let reviewMode = 'single';
+let reviewProposal = null;
+let reviewBusy = false;
+let reviewMsgText = '';
+let reviewMsgBad = false;
+let reviewHistory = [];
+let lastCompare = null;
+
+const pctText = (x) => (x == null ? '—' : `${Math.round(x * 100)}%`);
+const codeHashOf = (s) => seedFromString(String(s || '')).toString(16);
+const setupKey = () => `${oppSelect.value}|${userSkill()}|${userMapKey()}|${myTankLabel()}`;
+
+function downloadText(name, text, mime) {
+  const blob = new Blob([text], { type: mime || 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+// 对手解析（与开战同口径）：内置流派直接给函数，工坊 bot 以源码随行
+function resolveOpp() {
+  const key = oppSelect.value;
+  if (key.startsWith('pack:')) {
+    const d = PACK.entries.find((e) => e.type === 'bot' && e.id === key.slice(5));
+    if (!d) throw new Error(T('err.noDecide'));
+    return { fn: EVAL_OK ? compileBot(d) : null, code: d.code, spec: { kind: 'code', skill: d.skill ?? 'shield' }, style: d.name };
+  }
+  const opp = ROSTER.find((r) => r.key === key) || ROSTER[0];
+  return { fn: opp.fn, code: null, spec: { kind: 'builtin', key: opp.key }, style: T('ladder.styleTag', { style: opp.style }) };
+}
+
+function mapLabel() {
+  const opt = mapSel && mapSel.options[mapSel.selectedIndex];
+  const txt = opt ? String(opt.textContent || '').split('（')[0].split(' (')[0].trim() : '';
+  return txt || userMapKey();
+}
+
+function batchSetup(seedSet, style) {
+  return { opponent: style, skill: userSkill(), mapKey: mapLabel(), tank: myTankLabel(), seedSet, seeds: BATCH_SEEDS[seedSet].slice() };
+}
+
+// 降级可观测纪律：批量失败一律记下异常名与内容（不是一句「出错了」），并进诊断日志
+function batchFail(seedSet, e) {
+  const name = (e && e.name) || 'Error';
+  const msg = String((e && e.message) || e);
+  batchFailMsg = `${name}: ${msg}`;
+  batchRuns[seedSet] = null;
+  setGenLog(buildGenLog({
+    outcome: 'batch-failed', reason: batchFailMsg, env: genEnv(),
+    strategy: strategyEl ? strategyEl.value : '', skill: userSkill(), attempts: [],
+  }));
+  renderGauge();
+}
+
+function gaugeProgress(i) {
+  const sub = $id('wrSub');
+  if (sub) sub.textContent = T('ui.rvRunning', { i, n: BATCH_N });
+}
+
+async function runBatch(seedSet) {
+  if (batchBusy) return null;
+  batchBusy = true;
+  batchFailMsg = '';
+  renderGauge();
+  const strategy = strategyEl ? strategyEl.value : '';
+  const t0 = Date.now();
+  try {
+    const opp = resolveOpp();
+    const mine = { kind: 'user', skill: userSkill() };
+    const jobs = BATCH_SEEDS[seedSet].map((s, i) => {
+      const seed = seedFromString(s);
+      const who = i % 2; // 先后手各 6 局，避免出生位偏袒
+      return { seed, seedStr: s, map: makeMap(seed), who, a: who === 0 ? mine : opp.spec, b: who === 0 ? opp.spec : mine };
+    });
+    let games;
+    if (EVAL_OK) { // 本地/开发版：主线程直跑
+      const fn = compileScript(editorEl.value);
+      const box = { count: 0, last: '' };
+      const guarded = guardWrap(fn, box);
+      guarded.skill = userSkill();
+      games = [];
+      for (let i = 0; i < jobs.length; i++) {
+        const j = jobs[i];
+        const r = runMatch({
+          seed: j.seed, map: j.map, content: PACK,
+          botA: j.who === 0 ? guarded : opp.fn,
+          botB: j.who === 0 ? opp.fn : guarded,
+        });
+        games.push(summarizeGame({ map: j.map, result: r, who: j.who, seed: j.seedStr, strategy }));
+        if (i % 3 === 2) { gaugeProgress(i + 1); await new Promise((res) => setTimeout(res, 0)); } // 分片，不卡界面
+      }
+    } else if (SANDBOX_OK) { // 线上（禁 eval）：整批丢进 blob Worker，回「一局一行摘要」
+      gaugeProgress(0);
+      const r = await sandboxRun({ type: 'batch', jobs, content: PACK, strategy }, { userCode: editorEl.value, oppCode: opp.code, timeoutMs: 120000 });
+      games = r.games || [];
+    } else {
+      throw new Error(T('err.cspEval'));
+    }
+    batchRuns[seedSet] = {
+      games, agg: aggregateBatch(games), setup: batchSetup(seedSet, opp.style),
+      at: new Date().toISOString(), key: setupKey(), ms: Date.now() - t0,
+    };
+    renderGauge();
+    return batchRuns[seedSet];
+  } catch (e) {
+    batchFail(seedSet, e);
+    return null;
+  } finally {
+    batchBusy = false;
+    renderGauge();
+  }
+}
+
+function renderGauge() {
+  const num = $id('wrNum');
+  const sub = $id('wrSub');
+  const meta = $id('wrMeta');
+  const bars = $id('wrBars');
+  const fail = $id('wrFail');
+  const runBtn = $id('wrRunBtn');
+  const hint = $id('wrHint');
+  const flag = $id('wrFlagChip');
+  if (!num || !sub) return;
+  const run = batchRuns.train;
+  const stale = run && run.key !== setupKey();
+  if (runBtn) {
+    runBtn.textContent = run ? T('ui.rvRerun', { n: BATCH_N }) : T('ui.rvRun', { n: BATCH_N });
+    runBtn.disabled = batchBusy;
+  }
+  if (fail) {
+    fail.hidden = !batchFailMsg;
+    if (batchFailMsg) fail.innerHTML = `${esc(T('ui.rvFail', { msg: '' }))}<div class="d">${esc(batchFailMsg)}</div><div class="d">${esc(T('ui.rvFailNote'))}</div>`;
+  }
+  if (!run || !run.agg.games) {
+    num.textContent = '—%';
+    num.classList.add('na');
+    if (!batchBusy) sub.textContent = T('ui.rvNever');
+    if (meta) meta.textContent = '';
+    if (bars) bars.innerHTML = '';
+    if (hint) hint.textContent = T('ui.rvLocalHint', { n: BATCH_N });
+    if (flag) flag.hidden = true;
+    return;
+  }
+  num.textContent = pctText(run.agg.winRate);
+  num.classList.remove('na');
+  if (!batchBusy) sub.textContent = T('ui.rvWins', { w: run.agg.wins, n: run.agg.games });
+  if (meta) {
+    meta.innerHTML = [run.setup.opponent, run.setup.skill, run.setup.mapKey, run.setup.tank]
+      .map((x) => `<span>${esc(String(x))}</span>`).join('');
+  }
+  if (bars) {
+    const entries = Object.entries(run.agg.lossBuckets).sort((a, b) => b[1] - a[1]);
+    const top = entries.length ? entries[0][1] : 1;
+    bars.innerHTML = entries.map(([reason, n], i) => {
+      const label = REASON_CN[reason] || reason;
+      return `<div class="bar"><span>${esc(label)}</span><i class="${i ? 'w' : ''}" style="width:${Math.round((n / top) * 100)}%"></i><em>${n}</em></div>`;
+    }).join('');
+  }
+  if (hint) hint.textContent = stale ? T('ui.rvStale') : T('ui.rvLocalHint', { n: BATCH_N });
+  if (flag) {
+    const total = run.games.reduce((s, g) => s + (g.moments || []).length, 0);
+    flag.hidden = !total;
+    flag.textContent = T('ui.rvFlagBatch', { n: total, g: run.agg.games });
+  }
+}
+
+// 单局报告（喂 AI 的那份；懒算一次挂在 match 上）
+function currentBattleReport() {
+  if (!match) return null;
+  if (match.report) return match.report;
+  match.report = buildBattleReport({
+    map: match.map,
+    result: match.result,
+    who: 0,
+    setup: {
+      seed: match.seedStr, mapKey: userMapKey(), opponent: match.names[1], tank: match.names[0],
+      strategy: strategyEl ? strategyEl.value : '', codeHash: codeHashOf(editorEl.value),
+    },
+  });
+  return match.report;
+}
+
+function currentBatch() {
+  const run = batchRuns.train;
+  return run ? { setup: run.setup, at: run.at, games: run.games } : null;
+}
+
+const reviewMsg = (text, bad) => { reviewMsgText = text || ''; reviewMsgBad = !!bad; };
+
+function renderReviewMain() {
+  const main = $id('reviewMain');
+  if (!main) return;
+  if (reviewMode === 'single') {
+    const rep = currentBattleReport();
+    if (!rep) { main.innerHTML = `<div class="rpt">${esc(T('ui.rvNoBattle'))}</div>`; return; }
+    const ctx = new Map((match.entries || []).map((e) => [e.t, e.html]));
+    const rows = [];
+    for (const mo of rep.moments) {
+      const near = ctx.get(mo.t);
+      if (near) rows.push(`<div class="ln dimd"><span class="t">t=${String(mo.t).padStart(3, '0')}</span>${near}</div>`);
+      rows.push(
+        `<div class="ln flag"><span class="t">t=${String(mo.t).padStart(3, '0')}</span>`
+        + `<span class="w">⚠ ${esc(mo.label)}</span><span class="why">${esc(mo.why)}</span></div>`,
+      );
+    }
+    if (!rows.length) rows.push(`<div class="ln dimd">${esc(T('ui.rvNoFlag'))}</div>`);
+    const last = (match.entries || [])[(match.entries || []).length - 1];
+    if (last) rows.push(`<div class="ln dimd"><span class="t">t=${String(last.t).padStart(3, '0')}</span>${last.html}</div>`);
+    main.innerHTML = `<div class="tl">${rows.join('')}</div><div class="wrhint" style="margin-top:8px">${esc(T('ui.rvRuleNote'))}</div>`;
+    return;
+  }
+  const batch = currentBatch();
+  const cmp = lastCompare ? renderCompare() : '';
+  if (!batch) { main.innerHTML = `${cmp}<div class="rpt">${esc(T('ui.rvNever'))}</div>`; return; }
+  main.innerHTML = `${cmp}<pre class="rpt">${esc(renderBatchText(batch).join('\n'))}</pre>${renderHistory()}`;
+}
+
+function renderCompare() {
+  const c = lastCompare;
+  if (!c) return '';
+  const card = (label, before, after) => {
+    const up = before != null && after != null && after > before;
+    const flat = before != null && after != null && after <= before;
+    return `<div class="bacard ${up ? 'up' : flat ? 'flat' : ''}"><b>${pctText(before)} → ${pctText(after)}</b><span>${esc(label)}</span></div>`;
+  };
+  const gained = c.after.holdout != null && c.before.holdout != null && c.after.holdout > c.before.holdout;
+  const note = gained
+    ? T('ui.rvGain', { before: pctText(c.before.holdout), after: pctText(c.after.holdout) })
+    : T('ui.rvNoGain', {
+      a: `${pctText(c.before.train)}→${pctText(c.after.train)}`,
+      b: `${pctText(c.before.holdout)}→${pctText(c.after.holdout)}`,
+    });
+  return `<div class="ba">${card(T('ui.rvTrain'), c.before.train, c.after.train)}${card(T('ui.rvHoldout'), c.before.holdout, c.after.holdout)}</div>`
+    + `<div class="wrhint" style="margin-bottom:12px;color:${gained ? 'var(--ok)' : 'var(--warn)'}">${esc(note)}</div>`;
+}
+
+function renderHistory() {
+  if (!reviewHistory.length) return '';
+  const rows = reviewHistory.map((h) => `<tr><td>${esc(T('ui.rvRound', { n: h.round }))}</td>`
+    + `<td>${pctText(h.after.train)}</td><td>${pctText(h.after.holdout)}</td></tr>`).join('');
+  return `<h4 style="font-size:12px;color:var(--dim);letter-spacing:1px;margin:16px 0 6px">${esc(T('ui.rvHist'))}</h4>`
+    + `<table><thead><tr><th>#</th><th>${esc(T('ui.rvTrain'))}</th><th>${esc(T('ui.rvHoldout'))}</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderReviewSide() {
+  const side = $id('reviewSide');
+  if (!side) return;
+  const st = sdkState();
+  const aiLabel = st === 'need-login' ? T('ui.rvNeedLogin') : T('ui.rvAi');
+  const parts = [];
+  parts.push(`<h4>${esc(T('ui.rvDiagTitle'))}</h4>`);
+  if (reviewProposal && reviewProposal.diagnoses.length) {
+    for (const d of reviewProposal.diagnoses) {
+      parts.push(`<div class="diag"><div class="n">${esc(d.title)}${d.detail ? `：${esc(d.detail)}` : ''}</div>`
+        + `${d.evidence ? `<div class="ev">${esc(d.evidence)}</div>` : ''}</div>`);
+    }
+  } else {
+    parts.push(`<div class="wrhint">${esc(T('ui.rvDiagEmpty'))}</div>`);
+  }
+  parts.push(`<button class="btn ghost" id="rvAiBtn" style="padding:5px 12px;font-size:11px"${reviewBusy || st === 'absent' ? ' disabled' : ''}>${esc(reviewBusy ? T('ui.rvAiRunning') : aiLabel)}</button>`);
+  if (st === 'absent') parts.push(`<div class="wrhint">${esc(T('ui.rvNoSdk'))}</div>`);
+  if (reviewMsgText) parts.push(`<div class="wrhint" style="color:${reviewMsgBad ? 'var(--bad)' : 'var(--dim)'}">${esc(reviewMsgText)}</div>`);
+  if (reviewProposal) {
+    parts.push(`<div class="cmp" style="grid-template-columns:1fr">
+      <div class="cmpcol"><h5>${esc(T('ui.rvOld'))}</h5>${esc(strategyEl ? strategyEl.value : '')}</div>
+      <div class="cmpcol new"><h5>${esc(T('ui.rvNew'))}</h5>${esc(reviewProposal.strategy)}</div>
+    </div>`);
+    parts.push(`<div style="display:flex;gap:6px;margin-top:8px">
+      <button class="btn ghost" id="rvAdoptBtn" style="padding:5px 12px;font-size:11px;border-color:#4C6B22;color:var(--p1)">${esc(T('ui.rvAdopt'))}</button>
+      <button class="btn ghost" id="rvDropBtn" style="padding:5px 12px;font-size:11px">${esc(T('ui.rvDiscard'))}</button>
+    </div>`);
+  }
+  side.innerHTML = parts.join('');
+  const ai = $id('rvAiBtn');
+  if (ai) ai.addEventListener('click', runAiReview);
+  const adopt = $id('rvAdoptBtn');
+  if (adopt) adopt.addEventListener('click', adoptProposal);
+  const drop = $id('rvDropBtn');
+  if (drop) drop.addEventListener('click', () => { reviewProposal = null; reviewMsg(''); renderReview(); });
+}
+
+function renderReview() {
+  const title = $id('reviewTitle');
+  const sub = $id('reviewSub');
+  const flag = $id('reviewFlag');
+  if (title) title.textContent = T(reviewMode === 'single' ? 'ui.rvTitleSingle' : 'ui.rvTitleBatch');
+  if (sub) {
+    if (reviewMode === 'single' && match) {
+      const rep = currentBattleReport();
+      sub.textContent = `seed ${match.seedStr} · ${match.names[0]} · ${match.names[1]} · ${T(rep.result.win ? 'ui.rvWin' : 'ui.rvLoss')}（${rep.result.reason}，t=${rep.result.ticks - 1}）`;
+    } else if (reviewMode === 'batch' && batchRuns.train) {
+      const s = batchRuns.train.setup;
+      sub.textContent = `${s.tank} · ${s.opponent} · ${s.skill} · ${s.mapKey}`;
+    } else sub.textContent = '';
+  }
+  if (flag) {
+    const rep = reviewMode === 'single' ? currentBattleReport() : null;
+    const n = rep ? rep.moments.length : 0;
+    flag.hidden = !n;
+    flag.textContent = T('ui.rvFlag', { n });
+  }
+  const dlText = $id('reviewDlTextBtn');
+  if (dlText) dlText.hidden = reviewMode !== 'batch'; // 单局按老板口径只给 JSON
+  renderReviewMain();
+  renderReviewSide();
+}
+
+function openReview(mode) {
+  if (mode === 'single' && !match) { showErr(T('ui.rvNoBattle')); return; }
+  reviewMode = mode;
+  reviewProposal = null;
+  reviewMsg('');
+  renderReview();
+  openOverlay($id('reviewDrawer'));
+}
+
+async function runAiReview() {
+  const st = sdkState();
+  if (st === 'need-login') { if (llmCtl && llmCtl.login) llmCtl.login(); return; }
+  if (st !== 'ready') { reviewMsg(T('ui.rvNoSdk'), true); renderReview(); return; }
+  const strategy = strategyEl ? strategyEl.value : '';
+  let prompt;
+  try {
+    if (reviewMode === 'single') {
+      const rep = currentBattleReport();
+      if (!rep) { reviewMsg(T('ui.rvNoBattle'), true); renderReview(); return; }
+      prompt = buildReviewPrompt({ mode: 'single', payload: reviewPayloadFromBattle(rep), strategy });
+    } else {
+      const batch = currentBatch();
+      if (!batch) { reviewMsg(T('ui.rvNever'), true); renderReview(); return; }
+      prompt = buildReviewPrompt({ mode: 'batch', payload: reviewPayloadFromBatch(batch), strategy });
+    }
+  } catch (e) { reviewMsg(T('ui.rvAiFail', { msg: String((e && e.message) || e) }), true); renderReview(); return; }
+  reviewBusy = true;
+  reviewMsg(T('ui.rvAiRunning'));
+  renderReview();
+  const t0 = Date.now();
+  try {
+    const { text } = await llmCtl.chat(prompt);
+    const parsed = parseReviewReply(text);
+    if (!parsed) {
+      reviewMsg(T('ui.rvBadReply'), true);
+      setGenLog(buildGenLog({
+        outcome: 'review-unparsable', reason: 'parseReviewReply returned null', at: t0, durationMs: Date.now() - t0,
+        env: genEnv(), strategy, skill: userSkill(),
+        attempts: [{ n: 1, promptChars: prompt.length, replyChars: String(text || '').length, replyHead: String(text || '').slice(0, 500), extracted: false }],
+      }));
+    } else {
+      reviewProposal = parsed;
+      reviewMsg(T('ui.rvCost', { kb: (prompt.length / 1024).toFixed(1) }));
+    }
+  } catch (e) {
+    const m = mapLlmError(e);
+    reviewMsg(T(m.key, m.vars), true);
+    setGenLog(buildGenLog({
+      outcome: 'review-sdk-error',
+      reason: `${(e && e.name) || 'Error'}: ${String((e && (e.hint || e.message)) || e)}`,
+      at: t0, durationMs: Date.now() - t0, env: genEnv(), strategy, skill: userSkill(), attempts: [],
+    }));
+  } finally {
+    reviewBusy = false;
+    renderReview();
+  }
+}
+
+// 采纳：写回战术框 → 用现有「AI 由战术文字生成代码」把它变成脚本 → 重跑两组种子出对比。
+// 只改战术文字而不重生成代码，胜率不会有任何变化——那样的「对比」是自欺，所以这里必须联动生成。
+async function adoptProposal() {
+  if (!reviewProposal || !strategyEl) return;
+  const before = {
+    train: batchRuns.train ? batchRuns.train.agg.winRate : null,
+    holdout: batchRuns.holdout ? batchRuns.holdout.agg.winRate : null,
+  };
+  strategyEl.value = reviewProposal.strategy;
+  saveDraft();
+  reviewProposal = null;
+  reviewMsg(T('ui.rvAdopted'));
+  renderReview();
+  const codeBefore = editorEl.value;
+  if (sdkState() === 'ready') await generateScript();
+  if (editorEl.value === codeBefore) { // 代码没更新：如实说明，不跑一个必然无差异的「对比」
+    reviewMsg(T('ui.rvBadReply'), true);
+    renderReview();
+    return;
+  }
+  await runBatch('train');
+  await runBatch('holdout');
+  const after = {
+    train: batchRuns.train ? batchRuns.train.agg.winRate : null,
+    holdout: batchRuns.holdout ? batchRuns.holdout.agg.winRate : null,
+  };
+  lastCompare = { before, after };
+  reviewHistory = reviewHistory.concat([{ round: reviewHistory.length + 1, before, after }]);
+  reviewMode = 'batch';
+  reviewMsg('');
+  renderReview();
+}
+
+$id('battleJsonBtn')?.addEventListener('click', () => {
+  const rep = currentBattleReport();
+  if (!rep) { showErr(T('ui.rvNoBattle')); return; }
+  downloadText(battleReportFilename(new Date(), match.seedStr), JSON.stringify(rep, null, 2), 'application/json');
+});
+$id('battleReviewBtn')?.addEventListener('click', () => openReview('single'));
+$id('wrRunBtn')?.addEventListener('click', () => { runBatch('train'); });
+$id('wrReviewBtn')?.addEventListener('click', () => openReview('batch'));
+$id('reviewCloseBtn')?.addEventListener('click', closeOverlay);
+$id('reviewDlTextBtn')?.addEventListener('click', () => {
+  const batch = currentBatch();
+  if (!batch) return;
+  downloadText(batchReportFilename(new Date(), 'txt'), renderBatchText(batch).join('\n'), 'text/plain;charset=utf-8');
+});
+$id('reviewDlJsonBtn')?.addEventListener('click', () => {
+  if (reviewMode === 'single') {
+    const rep = currentBattleReport();
+    if (!rep) return;
+    downloadText(battleReportFilename(new Date(), match.seedStr), JSON.stringify(rep, null, 2), 'application/json');
+    return;
+  }
+  const batch = currentBatch();
+  if (!batch) return;
+  downloadText(batchReportFilename(new Date(), 'json'), JSON.stringify({ kind: 'agentank-batch', schema: 1, ...batch, agg: aggregateBatch(batch.games) }, null, 2), 'application/json');
+});
+renderGauge();
 
 // ---------- Play 用户支持（仅 play 部署环境激活；file:/匿名/SDK 不可用时零回归） ----------
 initPlay({

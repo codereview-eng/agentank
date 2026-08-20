@@ -197,7 +197,56 @@ footer .mono{color:var(--muted)}
 .gcard .d{font-size:11px; color:var(--dim); margin-top:3px}
 .gcard .ops{display:flex; gap:6px; flex:none}
 .gcard .ops .btn{padding:4px 10px; font-size:11px; letter-spacing:0}
+/* ── 战报下载 + AI 复盘（胜率标尺区 / 复盘抽屉） ── */
+.logacts{display:flex; gap:6px; padding:0 14px 10px; flex:none}
+.logacts .btn{padding:5px 10px; font-size:11px; letter-spacing:0}
+.wrbox{padding:10px 14px 12px; display:flex; flex-direction:column; gap:9px; flex:none}
+.wrhead{display:flex; align-items:baseline; gap:8px}
+.wrnum{font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:30px; font-weight:700; color:var(--p1); font-variant-numeric:tabular-nums; line-height:1}
+.wrnum.na{color:var(--dim)}
+.wrsub{font-size:11px; color:var(--dim)}
+.wrmeta{font-size:11px; color:var(--muted); display:flex; flex-wrap:wrap; gap:4px 10px}
+.wrmeta:empty{display:none}
+.bars{display:grid; gap:5px}
+.bars:empty{display:none}
+.bar{display:grid; grid-template-columns:5.2em 1fr 2.6em; gap:7px; align-items:center; font-size:11px; color:var(--muted)}
+.bar i{display:block; height:8px; border-radius:4px; background:var(--bad)}
+.bar i.w{background:var(--warn)}
+.bar em{font-family:ui-monospace,Menlo,monospace; font-style:normal; text-align:right; color:var(--text)}
+.wrfail{border:1px solid var(--bad); border-radius:9px; padding:9px 11px; background:#2A1518; color:var(--bad); font-size:11.5px}
+.wrfail[hidden]{display:none}
+.wrfail .d{color:var(--muted); font-size:11px; margin-top:4px; font-family:ui-monospace,Menlo,monospace; word-break:break-all}
+.wracts{display:flex; gap:6px}
+.wracts .btn{padding:5px 10px; font-size:11px; letter-spacing:0}
+.wrhint{font-size:11px; color:var(--dim)}
+.fl{display:inline-flex; gap:4px; align-items:center; border:1px solid #54431C; color:var(--warn); border-radius:999px; padding:0 7px; font-size:10.5px; flex:none; letter-spacing:0; font-weight:400}
+.fl[hidden]{display:none} /* 作者样式的 display 会盖掉 hidden 属性的 UA display:none，必须显式补 */
+#reviewDrawer .dbody{display:grid; grid-template-columns:minmax(0,1fr) 340px}
+.rvmain{padding:14px 16px; overflow:auto; min-width:0}
+.rpt{background:var(--panel-2); border:1px solid var(--line); border-radius:9px; padding:11px 13px;
+  font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:11.5px; line-height:1.85; color:var(--text); white-space:pre-wrap; overflow-x:auto; margin:0}
+.tl{background:var(--panel-2); border:1px solid var(--line); border-radius:9px; padding:8px 10px; font-size:12px; line-height:1.85}
+.tl .ln{padding:1px 2px; border-radius:5px}
+.tl .ln .t{color:var(--dim); font-family:ui-monospace,Menlo,monospace; margin-right:6px}
+.tl .ln.dimd{opacity:.55}
+.tl .ln.flag{background:#2A2314; border:1px solid #54431C; padding:5px 7px; margin:3px 0}
+.tl .ln.flag .w{color:var(--warn); font-weight:700}
+.tl .ln.flag .why{display:block; color:var(--muted); font-size:11px; margin-top:3px}
+.diag{border:1px solid var(--line); border-radius:9px; padding:10px 12px; background:var(--panel-2); margin-bottom:8px}
+.diag .n{font-size:12px; color:var(--text); line-height:1.65}
+.diag .ev{font-size:11px; color:var(--dim); margin-top:4px; font-family:ui-monospace,Menlo,monospace}
+.cmp{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px}
+.cmpcol{border:1px solid var(--line); border-radius:9px; padding:10px 12px; background:var(--panel-2); font-size:12px; line-height:1.75; color:var(--muted); white-space:pre-wrap}
+.cmpcol.new{border-color:#4C6B22; background:#1B2416; color:var(--text)}
+.cmpcol h5{margin:0 0 6px; font-size:11px; color:var(--dim); letter-spacing:1px; font-weight:600}
+.ba{display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:9px; margin-bottom:12px}
+.bacard{border:1px solid var(--line); border-radius:9px; padding:10px 12px; background:var(--panel-2)}
+.bacard b{display:block; font-family:ui-monospace,Menlo,monospace; font-size:20px; font-variant-numeric:tabular-nums; color:var(--text)}
+.bacard.up b{color:var(--ok)}
+.bacard.flat b{color:var(--warn)}
+.bacard span{display:block; font-size:11px; color:var(--dim); margin-top:2px}
 @media (max-width:900px){
+  #reviewDrawer .dbody{grid-template-columns:minmax(0,1fr)}
   main{grid-template-columns:1fr}
   .modal{width:96vw}
   .drawer{width:100vw; top:0; bottom:0}
@@ -341,6 +390,22 @@ footer .mono{color:var(--muted)}
   <section class="panel">
     <h2><span class="dot"></span><span data-i18n="ui.liveLog">实时战报</span></h2>
     <div class="log" id="log"><div class="ln on"><span class="t mono">t=000</span><span data-i18n="ui.waiting">等待开战…</span></div></div>
+    <div class="logacts">
+      <button class="btn ghost" id="battleReviewBtn" data-i18n="ui.rvBattleReview" style="flex:1">🔍 复盘这一局</button>
+      <button class="btn ghost" id="battleJsonBtn" data-i18n="ui.rvBattleJson" style="flex:none">⬇ JSON</button>
+    </div>
+    <h2><span class="dot"></span><span data-i18n="ui.rvGauge">胜率标尺 · 同关卡同对手</span><span class="sp" id="wrFlagChip"></span></h2>
+    <div class="wrbox">
+      <div class="wrhead"><span class="wrnum na" id="wrNum">—%</span><span class="wrsub" id="wrSub" data-i18n="ui.rvNever">还没跑过</span></div>
+      <div class="wrmeta" id="wrMeta"></div>
+      <div class="bars" id="wrBars"></div>
+      <div class="wrfail" id="wrFail" hidden></div>
+      <div class="wracts">
+        <button class="btn ghost" id="wrRunBtn" style="flex:1">▶ 跑 12 局建立基线</button>
+        <button class="btn ghost" id="wrReviewBtn" data-i18n="ui.rvOpen" style="flex:none">🔍 复盘</button>
+      </div>
+      <div class="wrhint" id="wrHint"></div>
+    </div>
     <h2><span class="dot"></span><span data-i18n="ui.ladder">天梯 · 内置流派</span></h2>
     <table>
       <thead><tr><th>#</th><th data-i18n="ui.thTank">坦克</th><th data-i18n="ui.thStyle">流派</th><th data-i18n="ui.thElo">ELO</th><th data-i18n="ui.thWin">胜率</th></tr></thead>
@@ -442,6 +507,24 @@ api.me() / api.stars()</div>
 </div>
 
 <!-- 账号与密钥：这是账号设置，不是每局要碰的东西 -->
+<!-- 复盘抽屉：单局态（AI 批这一局哪几处不合理）/ 多局态（人读批量报告 + 胜率对比） -->
+<div class="drawer" id="reviewDrawer" hidden role="dialog" aria-modal="true" aria-labelledby="reviewTitle">
+  <div class="ovh">
+    <h3 id="reviewTitle" data-i18n="ui.rvTitleSingle">复盘这一局</h3>
+    <span class="sub" id="reviewSub"></span>
+    <div class="ovacts">
+      <span class="fl" id="reviewFlag" hidden></span>
+      <button class="btn ghost" id="reviewDlTextBtn" data-i18n="ui.rvDlText" style="padding:5px 12px;font-size:11px">⬇ 下载文字版</button>
+      <button class="btn ghost" id="reviewDlJsonBtn" data-i18n="ui.rvDlJson" style="padding:5px 12px;font-size:11px">⬇ JSON</button>
+      <button class="x" id="reviewCloseBtn">✕</button>
+    </div>
+  </div>
+  <div class="dbody">
+    <div class="rvmain" id="reviewMain"></div>
+    <div class="dside" id="reviewSide"></div>
+  </div>
+</div>
+
 <div class="modal" id="accountModal" hidden role="dialog" aria-modal="true" aria-labelledby="accountTitle">
   <div class="ovh">
     <h3 id="accountTitle" data-i18n="ui.accountTitle">账号与密钥</h3>

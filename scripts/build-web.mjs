@@ -15,6 +15,7 @@ const ORDER = [
   'src/engine/content.js',
   'src/engine/maps.js',
   'src/engine/engine.js',
+  'src/engine/analyze.js',
   'src/engine/report.js',
   'bots/util.js',
   'bots/camper.js',

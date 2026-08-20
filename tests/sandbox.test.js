@@ -101,6 +101,52 @@ test('沙箱协议：天梯批量作业按序返回胜负', () => {
   assert.deepEqual(m.results, [{ winner: 0 }, { winner: null }]);
 });
 
+test('沙箱协议：批量作业回「一局一行摘要」，先后手由 who 指定', () => {
+  const fakeEngine = `
+    const bots = { camper: (api) => 'camper-move' };
+    function runMatch(o) { return { winner: 0, reason: 'kill', ticks: 10, seed: o.seed, map: o.map }; }
+    function summarizeGame(o) {
+      return { seed: String(o.seed), win: o.result.winner === (o.who || 0), reason: o.result.reason,
+               ticks: o.result.ticks, strategy: o.strategy, metrics: {}, moments: [] };
+    }
+  `;
+  const src = buildWorkerSource({ engineSrc: fakeEngine, userCode: 'function decide() { return "u"; }' });
+  const out = [];
+  const self = { postMessage: (m) => out.push(m) };
+  new Function('self', src)(self);
+  self.onmessage({
+    data: {
+      id: 3, type: 'batch', strategy: '优先吃星',
+      jobs: [
+        { seed: 11, seedStr: '11', map: { width: 9 }, who: 0, a: { kind: 'user', skill: 'teleport' }, b: { kind: 'builtin', key: 'camper' } },
+        { seed: 11, seedStr: '11', map: { width: 9 }, who: 1, a: { kind: 'builtin', key: 'camper' }, b: { kind: 'user', skill: 'teleport' } },
+      ],
+    },
+  });
+  const m = out[0];
+  assert.equal(m.ok, true);
+  assert.equal(m.games.length, 2);
+  assert.equal(m.games[0].win, true);   // who=0 且 winner=0 → 我方胜
+  assert.equal(m.games[1].win, false);  // 换先后手后 winner=0 是对手
+  assert.equal(m.games[0].strategy, '优先吃星', '战术文字随作业进沙箱（阈值判定要用）');
+  assert.equal(m.games[0].seed, '11');
+});
+
+test('沙箱协议：批量作业缺地图即显式失败（摘要判定需要地形，不允许猜）', () => {
+  const fakeEngine = `
+    const bots = {};
+    function runMatch(o) { return { winner: 0, reason: 'kill', ticks: 1 }; }
+    function summarizeGame(o) { return {}; }
+  `;
+  const src = buildWorkerSource({ engineSrc: fakeEngine, userCode: 'function decide() { return "u"; }' });
+  const out = [];
+  const self = { postMessage: (m) => out.push(m) };
+  new Function('self', src)(self);
+  self.onmessage({ data: { type: 'batch', jobs: [{ seed: 1, who: 0, a: { kind: 'user', skill: 'x' }, b: { kind: 'user', skill: 'x' } }] } });
+  assert.equal(out[0].ok, false);
+  assert.match(out[0].error, /batch job requires map/);
+});
+
 test('沙箱协议：脚本没有 decide 入口 / 未知内置对手 → 显式失败，不静默出假结果', () => {
   const noEntry = runHarness(
     { type: 'match', seed: 1, a: { kind: 'user', skill: 'shield' }, b: { kind: 'builtin', key: 'camper' } },

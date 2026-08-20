@@ -3,6 +3,11 @@ export { generateMap, mapFromAscii, cloneMap, TILE, inBounds, isWalkable, tileAt
 export { PRESET_MAPS, presetMap } from './maps.js';
 export { renderText } from './report.js';
 export {
+  replayStates, buildMetrics, detectMoments, buildBattleReport, summarizeGame,
+  aggregateBatch, renderBatchText, battleReportFilename, batchReportFilename,
+  redactSecrets, healThresholdFrom, MOMENT_RULES, MOMENT_TUNING, BATCH_SEEDS,
+} from './analyze.js';
+export {
   STAGES, SKILL_EFFECTS, ITEM_EFFECTS, validateContent, makePack, serializePack,
   parsePack, promoteStage, resolvePackMap, compileBot, OFFICIAL_CONTENT,
 } from './content.js';

@@ -3,6 +3,8 @@
 // 运行时部分 initPlay(ctx)：仅在 play 部署环境动态注入 SDK 脚本节点（src 指向 __sdk/v1.js），
 // dist 静态产物零外链；SDK 不可用/未登录时所有现有功能零回归（匿名照旧）。
 
+import { redactSecrets, aggregateBatch } from '../src/engine/analyze.js';
+
 // 注入决策：file: 一律不注入；?play=1 显式开启直接注入；http(s) 无 flag 先探测 __sdk/v1.js 可用性
 export function sdkInjectDecision(loc) {
   const protocol = (loc && loc.protocol) || '';
@@ -49,6 +51,145 @@ export function buildLlmPrompt(opts) {
     feedback ? `- 上一次生成的代码编译失败，错误：${feedback}。请修正后重新输出完整代码块。` : '',
     `玩家策略描述：${strategy}`,
   ].filter(Boolean).join('\n');
+}
+
+// ---------- AI 复盘（战报 → 战术调整）：提示词合同 + 回复解析 ----------
+// 分工纪律：「哪里不合理」由引擎的确定性规则判定（src/engine/analyze.js 的 moments），
+// AI 只做两件事——解释这些时刻意味着什么、把玩家的战术文字改写掉。
+// 所以提示词里必须带上已标好的时刻与指标，且**不塞全量事件**（预算 + 防模型自由发挥）。
+const REVIEW_MAX_STRATEGY = 4000;
+
+const pctS = (x) => `${Math.round((Number(x) || 0) * 100)}%`;
+
+// 单局 JSON → 复盘载荷（丢掉 events，只留判定所需）
+export function reviewPayloadFromBattle(rep) {
+  const r = rep || {};
+  const s = r.setup || {};
+  const m = r.metrics || {};
+  return {
+    kind: 'single',
+    setup: {
+      seed: s.seed, mapKey: s.mapKey, opponent: s.opponent, tank: s.tank,
+      skills: Array.isArray(s.skills) ? s.skills.slice() : [],
+    },
+    result: r.result || {},
+    metrics: m,
+    moments: (r.moments || []).map((x) => ({ t: x.t, label: x.label, severity: x.severity, why: x.why })),
+  };
+}
+
+// 批量结果 → 复盘载荷（胜率 + 败因 + 逐局一行 + 高频不合理操作）
+export function reviewPayloadFromBatch(batch) {
+  const b = batch || {};
+  const games = Array.isArray(b.games) ? b.games : [];
+  const agg = aggregateBatch(games);
+  const ruleCount = {};
+  for (const g of games) for (const mo of g.moments || []) {
+    const k = mo.label || mo.rule;
+    ruleCount[k] = (ruleCount[k] || 0) + 1;
+  }
+  return {
+    kind: 'batch',
+    setup: b.setup || {},
+    agg,
+    games: games.map((g) => ({
+      seed: g.seed, win: g.win, reason: g.reason,
+      accuracy: (g.metrics || {}).accuracy, dmgDealt: (g.metrics || {}).dmgDealt,
+      dmgTaken: (g.metrics || {}).dmgTaken, stars: (g.metrics || {}).stars,
+    })),
+    topMoments: Object.entries(ruleCount).sort((a, b2) => b2[1] - a[1]).slice(0, 5).map(([label, count]) => ({ label, count })),
+  };
+}
+
+const REVIEW_CONTRACT = [
+  '合同（必须严格遵守）：',
+  '- 只输出一个 ```json 代码块，形如：',
+  '  {"diagnoses":[{"title":"一句话病灶","detail":"为什么这样不好","evidence":"t=34 或指标数字"}],',
+  '   "strategy":"改写后的完整战术文字（中文，给玩家读，不是代码）","changes":["一句话说明改了什么"]}',
+  '- diagnoses 每条都必须引用下面给出的时刻（t=…）或指标数字，不许凭空推断。',
+  '- strategy 要保留玩家原本合理的部分，只改该改的；不要写代码。',
+  '- 不要输出代码块以外的任何解释文字。',
+];
+
+export function buildReviewPrompt(opts) {
+  const o = opts || {};
+  const mode = o.mode;
+  if (mode !== 'single' && mode !== 'batch') throw new Error(`buildReviewPrompt: unknown mode ${mode}`);
+  const p = o.payload || {};
+  const s = p.setup || {};
+  const lines = [];
+  lines.push('你是坦克对战游戏的战术教练。下面是引擎判定出的确定性事实（不是猜测）。');
+  lines.push(mode === 'single'
+    ? '任务：指出玩家写的战术在这一局里哪几处表现不合理，并改写战术文字。'
+    : '任务：从这一批对局（同关卡、同对手、同技能，只有随机种子不同）里找出系统性毛病，并改写战术文字，目标是提升胜率。');
+  lines.push(...REVIEW_CONTRACT);
+  lines.push('');
+  lines.push('玩家现在的战术：');
+  lines.push(String(o.strategy || '（空）'));
+  lines.push('');
+
+  if (mode === 'single') {
+    const r = p.result || {};
+    const m = p.metrics || {};
+    lines.push(`这一局：seed=${s.seed} 地图=${s.mapKey} 对手=${s.opponent} 我方技能=${(s.skills || [])[0] ?? '—'}`);
+    lines.push(`结果：${r.win ? '胜' : '负'}（${r.reason}，共 ${r.ticks} 拍）星 ${(r.stars || [0, 0]).join(':')}`);
+    lines.push(`指标：命中率 ${pctS(m.accuracy)}（${m.fires} 发中 ${m.hits}）｜伤害 打出 ${m.dmgDealt} / 挨了 ${m.dmgTaken}｜子弹被挡 ${m.shotsBlocked}`
+      + `｜毒圈挨伤 ${m.zoneDmg}｜技能 ${m.skillCasts} 放 ${m.skillHits} 中｜我首星 t=${m.firstStarTick ?? '—'}，对手 t=${m.enemyFirstStarTick ?? '—'}`
+      + `｜阵亡 t=${m.deathTick ?? '无'}`);
+    lines.push('');
+    lines.push('引擎标出的不合理时刻：');
+    if (!(p.moments || []).length) lines.push('（本局没有标出可疑时刻——若战术仍有问题，请从指标里找）');
+    for (const mo of p.moments || []) lines.push(`- t=${mo.t} ${mo.label}（${mo.severity === 'high' ? '重' : '中'}）：${mo.why}`);
+  } else {
+    const a = p.agg || {};
+    lines.push(`这一批：对手=${s.opponent} 技能=${s.skill} 地图=${s.mapKey} 种子集=${s.seedSet} 共 ${a.games || 0} 局`);
+    lines.push(a.games
+      ? `胜率 ${pctS(a.winRate)}（${a.wins} 胜 ${a.losses} 负）｜平均 命中率 ${pctS((a.avg || {}).accuracy)}，打出 ${(a.avg || {}).dmgDealt} / 挨了 ${(a.avg || {}).dmgTaken}，首星 t=${(a.avg || {}).firstStarTick ?? '—'}（对手 ${(a.avg || {}).enemyFirstStarTick ?? '—'}）`
+      : '（本批没有跑出任何一局）');
+    const buckets = Object.entries(a.lossBuckets || {});
+    if (buckets.length) lines.push(`败因分桶：${buckets.map(([k, v]) => `${k} ${v} 局`).join('，')}`);
+    if ((p.topMoments || []).length) lines.push(`高频不合理操作：${p.topMoments.map((x) => `${x.label} ×${x.count}`).join('，')}`);
+    lines.push('');
+    lines.push('逐局：');
+    for (const g of p.games || []) {
+      lines.push(`- seed ${g.seed} ${g.win ? '胜' : '负'} ${g.reason} 命中 ${pctS(g.accuracy)} 打${g.dmgDealt}/挨${g.dmgTaken} 星${(g.stars || [0, 0]).join(':')}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+// 回复 → {diagnoses, strategy, changes, truncated}；拿不到可用结构一律 null（fail-closed）
+export function parseReviewReply(text) {
+  const raw = String(text || '');
+  let jsonText = null;
+  const fenced = raw.match(/```(?:json)?\s*\n([\s\S]*?)```/);
+  if (fenced) jsonText = fenced[1];
+  else {
+    const i = raw.indexOf('{');
+    const j = raw.lastIndexOf('}');
+    if (i >= 0 && j > i) jsonText = raw.slice(i, j + 1);
+  }
+  if (!jsonText) return null;
+  let obj;
+  try { obj = JSON.parse(jsonText); } catch { return null; }
+  if (!obj || typeof obj !== 'object') return null;
+  let strategy = typeof obj.strategy === 'string' ? obj.strategy.trim() : '';
+  if (!strategy) return null;
+  let truncated = false;
+  if (strategy.length > REVIEW_MAX_STRATEGY) { strategy = strategy.slice(0, REVIEW_MAX_STRATEGY); truncated = true; }
+  const diagnoses = (Array.isArray(obj.diagnoses) ? obj.diagnoses : [])
+    .filter((d) => d && typeof d === 'object' && typeof d.title === 'string' && d.title.trim())
+    .slice(0, 6)
+    .map((d) => ({
+      title: String(d.title).trim().slice(0, 200),
+      detail: typeof d.detail === 'string' ? d.detail.trim().slice(0, 600) : '',
+      evidence: typeof d.evidence === 'string' ? d.evidence.trim().slice(0, 120) : '',
+    }));
+  const changes = (Array.isArray(obj.changes) ? obj.changes : [])
+    .filter((c) => typeof c === 'string' && c.trim())
+    .slice(0, 8)
+    .map((c) => c.trim().slice(0, 200));
+  return { diagnoses, strategy, changes, truncated };
 }
 
 // LLM 输出 → 代码：优先取 ```js 围栏块；裸输出须含 decide 入口，否则 null（fail-closed）
@@ -148,13 +289,7 @@ export function scriptGate(code, opts) {
 // ---------- 生成诊断日志：失败时一键下载交给产品方分析 ----------
 // 只装“定位问题必需”的东西：环境能力（CSP/eval/SDK）、每次尝试的形状与错误、玩家自己的策略文本与产出代码。
 // 绝不装凭证：落盘前统一过 redactSecrets（Bearer / ak1_ / gt1_ / token 字段一律打码）。
-export function redactSecrets(text) {
-  return String(text == null ? '' : text)
-    .replace(/\b(Bearer)\s+[A-Za-z0-9._-]+/gi, '$1 «redacted»')
-    .replace(/\b(ak1|gt1|sk|pk)_[A-Za-z0-9._-]{6,}/g, '$1_«redacted»')
-    .replace(/("?(?:access_)?token"?\s*[:=]\s*")([^"]{6,})(")/gi, '$1«redacted»$3')
-    .replace(/([?&](?:token|key|secret)=)[^&\s]{6,}/gi, '$1«redacted»');
-}
+export { redactSecrets }; // 单一定义点在 src/engine/analyze.js（战报 JSON 与生成日志共用同一套打码，勿另写）
 
 export function genLogFilename(now) {
   const d = now instanceof Date ? now : new Date(now || Date.now());
