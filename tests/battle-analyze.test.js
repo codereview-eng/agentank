@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { runMatch, mapFromAscii, RULES } from '../src/engine/index.js';
 import {
   replayStates, buildMetrics, detectMoments, buildBattleReport,
-  aggregateBatch, renderBatchText, battleReportFilename, MOMENT_RULES,
+  aggregateBatch, renderBatchText, battleReportFilename, MOMENT_RULES, healThresholdFrom,
 } from '../src/engine/analyze.js';
 
 // 测试图：9x9，A 出生 (1,1)，B 出生 (7,7)，星在 (3,2)
@@ -387,4 +387,82 @@ test('人读批量报告：一局都没跑成时说清楚，不假装有数据',
   const txt = lines.join('\n');
   assert.ok(txt.includes('没有'), '要如实说明没有跑出任何一局');
   assert.ok(!txt.includes('0%'), '不拿 0% 冒充结果');
+});
+
+// ───────── 评审 FAIL 后补的回归测试（B4 / 非阻断项） ─────────
+
+test('血线解析：回传来源，读不到就是 default，不许当成玩家写过', () => {
+  assert.deepEqual(healThresholdFrom('血量低于 40%'), { value: 40, source: 'parsed' });
+  assert.deepEqual(healThresholdFrom('HP 30 以下'), { value: 30, source: 'parsed' });
+  assert.deepEqual(healThresholdFrom('不要低于 25 血'), { value: 25, source: 'parsed' });
+  assert.deepEqual(healThresholdFrom('hp<30 撤退'), { value: 30, source: 'parsed' });
+  assert.deepEqual(healThresholdFrom('血少就撤'), { value: 40, source: 'default' });
+  assert.deepEqual(healThresholdFrom('血量低于百分之三十'), { value: 40, source: 'default' });
+  assert.deepEqual(healThresholdFrom(''), { value: 40, source: 'default' });
+});
+
+test('血线解析：对手的血线不能当成我的回血线', () => {
+  assert.deepEqual(healThresholdFrom('对手血量 50 以下时贴身'), { value: 40, source: 'default' });
+  assert.deepEqual(healThresholdFrom('敌人血量低于 30 就追击'), { value: 40, source: 'default' });
+  // 同时写了双方血线时，取我方那句
+  assert.deepEqual(healThresholdFrom('对手血量 50 以下时贴身。我血量低于 25 就撤。'), { value: 25, source: 'parsed' });
+});
+
+test('可疑时刻 heal-ignored：战术没写血线时，文案不得声称「你的战术写了」', () => {
+  const r = mk([
+    { t: 2, type: 'item_spawn', kind: 'medkit', x: 3, y: 1 },
+    { t: 5, type: 'hit', who: 1, target: 0, dmg: 70, hp: 30, x: 1, y: 1 },
+  ], { ticks: 40 });
+  const ms = detectMoments(MAP, r, { who: 0, strategy: '看到敌人就开火' }); // 没写血线
+  const hit = ms.find((m) => m.rule === 'heal-ignored');
+  assert.ok(hit);
+  assert.equal(hit.snapshot.thresholdSource, 'default');
+  assert.ok(!hit.why.includes('你的战术写了'), `不得编造玩家没说过的话：${hit.why}`);
+  assert.ok(hit.why.includes('默认'), hit.why);
+});
+
+test('可疑时刻 wasted-shots：跨度超过时间窗就不算「连续三发」', () => {
+  const far = [];
+  for (let k = 0; k < 3; k++) { // 每发间隔 40 拍 > wastedWindow(30)
+    far.push({ t: 3 + k * 40, type: 'fire', who: 0, x: 1, y: 1, dx: 1, dy: 0 });
+    far.push({ t: 4 + k * 40, type: 'bullet_end', who: 0, reason: 'wall', x: 8, y: 1 });
+  }
+  const r = mk(far, { ticks: 140 });
+  assert.equal(detectMoments(MAP, r, { who: 0 }).filter((m) => m.rule === 'wasted-shots').length, 0);
+});
+
+test('可疑时刻 wasted-shots：子弹飞出场外也重置计数（不是被挡）', () => {
+  const r = mk([
+    { t: 3, type: 'fire', who: 0, x: 1, y: 1, dx: 1, dy: 0 },
+    { t: 4, type: 'bullet_end', who: 0, reason: 'wall', x: 8, y: 1 },
+    { t: 6, type: 'fire', who: 0, x: 1, y: 1, dx: 1, dy: 0 },
+    { t: 7, type: 'bullet_end', who: 0, reason: 'out', x: 9, y: 1 },
+    { t: 9, type: 'fire', who: 0, x: 1, y: 1, dx: 1, dy: 0 },
+    { t: 10, type: 'bullet_end', who: 0, reason: 'wall', x: 8, y: 1 },
+    { t: 12, type: 'fire', who: 0, x: 1, y: 1, dx: 1, dy: 0 },
+    { t: 13, type: 'bullet_end', who: 0, reason: 'wall', x: 8, y: 1 },
+  ], { ticks: 30 });
+  assert.equal(detectMoments(MAP, r, { who: 0 }).filter((m) => m.rule === 'wasted-shots').length, 0);
+});
+
+test('状态重建：冻结/眩晕/时钟进状态（引擎不让你动的拍要能识别）', () => {
+  const r = mk([
+    { t: 5, type: 'freeze_hit', target: 0, duration: 8 },
+    { t: 20, type: 'stun_hit', target: 0, duration: 6 },
+    { t: 30, type: 'item_pick', who: 1, kind: 'clock', x: 4, y: 4 },
+  ], { ticks: 40 });
+  const st = replayStates(MAP, r);
+  assert.equal(st[5].frozen[0], 8);
+  assert.equal(st[9].frozen[0], 4);
+  assert.equal(st[14].frozen[0], 0);
+  assert.equal(st[20].stunned[0], 6);
+  assert.ok(st[30].frozen[0] > 0, '对手拾取时钟应冻住我方');
+});
+
+test('可疑时刻：被冻住的那几拍不算「缩圈了还不进圈」（引擎不让动 ≠ 不作为）', () => {
+  const evs = [{ t: 10, type: 'zone_shrink', ring: 1, x0: 2, y0: 2, x1: 6, y1: 6 }];
+  const free = mk(evs, { ticks: 30 });
+  assert.ok(detectMoments(MAP, free, { who: 0 }).some((m) => m.rule === 'zone-outward'), '不被冻时应标出');
+  const frozen = mk(evs.concat([{ t: 9, type: 'freeze_hit', target: 0, duration: 25 }]), { ticks: 30 });
+  assert.equal(detectMoments(MAP, frozen, { who: 0 }).filter((m) => m.rule === 'zone-outward').length, 0);
 });

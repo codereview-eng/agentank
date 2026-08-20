@@ -2401,9 +2401,12 @@ function batchFail(seedSet, e) {
   renderGauge();
 }
 
-function gaugeProgress(i) {
+function gaugeProgress(i, seedSet) {
   const sub = $id('wrSub');
-  if (sub) sub.textContent = T('ui.rvRunning', { i, n: BATCH_N });
+  if (!sub) return;
+  sub.textContent = seedSet
+    ? T('ui.rvRunningSet', { set: T(seedSet === 'holdout' ? 'ui.rvHoldout' : 'ui.rvTrain'), i, n: BATCH_N })
+    : T('ui.rvRunning', { i, n: BATCH_N });
 }
 
 async function runBatch(seedSet) {
@@ -2422,6 +2425,8 @@ async function runBatch(seedSet) {
       return { seed, seedStr: s, map: makeMap(seed), who, a: who === 0 ? mine : opp.spec, b: who === 0 ? opp.spec : mine };
     });
     let games;
+    let errCount = 0;
+    let errLast = '';
     if (EVAL_OK) { // 本地/开发版：主线程直跑
       const fn = compileScript(editorEl.value);
       const box = { count: 0, last: '' };
@@ -2436,14 +2441,25 @@ async function runBatch(seedSet) {
           botB: j.who === 0 ? opp.fn : guarded,
         });
         games.push(summarizeGame({ map: j.map, result: r, who: j.who, seed: j.seedStr, strategy }));
-        if (i % 3 === 2) { gaugeProgress(i + 1); await new Promise((res) => setTimeout(res, 0)); } // 分片，不卡界面
+        if (i % 3 === 2) { gaugeProgress(i + 1, seedSet); await new Promise((res) => setTimeout(res, 0)); } // 分片，不卡界面
       }
+      errCount = box.count;
+      errLast = box.last;
     } else if (SANDBOX_OK) { // 线上（禁 eval）：整批丢进 blob Worker，回「一局一行摘要」
-      gaugeProgress(0);
+      gaugeProgress(0, seedSet);
       const r = await sandboxRun({ type: 'batch', jobs, content: PACK, strategy }, { userCode: editorEl.value, oppCode: opp.code, timeoutMs: 120000 });
       games = r.games || [];
+      errCount = r.errCount || 0;
+      errLast = r.errLast || '';
     } else {
       throw new Error(T('err.cspEval'));
+    }
+    // 脚本每拍抛异常时 guardWrap 会返回 null，12 局全负 → 界面会显示一个「看起来正常的 0%」。
+    // 那是本机纪律点名的静默降级形态（无异常、无红字、功能消失），必须显式报错并丢弃这批数字。
+    if (errCount > 0) {
+      const err = new Error(T('ui.rvScriptErr', { n: errCount, msg: errLast || '(no message)' }));
+      err.name = 'ScriptRuntimeError';
+      throw err;
     }
     batchRuns[seedSet] = {
       games, agg: aggregateBatch(games), setup: batchSetup(seedSet, opp.style),
@@ -2460,6 +2476,14 @@ async function runBatch(seedSet) {
   }
 }
 
+// 基线 = 训练组 + 留出组各跑一遍。只跑训练组的话，采纳后的「留出组改前」永远是空，
+// 对比卡片就会不管涨没涨都印「本轮没有提升」——那是凭空成立的否定结论（评审 B1）。
+async function runBaseline() {
+  const a = await runBatch('train');
+  if (!a) return null; // 失败已在 gauge 明示，不继续跑第二组
+  return runBatch('holdout');
+}
+
 function renderGauge() {
   const num = $id('wrNum');
   const sub = $id('wrSub');
@@ -2473,7 +2497,7 @@ function renderGauge() {
   const run = batchRuns.train;
   const stale = run && run.key !== setupKey();
   if (runBtn) {
-    runBtn.textContent = run ? T('ui.rvRerun', { n: BATCH_N }) : T('ui.rvRun', { n: BATCH_N });
+    runBtn.textContent = run ? T('ui.rvRerunBoth', { n: BATCH_N }) : T('ui.rvRunBoth', { n: BATCH_N });
     runBtn.disabled = batchBusy;
   }
   if (fail) {
@@ -2494,7 +2518,9 @@ function renderGauge() {
   num.classList.remove('na');
   if (!batchBusy) sub.textContent = T('ui.rvWins', { w: run.agg.wins, n: run.agg.games });
   if (meta) {
-    meta.innerHTML = [run.setup.opponent, run.setup.skill, run.setup.mapKey, run.setup.tank]
+    const ho = batchRuns.holdout;
+    const hoText = ho && ho.agg.games ? T('ui.rvHoldoutLine', { p: pctText(ho.agg.winRate) }) : T('ui.rvHoldoutNone');
+    meta.innerHTML = [run.setup.opponent, run.setup.skill, run.setup.mapKey, run.setup.tank, hoText]
       .map((x) => `<span>${esc(String(x))}</span>`).join('');
   }
   if (bars) {
@@ -2560,32 +2586,40 @@ function renderReviewMain() {
   }
   const batch = currentBatch();
   const cmp = lastCompare ? renderCompare() : '';
-  if (!batch) { main.innerHTML = `${cmp}<div class="rpt">${esc(T('ui.rvNever'))}</div>`; return; }
+  if (!batch) {
+    const why = batchFailMsg ? T('ui.rvFail', { msg: batchFailMsg }) : T('ui.rvNever');
+    main.innerHTML = `${cmp}<div class="rpt">${esc(why)}</div>`;
+    return;
+  }
   main.innerHTML = `${cmp}<pre class="rpt">${esc(renderBatchText(batch).join('\n'))}</pre>${renderHistory()}`;
 }
 
 function renderCompare() {
   const c = lastCompare;
   if (!c) return '';
-  const card = (label, before, after) => {
+  const warn = (msg) => `<div class="wrfail" style="border-color:var(--warn);background:#2A2314;color:var(--warn);margin-bottom:12px">${esc(msg)}</div>`;
+  const card = (label, before, after) => { // 改前为空时只显示改后，不假装有对比
     const up = before != null && after != null && after > before;
     const flat = before != null && after != null && after <= before;
-    return `<div class="bacard ${up ? 'up' : flat ? 'flat' : ''}"><b>${pctText(before)} → ${pctText(after)}</b><span>${esc(label)}</span></div>`;
+    return `<div class="bacard ${up ? 'up' : flat ? 'flat' : ''}"><b>${pctText(before)} → ${pctText(after)}</b>`
+      + `<span>${esc(label)} · ${esc(T('ui.rvBefore'))}→${esc(T('ui.rvAfter'))}</span></div>`;
   };
-  const gained = c.after.holdout != null && c.before.holdout != null && c.after.holdout > c.before.holdout;
+  const cards = `<div class="ba">${card(T('ui.rvTrain'), c.before.train, c.after.train)}${card(T('ui.rvHoldout'), c.before.holdout, c.after.holdout)}</div>`;
+  if (c.setupChanged) return `${cards}${warn(T('ui.rvSetupChanged'))}`;
+  if (c.before.holdout == null || c.before.train == null) return `${cards}${warn(T('ui.rvNoBaseline'))}`;
+  const gained = c.after.holdout != null && c.after.holdout > c.before.holdout;
   const note = gained
     ? T('ui.rvGain', { before: pctText(c.before.holdout), after: pctText(c.after.holdout) })
     : T('ui.rvNoGain', {
       a: `${pctText(c.before.train)}→${pctText(c.after.train)}`,
       b: `${pctText(c.before.holdout)}→${pctText(c.after.holdout)}`,
     });
-  return `<div class="ba">${card(T('ui.rvTrain'), c.before.train, c.after.train)}${card(T('ui.rvHoldout'), c.before.holdout, c.after.holdout)}</div>`
-    + `<div class="wrhint" style="margin-bottom:12px;color:${gained ? 'var(--ok)' : 'var(--warn)'}">${esc(note)}</div>`;
+  return `${cards}<div class="wrhint" style="margin-bottom:12px;color:${gained ? 'var(--ok)' : 'var(--warn)'}">${esc(note)}</div>`;
 }
 
 function renderHistory() {
   if (!reviewHistory.length) return '';
-  const rows = reviewHistory.map((h) => `<tr><td>${esc(T('ui.rvRound', { n: h.round }))}</td>`
+  const rows = reviewHistory.map((h, i) => `<tr><td>${esc(i === reviewHistory.length - 1 ? T('ui.rvCurrent') : T('ui.rvRound', { n: h.round }))}</td>`
     + `<td>${pctText(h.after.train)}</td><td>${pctText(h.after.holdout)}</td></tr>`).join('');
   return `<h4 style="font-size:12px;color:var(--dim);letter-spacing:1px;margin:16px 0 6px">${esc(T('ui.rvHist'))}</h4>`
     + `<table><thead><tr><th>#</th><th>${esc(T('ui.rvTrain'))}</th><th>${esc(T('ui.rvHoldout'))}</th></tr></thead><tbody>${rows}</tbody></table>`;
@@ -2615,7 +2649,7 @@ function renderReviewSide() {
       <div class="cmpcol new"><h5>${esc(T('ui.rvNew'))}</h5>${esc(reviewProposal.strategy)}</div>
     </div>`);
     parts.push(`<div style="display:flex;gap:6px;margin-top:8px">
-      <button class="btn ghost" id="rvAdoptBtn" style="padding:5px 12px;font-size:11px;border-color:#4C6B22;color:var(--p1)">${esc(T('ui.rvAdopt'))}</button>
+      <button class="btn ghost" id="rvAdoptBtn"${batchBusy ? ' disabled' : ''} style="padding:5px 12px;font-size:11px;border-color:#4C6B22;color:var(--p1)">${esc(T('ui.rvAdopt'))}</button>
       <button class="btn ghost" id="rvDropBtn" style="padding:5px 12px;font-size:11px">${esc(T('ui.rvDiscard'))}</button>
     </div>`);
   }
@@ -2716,19 +2750,39 @@ async function runAiReview() {
 // 只改战术文字而不重生成代码，胜率不会有任何变化——那样的「对比」是自欺，所以这里必须联动生成。
 async function adoptProposal() {
   if (!reviewProposal || !strategyEl) return;
+  if (batchBusy) { reviewMsg(T('ui.rvBusy'), true); renderReview(); return; } // 跑批期间采纳会读到上一轮旧数字
   const before = {
     train: batchRuns.train ? batchRuns.train.agg.winRate : null,
     holdout: batchRuns.holdout ? batchRuns.holdout.agg.winRate : null,
   };
+  const beforeKey = setupKey();
   strategyEl.value = reviewProposal.strategy;
   saveDraft();
   reviewProposal = null;
   reviewMsg(T('ui.rvAdopted'));
   renderReview();
   const codeBefore = editorEl.value;
-  if (sdkState() === 'ready') await generateScript();
-  if (editorEl.value === codeBefore) { // 代码没更新：如实说明，不跑一个必然无差异的「对比」
-    reviewMsg(T('ui.rvBadReply'), true);
+  const logAdopt = (outcome, reason) => setGenLog(buildGenLog({
+    outcome, reason, env: genEnv(), strategy: strategyEl.value, skill: userSkill(), attempts: [],
+  }));
+  if (sdkState() !== 'ready') { // 态①：没有 AI 通道 —— 战术已写入，但代码还是旧版，胜率不可能变
+    reviewMsg(T('ui.rvAdoptNoSdk'), true);
+    logAdopt('adopt-no-sdk', `sdk=${sdkState()} strategy written, code unchanged`);
+    renderReview();
+    return;
+  }
+  try {
+    await generateScript();
+  } catch (e) { // 态②：重生成失败 —— 带上异常名与内容，别只说「失败了」
+    const msg = `${(e && e.name) || 'Error'}: ${String((e && e.message) || e)}`;
+    reviewMsg(T('ui.rvAdoptGenFail', { msg }), true);
+    logAdopt('adopt-gen-failed', msg);
+    renderReview();
+    return;
+  }
+  if (editorEl.value === codeBefore) { // 态③：生成跑了但代码没变 —— 不做一个必然无差异的对比
+    reviewMsg(T('ui.rvAdoptNoChange'), true);
+    logAdopt('adopt-code-unchanged', 'generateScript finished but editor content identical');
     renderReview();
     return;
   }
@@ -2738,7 +2792,7 @@ async function adoptProposal() {
     train: batchRuns.train ? batchRuns.train.agg.winRate : null,
     holdout: batchRuns.holdout ? batchRuns.holdout.agg.winRate : null,
   };
-  lastCompare = { before, after };
+  lastCompare = { before, after, setupChanged: beforeKey !== setupKey() };
   reviewHistory = reviewHistory.concat([{ round: reviewHistory.length + 1, before, after }]);
   reviewMode = 'batch';
   reviewMsg('');
@@ -2751,7 +2805,7 @@ $id('battleJsonBtn')?.addEventListener('click', () => {
   downloadText(battleReportFilename(new Date(), match.seedStr), JSON.stringify(rep, null, 2), 'application/json');
 });
 $id('battleReviewBtn')?.addEventListener('click', () => openReview('single'));
-$id('wrRunBtn')?.addEventListener('click', () => { runBatch('train'); });
+$id('wrRunBtn')?.addEventListener('click', () => { runBaseline(); });
 $id('wrReviewBtn')?.addEventListener('click', () => openReview('batch'));
 $id('reviewCloseBtn')?.addEventListener('click', closeOverlay);
 $id('reviewDlTextBtn')?.addEventListener('click', () => {

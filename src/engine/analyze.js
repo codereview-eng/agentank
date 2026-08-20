@@ -60,6 +60,7 @@ export const MOMENT_TUNING = {
   healGrace: 12,      // 多少拍内真去捡了就不算
   healDefault: 40,    // 战术里读不到阈值时的默认血线
   wastedStreak: 3,    // 连续几发被挡算白开炮
+  wastedWindow: 30,   // 「连续」的时间窗（拍）：跨度超过它就不是同一段乱开火
   whiffWindow: 3,     // 技能施放后多少拍内没命中算空放
   staticGap: 15,      // 两次挨弹间隔在此之内才算「同一段挨打」
   meleeGap: 20,       // 血量落后多少算劣势
@@ -67,16 +68,25 @@ export const MOMENT_TUNING = {
   maxMoments: 12,     // 单局最多留几条（喂 AI 的预算上限）
 };
 
-// 从玩家自己写的战术文字里读出血线：写了就按他写的，读不到用默认值。
-// 为什么必须解析：「该回血没回」的价值在于**指出行为与他自己写的战术不符**。
+// 从玩家自己写的战术文字里读出血线：写了就按他写的，读不到就明确标成 default。
+// 为什么必须回传 source：这条规则的说法是「行为与你自己写的战术不符」——
+// 如果血线其实是我们的默认值，却说成「你的战术写了…」，那就是在事实层给 AI 编了一句玩家没说过的话。
 export function healThresholdFrom(strategy) {
-  const s = String(strategy || '');
-  const m = s.match(/(?:血|hp|HP)[^0-9%]{0,12}?(\d{1,3})\s*(?:%|以下|以内)?/);
-  if (m) {
-    const n = Number(m[1]);
-    if (n > 0 && n <= RULES.hp) return n;
+  const raw = String(strategy || '');
+  // 「对手血量 50 以下时贴身」这类句子说的是敌方血量，不是我的回血线：整句剔除再解析
+  const mine = raw.replace(/[^。；;.\n]*(?:对手|敌方|敌人|对方|敌|他)[^。；;.\n]*/g, ' ');
+  const pats = [
+    /(?:血量?|hp|HP)\s*[<≤]?[^0-9%\n]{0,12}?(\d{1,3})\s*(?:%|以下|以内|以上)?/,
+    /(\d{1,3})\s*%?\s*血/,
+  ];
+  for (const re of pats) {
+    const m = mine.match(re);
+    if (m) {
+      const n = Number(m[1]);
+      if (n > 0 && n <= RULES.hp) return { value: n, source: 'parsed' };
+    }
   }
-  return MOMENT_TUNING.healDefault;
+  return { value: MOMENT_TUNING.healDefault, source: 'default' };
 }
 
 function azSkillCdOf(name, pack) {
@@ -104,6 +114,8 @@ export function replayStates(map, result) {
   const hp = [RULES.hp, RULES.hp];
   const held = [0, 0];
   const cd = [{ fire: 0, skill: 0, bomb: 0 }, { fire: 0, skill: 0, bomb: 0 }];
+  const frozen = [0, 0];  // 冰冻/时钟：完全不能动（engine.js 里动作直接作废）
+  const stunned = [0, 0]; // 眩晕：方向被随机反转
   const dead = [false, false];
   const skills = Array.isArray(result.skills) ? result.skills.slice() : [];
   let field = map.stars.slice(0, RULES.maxFieldStars ?? map.stars.length).map((s) => ({ x: s.x, y: s.y }));
@@ -113,7 +125,11 @@ export function replayStates(map, result) {
   const states = [];
 
   for (let t = 0; t < ticks; t++) {
-    for (const i of [0, 1]) for (const k of ['fire', 'skill', 'bomb']) if (cd[i][k] > 0) cd[i][k]--;
+    for (const i of [0, 1]) {
+      for (const k of ['fire', 'skill', 'bomb']) if (cd[i][k] > 0) cd[i][k]--;
+      if (frozen[i] > 0) frozen[i]--;
+      if (stunned[i] > 0) stunned[i]--;
+    }
     for (const e of byTick[t]) {
       switch (e.type) {
         case 'move':
@@ -130,6 +146,7 @@ export function replayStates(map, result) {
         case 'item_pick':
           items = items.filter((s) => !(s.x === e.x && s.y === e.y));
           if (e.kind === 'medkit' && e.hp != null) hp[e.who] = e.hp;
+          if (e.kind === 'clock') frozen[1 - e.who] = (RULES.items.clock && RULES.items.clock.dur) || 6;
           break;
         case 'item_gone': items = items.filter((s) => !(s.x === e.x && s.y === e.y)); break;
         case 'zone_shrink':
@@ -148,6 +165,8 @@ export function replayStates(map, result) {
           cd[e.who].skill = azSkillCdOf(e.name, result.content);
           if (e.name === 'teleport' && e.x != null) pos[e.who] = { x: e.x, y: e.y };
           break;
+        case 'freeze_hit': frozen[e.target] = e.duration; break;
+        case 'stun_hit': stunned[e.target] = e.duration; break;
         case 'death': dead[e.who] = true; break;
         default: break;
       }
@@ -158,6 +177,8 @@ export function replayStates(map, result) {
       hp: [...hp],
       held: [...held],
       cd: cd.map((c) => ({ ...c })),
+      frozen: [...frozen],
+      stunned: [...stunned],
       ring,
       zone: zone ? { ...zone } : null,
       field: field.map((s) => ({ ...s })),
@@ -282,7 +303,8 @@ export function detectMoments(map, result, opts = {}) {
   let runStart = -1; let runBestDist = Infinity; let flaggedRing = -1;
   for (let t = 0; t < ticks; t++) {
     const st = states[t];
-    if (!st.zone || st.ring <= 0 || st.dead[who]) { runStart = -1; runBestDist = Infinity; continue; }
+    // 冻结期是「引擎不让你动」，不是「你不作为」：整段作废重新计数
+    if (!st.zone || st.ring <= 0 || st.dead[who] || st.frozen[who] > 0) { runStart = -1; runBestDist = Infinity; continue; }
     const outside = !azInZone(st.zone, st.pos[who]);
     const d = azMan(st.pos[who], azZoneCenter(st.zone));
     if (!outside) { runStart = -1; runBestDist = Infinity; continue; }
@@ -307,7 +329,7 @@ export function detectMoments(map, result, opts = {}) {
     const dist = azMan(st.pos[who], st.pos[foe]);
     const inBand = dist >= T.brawlBand[0] && dist <= T.brawlBand[1];
     const cooling = st.cd[who].skill > 0;
-    if (st.dead[who] || st.dead[foe] || !inBand || !cooling) { brawlStart = -1; brawlFired = false; continue; }
+    if (st.dead[who] || st.dead[foe] || !inBand || !cooling || st.frozen[who] > 0) { brawlStart = -1; brawlFired = false; continue; }
     if (brawlStart < 0) { brawlStart = t; brawlFired = false; }
     if (byTick[t].some((e) => e.type === 'fire' && e.who === who)) brawlFired = true;
     if (brawlFired && t - brawlStart + 1 >= T.brawlRun && t - lastBrawlFlag >= 20) {
@@ -322,7 +344,8 @@ export function detectMoments(map, result, opts = {}) {
   }
 
   // 4 heal-ignored：血低于「你自己写的」阈值，可达急救包却不去
-  const thr = healThresholdFrom(strategy);
+  const thrInfo = healThresholdFrom(strategy);
+  const thr = thrInfo.value;
   let lastHealFlag = -99;
   for (let t = 0; t < ticks; t++) {
     const st = states[t];
@@ -344,19 +367,24 @@ export function detectMoments(map, result, opts = {}) {
     out.push(azMkMoment('heal-ignored', t, {
       hp: st.hp[who],
       threshold: thr,
+      thresholdSource: thrInfo.source, // parsed=战术里写了；default=战术没写，按默认判定
       medkit: kit,
       pos: { ...st.pos[who] },
-    }, `血只剩 ${st.hp[who]}，${kit.dist} 格外就有急救包却没去——你的战术写了血量低于 ${thr} 要回血，实际行为与战术不符`));
+    }, thrInfo.source === 'parsed'
+      ? `血只剩 ${st.hp[who]}，${kit.dist} 格外就有急救包却没去——你的战术写了血量低于 ${thr} 要回血，实际行为与战术不符`
+      : `血只剩 ${st.hp[who]}，${kit.dist} 格外就有急救包却没去——战术里没写血线，这里按默认 ${thr} 判定`));
   }
 
   // 5 wasted-shots：连续被墙/土堆挡下
   let streak = 0;
+  let streakStart = -99;
   for (let t = 0; t < ticks; t++) {
     for (const e of byTick[t]) {
       if (e.type === 'hit' && e.who === who) { streak = 0; continue; }
       if (e.type !== 'bullet_end' || e.who !== who) continue;
       if (e.reason === 'wall' || e.reason === 'mound') {
-        streak++;
+        // 「连续」必须有时间窗：跨 45 拍的三发不是同一段乱开火（实测 median 13 / max 45）
+        if (streak === 0 || t - streakStart > T.wastedWindow) { streak = 1; streakStart = t; } else streak++;
         if (streak >= T.wastedStreak) {
           out.push(azMkMoment('wasted-shots', t, {
             streak,
@@ -365,7 +393,7 @@ export function detectMoments(map, result, opts = {}) {
           }, `连续 ${streak} 发子弹被${e.reason === 'wall' ? '墙' : '土堆'}挡下——暴露位置又白等冷却`));
           streak = 0;
         }
-      } else if (e.reason === 'hit') streak = 0;
+      } else streak = 0; // 命中 / 飞出场外都不算「被挡」，重新计数
     }
   }
 
