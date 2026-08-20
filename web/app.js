@@ -1760,6 +1760,12 @@ function setPlaying(p) {
   playBtn.textContent = p ? '⏸' : '▶';
 }
 
+// 没开战就藏起「复盘这一局 / ⬇ JSON」——这两个入口在没有战报时点了也没意义
+function syncLogActs() {
+  const el = $id('logActs');
+  if (el) el.hidden = !match;
+}
+
 function renderLogList() {
   logEl.innerHTML = '';
   logRows = [];
@@ -1932,6 +1938,7 @@ async function startBattle() {
   match = { seedStr, seed, map, result, names, frames: tl.frames, shots: tl.shots, sparks: tl.sparks, entries: buildLog(result, names, seedStr) };
   setupCanvas(map);
   renderLogList();
+  syncLogActs();
   updateVerdict(box);
   updateFooter();
   cur = 0;
@@ -2510,6 +2517,9 @@ function renderGauge() {
     runBtn.textContent = run ? T('ui.rvRerunBoth', { n: BATCH_N }) : T('ui.rvRunBoth', { n: BATCH_N });
     runBtn.disabled = batchBusy;
   }
+  // 还没跑基线时「复盘」点开也只是空面板：禁用而不隐藏（旁边就是「跑基线」，隐藏会让这行布局跳动）
+  const rvBtn = $id('wrReviewBtn');
+  if (rvBtn) rvBtn.disabled = batchBusy || !(run && run.agg.games);
   if (fail) {
     fail.hidden = !batchFailMsg;
     if (batchFailMsg) fail.innerHTML = `${esc(T('ui.rvFail', { msg: '' }))}<div class="d">${esc(batchFailMsg)}</div><div class="d">${esc(T('ui.rvFailNote'))}</div>`;

@@ -199,6 +199,7 @@ footer .mono{color:var(--muted)}
 .gcard .ops .btn{padding:4px 10px; font-size:11px; letter-spacing:0}
 /* ── 战报下载 + AI 复盘（胜率标尺区 / 复盘抽屉） ── */
 .logacts{display:flex; gap:6px; padding:0 14px 10px; flex:none}
+.logacts[hidden]{display:none} /* 作者样式的 display 会盖掉 hidden 属性，必须显式补（同 .fl 的坑） */
 .logacts .btn{padding:5px 10px; font-size:11px; letter-spacing:0}
 .wrbox{padding:10px 14px 12px; display:flex; flex-direction:column; gap:9px; flex:none}
 .wrhead{display:flex; align-items:baseline; gap:8px}
@@ -390,7 +391,7 @@ footer .mono{color:var(--muted)}
   <section class="panel">
     <h2><span class="dot"></span><span data-i18n="ui.liveLog">实时战报</span></h2>
     <div class="log" id="log"><div class="ln on"><span class="t mono">t=000</span><span data-i18n="ui.waiting">等待开战…</span></div></div>
-    <div class="logacts">
+    <div class="logacts" id="logActs" hidden>
       <button class="btn ghost" id="battleReviewBtn" data-i18n="ui.rvBattleReview" style="flex:1">🔍 复盘这一局</button>
       <button class="btn ghost" id="battleJsonBtn" data-i18n="ui.rvBattleJson" style="flex:none">⬇ JSON</button>
     </div>
@@ -6816,6 +6817,12 @@ function setPlaying(p) {
   playBtn.textContent = p ? '⏸' : '▶';
 }
 
+// 没开战就藏起「复盘这一局 / ⬇ JSON」——这两个入口在没有战报时点了也没意义
+function syncLogActs() {
+  const el = $id('logActs');
+  if (el) el.hidden = !match;
+}
+
 function renderLogList() {
   logEl.innerHTML = '';
   logRows = [];
@@ -6988,6 +6995,7 @@ async function startBattle() {
   match = { seedStr, seed, map, result, names, frames: tl.frames, shots: tl.shots, sparks: tl.sparks, entries: buildLog(result, names, seedStr) };
   setupCanvas(map);
   renderLogList();
+  syncLogActs();
   updateVerdict(box);
   updateFooter();
   cur = 0;
@@ -7566,6 +7574,9 @@ function renderGauge() {
     runBtn.textContent = run ? T('ui.rvRerunBoth', { n: BATCH_N }) : T('ui.rvRunBoth', { n: BATCH_N });
     runBtn.disabled = batchBusy;
   }
+  // 还没跑基线时「复盘」点开也只是空面板：禁用而不隐藏（旁边就是「跑基线」，隐藏会让这行布局跳动）
+  const rvBtn = $id('wrReviewBtn');
+  if (rvBtn) rvBtn.disabled = batchBusy || !(run && run.agg.games);
   if (fail) {
     fail.hidden = !batchFailMsg;
     if (batchFailMsg) fail.innerHTML = `${esc(T('ui.rvFail', { msg: '' }))}<div class="d">${esc(batchFailMsg)}</div><div class="d">${esc(T('ui.rvFailNote'))}</div>`;
