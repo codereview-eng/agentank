@@ -3244,6 +3244,12 @@ const LOCALES = {
       itVerifyHoldout: '▶ 验一下留出组（12 局）',
       itHoldoutRes: '留出组 {p}（原版 {b}）',
       itDlLog: '⬇ 下载迭代记录',
+      itSetupChanged: '迭代中途对局设置被改了（对手/技能/地图/坦克），已中止 —— 不同设置下的胜率没法比',
+      itRestore: '↩ 回到迭代前的版本',
+      itRestored: '已恢复到迭代前的战术与代码',
+      itRestoreHint: '检测到上次迭代前的版本还留着，可一键回退',
+      itFakeChip: '假 AI（调试）',
+      itStopping: '正在停止…（跑完这一步就收尾）',
       rvNoFlag: '本局没标出可疑操作',
       rvTitleSingle: '复盘这一局',
       rvTitleBatch: '战术复盘',
@@ -3635,6 +3641,12 @@ function decide(api) {
       itVerifyHoldout: '▶ Verify on hold-out (12)',
       itHoldoutRes: 'hold-out {p} (original {b})',
       itDlLog: '⬇ Download iteration log',
+      itSetupChanged: 'Match setup changed mid-iteration (rival/skill/map/tank) — aborted, win rates across setups are not comparable',
+      itRestore: '↩ Restore the pre-iteration version',
+      itRestored: 'Restored the tactics and code from before the iteration',
+      itRestoreHint: 'A pre-iteration snapshot is still around — one click to roll back',
+      itFakeChip: 'fake AI (debug)',
+      itStopping: 'stopping… (wrapping up the current step)',
       rvNoFlag: 'no suspicious moves flagged',
       rvTitleSingle: 'Review this battle',
       rvTitleBatch: 'Tactics review',
@@ -4186,7 +4198,8 @@ function buildIterationLog(o) {
     baseline: i.baseline ? clean(i.baseline) : null,
     candidates: cands.map(clean),
     applied: i.applied ? { round: i.applied.round ?? null, trainWinRate: typeof i.applied.trainWinRate === 'number' ? i.applied.trainWinRate : null } : null,
-    stopped: String(i.stopped || 'done'), // done | aborted | no-sdk | error
+    stopped: String(i.stopped || 'done'), // done | aborted | setup-changed | no-sdk | error
+    fakeLlm: i.fakeLlm === true, // true = 用调试假 AI 跑的，结果不代表真实模型（产物自证来源）
     stats: { validRounds: valid, failedRounds: cands.length - valid },
   };
 }
@@ -7101,6 +7114,9 @@ const codeBox = $id('codeBox');
 let llmCtl = null; // null=SDK 不可用；{needLogin,login}=未登录；{chat}=可生成
 const genMsg = (msg, bad) => { if (genMsgEl) { genMsgEl.textContent = msg || ''; genMsgEl.style.color = bad ? 'var(--bad)' : 'var(--dim)'; } };
 function llmConnect(ctl) { // play.js bootPlay 回调：按登录态切换生成按钮语义
+  // 调试假 AI 一旦启用就硬短路真 SDK 注入：否则登录态下 bootPlay 会把假 AI 顶掉，
+  // 页面却还留着「假 AI」横幅 —— 变成「标着假、烧真配额」的误导（评审 B5）。
+  if (FAKE_LLM && llmCtl) return;
   llmCtl = ctl;
   if (genBtn && ctl && ctl.needLogin) genBtn.textContent = T('play.genLoginBtn');
 }
@@ -7203,7 +7219,7 @@ async function generateScript(genOpts) {
       }
       editorEl.value = code; // 只写编辑器，不自动保存/开战：玩家确认后自行「保存」「开战」
       refreshSkillHint();
-      saveDraft();
+      if (!gOpt.noDraft) saveDraft(); // 迭代期间不写草稿：中间版本会盖掉玩家原版（评审 B1）
       if (CUSTOM_SCRIPT_OK) {
         genMsg(T('play.genDone'));
         setGenLog(null);
@@ -7699,7 +7715,11 @@ function renderReviewSide() {
     $id('itRunBtn')?.addEventListener('click', runIteration);
     $id('itHoldoutBtn')?.addEventListener('click', verifyIterHoldout);
     $id('itLogBtn')?.addEventListener('click', downloadIterLog);
-    $id('itRounds')?.addEventListener('change', () => renderReviewSide());
+    $id('itRestoreBtn')?.addEventListener('click', restoreIterBase);
+    $id('itRounds')?.addEventListener('change', (ev) => { // 先落模块级状态再重渲染，否则选择会被打回默认
+      iterRoundsChoice = Number(ev.target.value) || ITER_ROUND_CHOICES[0];
+      renderReviewSide();
+    });
   }
   const ai = $id('rvAiBtn');
   if (ai) ai.addEventListener('click', runAiReview);
@@ -7877,8 +7897,9 @@ function makeFakeLlm() {
   ];
   return {
     models: async () => ({ models: [{ id: 'fake-model-a' }, { id: 'fake-model-b' }], default_model: 'fake-model-a' }),
-    chat: async (prompt) => {
+    chat: async (prompt, o) => {
       await new Promise((r) => setTimeout(r, 30));
+      if (o && o.signal && o.signal.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
       if (String(prompt).includes('脚本生成器')) { // 生成代码
         const code = VARIANTS[genCall++ % VARIANTS.length];
         return { text: '```js\n' + code + '\n```' };
@@ -7899,13 +7920,37 @@ function makeFakeLlm() {
 // 留出组验证做成事后可选按钮，不占迭代时间。
 // 单轮复盘之所以会让胜率变低，是因为流程里没有任何一步检验 AI 的建议——迭代补的正是择优压力。
 const ITER_ROUND_CHOICES = [3, 5, 10];
+const ITERBASE_KEY = 'agentank-iterbase'; // 迭代前的原版快照（崩溃/关页也能回退，草稿会被中间版覆盖）
+let iterRoundsChoice = ITER_ROUND_CHOICES[0]; // 轮数选择必须有模块级状态：只靠 DOM 会在重渲染时被打回默认
 let iterState = null;
 let iterModels = null;   // {models:[{id}], default_model} | {error:'...'}
 let iterMsgText = '';
 let iterMsgBad = false;
 const iterMsg = (t, bad) => { iterMsgText = t || ''; iterMsgBad = !!bad; };
 const iterModel = () => (($id('itModel') || {}).value || '');
-const iterRounds = () => Number(($id('itRounds') || {}).value) || ITER_ROUND_CHOICES[0];
+const iterRounds = () => iterRoundsChoice;
+
+function writeIterBase() { // 迭代前留一份原版，独立于草稿（草稿会被每轮中间版覆盖）
+  try {
+    localStorage.setItem(ITERBASE_KEY, JSON.stringify({
+      strategy: strategyEl ? strategyEl.value : '', code: editorEl.value,
+      tank: myTankLabel(), ts: Date.now(),
+    }));
+  } catch { /* 存不下就算了，不阻断迭代 */ }
+}
+function readIterBase() { try { return JSON.parse(localStorage.getItem(ITERBASE_KEY) || 'null'); } catch { return null; } }
+function clearIterBase() { try { localStorage.removeItem(ITERBASE_KEY); } catch { /* 忽略 */ } }
+function restoreIterBase() {
+  const b = readIterBase();
+  if (!b) return;
+  if (strategyEl) strategyEl.value = String(b.strategy || '');
+  editorEl.value = String(b.code || '');
+  saveDraft();
+  refreshSkillHint();
+  clearIterBase();
+  iterMsg(T('ui.itRestored'));
+  renderReview();
+}
 
 async function loadIterModels() {
   if (iterModels || !llmCtl || typeof llmCtl.models !== 'function') return;
@@ -7921,7 +7966,11 @@ async function loadIterModels() {
 function renderIterPanel() {
   const st = sdkState();
   const running = !!(iterState && iterState.running);
-  const parts = [`<h4>${esc(T('ui.itTitle'))}</h4>`];
+  const parts = [`<h4>${esc(T('ui.itTitle'))}${FAKE_LLM ? ` <span class="fl">${esc(T('ui.itFakeChip'))}</span>` : ''}</h4>`];
+  if (readIterBase()) { // 崩溃/关页后也能回退到迭代前那版
+    parts.push(`<div class="wrhint">${esc(T('ui.itRestoreHint'))}</div>`);
+    parts.push(`<button class="btn ghost" id="itRestoreBtn" style="padding:5px 12px;font-size:11px">${esc(T('ui.itRestore'))}</button>`);
+  }
   if (st === 'absent') { parts.push(`<div class="wrhint">${esc(T('ui.rvNoSdk'))}</div>`); return parts.join(''); }
   if (st === 'need-login') { parts.push(`<div class="wrhint">${esc(T('ui.rvNeedLogin'))}</div>`); return parts.join(''); }
 
@@ -7932,7 +7981,7 @@ function renderIterPanel() {
   parts.push(`<label style="width:auto;display:flex;gap:6px;align-items:center;font-size:11px">${esc(T('ui.itModel'))}
     <select id="itModel" style="flex:1;font-size:11px;padding:3px 6px"${running ? ' disabled' : ''}>${opts}</select></label>`);
   if (iterModels && iterModels.error) parts.push(`<div class="wrhint" style="color:var(--warn)">${esc(T('ui.itModelsFail', { msg: iterModels.error }))}</div>`);
-  const rounds = iterState ? iterState.rounds : ITER_ROUND_CHOICES[0];
+  const rounds = iterState && iterState.running ? iterState.rounds : iterRoundsChoice;
   parts.push(`<label style="width:auto;display:flex;gap:6px;align-items:center;font-size:11px">${esc(T('ui.itRounds'))}
     <select id="itRounds" style="flex:1;font-size:11px;padding:3px 6px"${running ? ' disabled' : ''}>${
     ITER_ROUND_CHOICES.map((n) => `<option value="${n}"${n === rounds ? ' selected' : ''}>${n}</option>`).join('')}</select></label>`);
@@ -7940,9 +7989,8 @@ function renderIterPanel() {
   parts.push(`<div class="wrhint">${esc(T('ui.itCost', { min: Math.max(1, Math.round(cost.estMs / 60000)), ai: cost.aiCalls, m: cost.matches }))}</div>`);
   parts.push(`<button class="btn ghost" id="itRunBtn" style="padding:5px 12px;font-size:11px;${running ? '' : 'border-color:var(--accent);color:var(--accent)'}">${
     esc(running ? T('ui.itStop') : T('ui.itStart'))}</button>`);
-  if (running) {
-    parts.push(`<div class="wrhint" style="color:var(--accent)">${esc(T('ui.itRunning', { r: iterState.round, n: iterState.rounds, step: iterState.step || '' }))}</div>`);
-  }
+  parts.push(`<div class="wrhint" id="itProgress" style="color:var(--accent)">${
+    running ? esc(T('ui.itRunning', { r: iterState.round, n: iterState.rounds, step: iterState.step || '' })) : ''}</div>`);
   if (iterMsgText) parts.push(`<div class="wrhint" style="color:${iterMsgBad ? 'var(--warn)' : 'var(--ok)'}">${esc(iterMsgText)}</div>`);
   if (iterState && iterState.candidates.length > 1 && !running) {
     parts.push(`<button class="btn ghost" id="itHoldoutBtn" style="padding:5px 12px;font-size:11px">${esc(T('ui.itVerifyHoldout'))}</button>`);
@@ -7968,10 +8016,22 @@ function renderIterTable() {
     + `<table><thead><tr><th>${esc(T('ui.itTblRound'))}</th><th>${esc(T('ui.itTblTrain'))}</th><th>${esc(T('ui.itTblNote'))}</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
+// 运行中不整块重建侧栏：否则「停止」按钮的 DOM 每步被替换，用户（和自动化）经常点不中。
+function iterTick() {
+  const prog = $id('itProgress');
+  if (!prog || !iterState) { renderReview(); return; }
+  prog.textContent = T('ui.itRunning', { r: iterState.round, n: iterState.rounds, step: iterState.step || '' });
+  const btn = $id('itRunBtn');
+  if (btn) btn.textContent = T('ui.itStop');
+  renderReviewMain(); // 候选表随轮次更新（main 重建不影响侧栏按钮）
+}
+
 async function runIteration() {
   if (iterState && iterState.running) { // 按钮兼作停止
     iterState.abort = true;
     if (iterState.ctl) { try { iterState.ctl.abort(); } catch { /* 忽略 */ } }
+    iterState.step = T('ui.itStopping');
+    iterTick(); // 立刻给反馈，否则用户以为没点上又点一次
     return;
   }
   const st = sdkState();
@@ -7982,16 +8042,19 @@ async function runIteration() {
 
   const rounds = iterRounds();
   const model = iterModel();
+  const lockKey = setupKey(); // 迭代要跑几分钟，期间对手/技能/地图可点：跨设置的胜率不能放进同一个候选池比较
+  writeIterBase();
   const baseline = {
     round: 0, isBaseline: true, valid: true,
     strategy: strategyEl.value, code: editorEl.value, codeHash: codeHashOf(editorEl.value),
     trainWinRate: batchRuns.train.agg.winRate,
     holdoutWinRate: batchRuns.holdout ? batchRuns.holdout.agg.winRate : null,
     batch: currentBatch(),
+    batchKey: batchRuns.train.key,
   };
   iterState = {
     running: true, rounds, model, round: 0, step: '', candidates: [baseline], baseline,
-    abort: false, stopped: 'done', applied: null, at: new Date().toISOString(),
+    abort: false, stopped: 'done', applied: null, at: new Date().toISOString(), lockKey, fake: FAKE_LLM,
     ctl: (typeof AbortController === 'function' ? new AbortController() : null),
   };
   iterMsg('');
@@ -7999,13 +8062,14 @@ async function runIteration() {
   try {
     for (let r = 1; r <= rounds; r++) {
       if (iterState.abort) { iterState.stopped = 'aborted'; break; }
+      if (setupKey() !== lockKey) { iterState.stopped = 'setup-changed'; break; } // 中途改了设置：立刻停，别拿两套设置比
       iterState.round = r;
       const base = nextRoundBase(iterState.candidates) || baseline; // 爬山：从当前最优起跳
       strategyEl.value = base.strategy;
       editorEl.value = base.code;
       const cand = { round: r, model: model || 'default', valid: false };
       iterState.step = T('ui.itStepReview');
-      renderReview();
+      iterTick();
       let parsed = null;
       try {
         const prompt = buildReviewPrompt({
@@ -8014,7 +8078,8 @@ async function runIteration() {
         });
         const { text } = await llmCtl.chat(prompt, { model: model || undefined, signal: iterState.ctl ? iterState.ctl.signal : undefined });
         parsed = parseReviewReply(text);
-        if (!parsed) cand.invalidReason = 'review reply unparsable';
+        // 「解析不出」必须带载荷，否则日志里判不出是被截断、给了散文、还是缺字段（评审 B6）
+        if (!parsed) cand.invalidReason = `review unparsable: chars=${String(text || '').length} head=${String(text || '').slice(0, 200)}`;
       } catch (e) {
         cand.invalidReason = `review ${(e && e.name) || 'Error'}: ${String((e && (e.hint || e.message)) || e)}`;
       }
@@ -8022,9 +8087,10 @@ async function runIteration() {
       cand.strategy = parsed.strategy;
       cand.changes = parsed.changes;
       iterState.step = T('ui.itStepGen');
-      renderReview();
+      iterTick();
       strategyEl.value = parsed.strategy;
-      const gen = await generateScript({ model: model || undefined, signal: iterState.ctl ? iterState.ctl.signal : undefined });
+      // noDraft：迭代期间不许把中间版本写进草稿，否则崩溃/关页后玩家原版不可恢复（评审 B1）
+      const gen = await generateScript({ model: model || undefined, signal: iterState.ctl ? iterState.ctl.signal : undefined, noDraft: true });
       if (!gen || !gen.ok) {
         cand.invalidReason = `gen ${(gen && gen.outcome) || 'failed'}: ${(gen && gen.reason) || ''}`.trim();
         iterState.candidates.push(cand);
@@ -8034,12 +8100,19 @@ async function runIteration() {
       cand.code = editorEl.value;
       cand.codeHash = codeHashOf(cand.code);
       iterState.step = T('ui.itStepEval', { n: BATCH_N });
-      renderReview();
+      iterTick();
       const run = await runBatch('train');
       if (!run) { cand.invalidReason = `eval failed: ${batchFailMsg}`; iterState.candidates.push(cand); continue; }
+      if (run.key !== lockKey) { // 这一轮是在别的设置下打的：不入池，立刻停
+        cand.invalidReason = 'setup changed during eval';
+        iterState.candidates.push(cand);
+        iterState.stopped = 'setup-changed';
+        break;
+      }
       cand.trainWinRate = run.agg.winRate;
       cand.valid = true;
       cand.batch = { setup: run.setup, at: run.at, games: run.games };
+      cand.batchKey = run.key;
       iterState.candidates.push(cand);
     }
   } catch (e) {
@@ -8052,15 +8125,21 @@ async function runIteration() {
   editorEl.value = best.code;
   saveDraft();
   refreshSkillHint();
-  if (best.batch) { // 胜率区回到「被应用那版」的成绩，不留下别版的数字
-    batchRuns.train = { games: best.batch.games, agg: aggregateBatch(best.batch.games), setup: best.batch.setup, at: best.batch.at, key: setupKey(), ms: 0 };
+  if (best.batch) { // 胜率区回到「被应用那版」的成绩，key 用那批数据自己的（不能盖成当前时刻，会骗过 rvStale）
+    batchRuns.train = {
+      games: best.batch.games, agg: aggregateBatch(best.batch.games),
+      setup: best.batch.setup, at: best.batch.at, key: best.batchKey || lockKey, ms: 0,
+    };
   }
+  // 留出组那份是**原版代码**的成绩：换了版就必须清掉，否则界面把它当成当前这版的留出组并列展示
+  if (!best.isBaseline) batchRuns.holdout = null;
   iterState.applied = best;
   iterState.running = false;
   iterState.step = '';
   const tried = iterState.candidates.filter((c) => !c.isBaseline);
   const validTried = tried.filter((c) => c.valid).length;
   if (best.isBaseline) iterMsg(validTried ? T('ui.itDoneBaseline', { n: tried.length }) : T('ui.itNoValid', { n: tried.length }), true);
+  else if (iterState.stopped === 'setup-changed') iterMsg(T('ui.itSetupChanged'), true);
   else if (iterState.stopped === 'aborted') iterMsg(T('ui.itAborted', { msg: `#${best.round} ${pctText(best.trainWinRate)}` }));
   else iterMsg(T('ui.itDone', { r: best.round, p: pctText(best.trainWinRate) }));
   lastCompare = null; // 迭代有自己的候选清单，不复用单次采纳的对比卡
@@ -8086,6 +8165,7 @@ function downloadIterLog() {
     candidates: iterState.candidates.filter((c) => !c.isBaseline),
     applied: iterState.applied,
     stopped: iterState.stopped,
+    fakeLlm: !!iterState.fake,
   });
   downloadText(`agentank-iteration-${Date.now()}.json`, JSON.stringify(log, null, 2), 'application/json');
 }

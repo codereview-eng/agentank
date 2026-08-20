@@ -260,7 +260,8 @@ export function buildIterationLog(o) {
     baseline: i.baseline ? clean(i.baseline) : null,
     candidates: cands.map(clean),
     applied: i.applied ? { round: i.applied.round ?? null, trainWinRate: typeof i.applied.trainWinRate === 'number' ? i.applied.trainWinRate : null } : null,
-    stopped: String(i.stopped || 'done'), // done | aborted | no-sdk | error
+    stopped: String(i.stopped || 'done'), // done | aborted | setup-changed | no-sdk | error
+    fakeLlm: i.fakeLlm === true, // true = 用调试假 AI 跑的，结果不代表真实模型（产物自证来源）
     stats: { validRounds: valid, failedRounds: cands.length - valid },
   };
 }

@@ -98,3 +98,15 @@ test('迭代日志：战术文字里的密钥形状会被打码', () => {
   });
   assert.ok(!log.baseline.strategy.includes('abcdef123456'));
 });
+
+test('迭代日志：必须能自证是不是用调试假 AI 跑的', () => {
+  const real = buildIterationLog({ setup: {}, baseline: null, candidates: [], applied: null, stopped: 'done' });
+  assert.equal(real.fakeLlm, false);
+  const fake = buildIterationLog({ setup: {}, baseline: null, candidates: [], applied: null, stopped: 'done', fakeLlm: true });
+  assert.equal(fake.fakeLlm, true, '假 AI 跑出来的记录必须带标记，否则无法与真实结果区分');
+});
+
+test('迭代日志：中途改了对局设置的中止态如实落档', () => {
+  const log = buildIterationLog({ setup: {}, baseline: null, candidates: [], applied: null, stopped: 'setup-changed' });
+  assert.equal(log.stopped, 'setup-changed');
+});
