@@ -218,6 +218,109 @@ export function nextRoundBase(candidates) {
   return pickBest(candidates);
 }
 
+// ---------- 防「误认卡死」：超时口径 / 心跳 / 剩余时间 / 每轮汇总日志（纯函数） ----------
+// 为什么必须有这一组：迭代要跑几分钟，界面上原先只有一行不动的字，且 AI 调用零超时 ——
+// 模型挂住时那行字永远不变，用户与自动化都分不出「在跑」和「死了」。
+// 三条硬线：① 每步都有硬超时（超时 = 本轮无效，如实落档，不是无限等）；
+// ② 每秒有可见变化（已用秒 / 剩余估算）；③ 每轮结果当场汇总成一行人话日志。
+export const ITER_TIMEOUTS = {
+  reviewMs: 90000,    // 一次复盘调用的硬上限（真实模型 10~30s，90s 已是异常）
+  genMs: 120000,      // 生成要带一次不合格重试，给两倍余量
+  evalMs: 120000,     // 线上整批 12 局丢进 Worker 的上限（收到逐局进度会续期）
+  slowHintMs: 20000,  // 超过它就提示「模型还在想」，让静止的等待有解释
+};
+const ITER_STEPS = 3; // 每轮三步：复盘 → 生成 → 评分（进度条的分母）
+
+// 日志追加：返回新数组（渲染层靠引用变化判断要不要重画），并只保留最近 cap 条
+export function pushIterLog(list, ev, cap = 200) {
+  const base = Array.isArray(list) ? list : [];
+  const e = ev || {};
+  const row = {
+    at: e.at || new Date().toISOString(),
+    kind: String(e.kind || 'info'),          // start | review | gen | eval | round | end
+    round: Number.isFinite(e.round) ? e.round : null,
+    ok: e.ok !== false,
+    ms: Number.isFinite(e.ms) ? e.ms : null,
+    detail: e.detail == null ? '' : String(e.detail),
+    winRate: typeof e.winRate === 'number' ? e.winRate : null,
+    baseWinRate: typeof e.baseWinRate === 'number' ? e.baseWinRate : null,
+    best: e.best === true,
+    matches: Number.isFinite(e.matches) ? e.matches : null,
+    failRaw: e.failRaw ? String(e.failRaw) : '',
+  };
+  const out = base.concat([row]);
+  return out.length > cap ? out.slice(out.length - cap) : out;
+}
+
+// 胜率涨跌（百分点）：任一侧缺数据就 null —— 没有基线时绝不印成「0 提升」
+export function winDelta(cur, base) {
+  if (typeof cur !== 'number' || !Number.isFinite(cur)) return null;
+  if (typeof base !== 'number' || !Number.isFinite(base)) return null;
+  const pt = Math.round((cur - base) * 100);
+  return { pt, dir: pt > 0 ? 'up' : (pt < 0 ? 'down' : 'flat') };
+}
+
+// 内部失败串 → 人话文案键（原始串一并回传：界面折叠展示、下载日志按它定位）
+// 教训（仓库既有纪律）：降级/失败分支不能只留一个事件名，异常本体必须落地可查。
+export function explainIterFail(raw) {
+  const s = String(raw == null ? '' : raw);
+  const key = (() => {
+    if (/timeout/i.test(s)) return 'ui.itFailTimeout';
+    if (/^review unparsable/.test(s)) return 'ui.itFailUnparsable';
+    if (/AbortError|aborted/i.test(s)) return 'ui.itFailAborted';
+    if (/produced identical code/.test(s)) return 'ui.itFailSameCode';
+    if (/^review /.test(s)) return 'ui.itFailReview';
+    if (/^gen /.test(s)) return 'ui.itFailGen';
+    if (/^eval failed/.test(s)) return 'ui.itFailEval';
+    if (/setup changed/.test(s)) return 'ui.itFailSetup';
+    return 'ui.itFailOther';
+  })();
+  return { key, raw: s };
+}
+
+// 剩余时间：已跑完的轮有实测就按均值推（比理论值准得多），一轮都没跑完才退回理论估算
+export function iterEta(o) {
+  const i = o || {};
+  const rounds = Math.max(1, Number(i.rounds) || 1);
+  const done = Math.min(rounds, Math.max(0, Number(i.round) || 0));
+  const left = Math.max(0, rounds - done);
+  if (!left) return 0;
+  const cur = Math.max(0, Number(i.curElapsedMs) || 0); // 当前这轮已经跑掉的部分
+  const samples = (Array.isArray(i.roundMs) ? i.roundMs : []).filter((x) => Number.isFinite(x) && x > 0);
+  if (samples.length) {
+    const avg = samples.reduce((a, b) => a + b, 0) / samples.length;
+    return Math.max(0, Math.round(avg * left - cur));
+  }
+  const m = Math.max(1, Number(i.matchesPerRound) || 12);
+  return Math.max(0, Math.round(left * (2 * ITER_LIMITS.msPerAiCall + m * ITER_LIMITS.msPerMatch) - cur));
+}
+
+// mm:ss（语言中立，中英共用一份格式）
+export function fmtClock(ms) {
+  const t = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+}
+
+// 总进度 0..1：轮内每推进一步都涨，绝不在一轮里静止（静止的条 = 看起来卡死）
+export function iterProgress(o) {
+  const i = o || {};
+  const rounds = Math.max(1, Number(i.rounds) || 1);
+  const round = Math.max(1, Number(i.round) || 1);
+  const step = Math.min(ITER_STEPS, Math.max(0, Number(i.stepIndex) || 0));
+  const frac = ((round - 1) * ITER_STEPS + step) / (rounds * ITER_STEPS);
+  return Math.min(1, Math.max(0, frac));
+}
+
+// 当前这一步跑多久了 → 正常 / 偏慢（该给解释）/ 接近超时（该预告会跳过本轮）
+export function stepPace(elapsedMs, timeoutMs, slowMs) {
+  const e = Math.max(0, Number(elapsedMs) || 0);
+  const to = Math.max(1, Number(timeoutMs) || ITER_TIMEOUTS.reviewMs);
+  const slow = Math.max(1, Number(slowMs) || ITER_TIMEOUTS.slowHintMs);
+  if (e >= to * 0.8) return 'near-timeout';
+  if (e >= slow) return 'slow';
+  return 'normal';
+}
+
 // 成本预估：每轮 2 次 AI 调用（复盘 + 生成）+ 每轮 N 局本地对局
 export function iterationCost(rounds, matchesPerRound) {
   const r = Math.min(ITER_LIMITS.maxRounds, Math.max(ITER_LIMITS.minRounds, Math.round(Number(rounds) || 0)));
@@ -263,6 +366,17 @@ export function buildIterationLog(o) {
     stopped: String(i.stopped || 'done'), // done | aborted | setup-changed | no-sdk | error
     fakeLlm: i.fakeLlm === true, // true = 用调试假 AI 跑的，结果不代表真实模型（产物自证来源）
     baseSnapshotErr: i.baseSnapshotErr ? redactSecrets(String(i.baseSnapshotErr)) : '', // 原版快照写失败的原因（空=正常）
+    // 界面上那条「每轮汇总」日志原样落档：事后能还原每步耗时与失败原因，而不是只看到最终结论
+    events: (Array.isArray(i.events) ? i.events : []).map((e) => ({
+      at: String((e && e.at) || ''),
+      kind: String((e && e.kind) || ''),
+      round: e && Number.isFinite(e.round) ? e.round : null,
+      ok: !(e && e.ok === false),
+      ms: e && Number.isFinite(e.ms) ? e.ms : null,
+      detail: redactSecrets(String((e && e.detail) || '')),
+      winRate: e && typeof e.winRate === 'number' ? e.winRate : null,
+      failRaw: e && e.failRaw ? redactSecrets(String(e.failRaw)) : '',
+    })),
     stats: { validRounds: valid, failedRounds: cands.length - valid },
   };
 }
@@ -683,6 +797,20 @@ export function skillCodeMismatch(code, equipped) {
     if (SKILL_IDS.includes(m[1]) && m[1] !== equipped) hits.add(m[1]);
   }
   return [...hits];
+}
+
+// ---------- 对局设置的真值/投影（纯函数可测） ----------
+// 真值 = 下拉框 value（引擎按它取装备/地图/对手）；chip 文案只是它的投影。
+// 这两个函数是投影的唯一算法来源：UI 里任何显示都由它们算，避免「chip 显示传送、真值已是眩晕」那类各算一套。
+export function resolveSelValue(optionValues, cur, wanted) {
+  const opts = [...(optionValues || [])];
+  if (wanted != null && opts.includes(wanted)) return wanted;
+  if (opts.includes(cur)) return cur; // 想选的选项不存在：保持现真值（不静默改装备）
+  return opts.length ? opts[0] : ''; // 现真值也没了（工坊条目被删/换包）：对齐浏览器回退到首项
+}
+export function chipShortLabel(text, value) {
+  // 只切圆括号里的说明（「传送（8 选 1）」→「传送」）；阶段徽标「[官方] …」是名字的一部分，不能切
+  return String(text || value || '').split(/[（(]/)[0].trim() || String(value || '');
 }
 
 // ---------- Workshop 云端存取（纯函数可测）：工坊条目 ↔ 实体行 ----------

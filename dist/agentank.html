@@ -220,6 +220,16 @@ footer .mono{color:var(--muted)}
 .wracts{display:flex; gap:6px}
 .wracts .btn{padding:5px 10px; font-size:11px; letter-spacing:0}
 .wrhint{font-size:11px; color:var(--dim)}
+/* 迭代进度条：轮内每一步都前进，静止的条与「卡死」无法区分，所以宽度必须由 iterProgress 驱动 */
+.itbar{height:4px; background:var(--panel-2); border:1px solid var(--line); border-radius:999px; overflow:hidden}
+.itbar>i{display:block; height:100%; background:var(--accent); width:0; transition:width .35s ease}
+/* 迭代日志：逐条追加的每轮汇总，跑到一半也能看清「第几轮出了什么结果」 */
+.itlog{max-height:190px; overflow:auto; background:var(--panel-2); border:1px solid var(--line); border-radius:7px;
+  padding:6px 8px; font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:10.5px; line-height:1.7; color:var(--muted)}
+.itlog .r{display:flex; gap:6px; white-space:pre-wrap; word-break:break-word}
+.itlog .r>b{color:var(--dim); font-weight:400; flex:none}
+.itlog .bad>span{color:var(--warn)}
+.itlog .win>span{color:var(--ok)}
 .fl{display:inline-flex; gap:4px; align-items:center; border:1px solid #54431C; color:var(--warn); border-radius:999px; padding:0 7px; font-size:10.5px; flex:none; letter-spacing:0; font-weight:400}
 .fl[hidden]{display:none} /* 作者样式的 display 会盖掉 hidden 属性的 UA display:none，必须显式补 */
 #reviewDrawer .dbody{display:grid; grid-template-columns:minmax(0,1fr) 340px}
@@ -1616,6 +1626,7 @@ function damageByBullet(state, b, K, ev) {
   }
   const dmg = b.dmg ?? R.damage;
   K.hp -= dmg;
+  K.lastCause = 'bullet'; // 记死因：报告要能说清「被打死」还是「毒圈拖死」
   state.tanks[b.owner].dmgDealt += dmg;
   ev({ t: state.t, type: 'hit', who: b.owner, target: K.i, dmg, hp: K.hp, x: K.x, y: K.y });
 }
@@ -1705,6 +1716,7 @@ function explodeBomb(state, bomb, ev) {
       continue;
     }
     K.hp -= R.bombDamage;
+    K.lastCause = 'bomb';
     if (K.i !== bomb.owner) state.tanks[bomb.owner].dmgDealt += R.bombDamage; // 自伤不计输出
     hits.push({ who: K.i, dmg: R.bombDamage });
   }
@@ -1967,6 +1979,8 @@ function randomFreeCell(state) {
 
 // 终局判定链（超时与同拍双亡通用）：星数 → 剩余 HP → 累计输出伤害 → 距圈心近者 → 种子掷签。
 // 链条末端必出胜负——平局被根治，winner 永不为 null。
+// 注意：这里的 reason 是**全局**胜负原因，不是任何一方的「败因」——我方视角的结论由 analyze.js
+// 的 verdictOf 按 who + deaths 换算（曾因混用这两者，赢下的局也印「被打死」）。
 function resolveEnd(state) {
   const [a, b] = state.tanks;
   if (a.stars !== b.stars) return { winner: a.stars > b.stars ? 0 : 1, reason: 'stars' };
@@ -1980,7 +1994,8 @@ function resolveEnd(state) {
   return { winner: state.rng() < 0.5 ? 0 : 1, reason: 'coin' }; // 完全镜像局：种子掷签，确定性
 }
 
-// 阵亡判定：单亡 = 对方胜；同拍双亡 = 走终局判定链（不再有平局）
+// 阵亡判定：单亡 = 对方胜；同拍双亡 = 走终局判定链（不再有平局）。
+// 一并回传 deaths=[{who,cause}]：谁死了、怎么死的。缺了它，报告永远只能说「被打死」。
 function checkDeath(state, ev) {
   for (const T of state.tanks) {
     if (T.hp <= 0 && !T.deadAnnounced) {
@@ -1990,8 +2005,9 @@ function checkDeath(state, ev) {
   }
   const alive = state.tanks.filter((T) => T.hp > 0);
   if (alive.length === 2) return null;
-  if (alive.length === 1) return { winner: alive[0].i, reason: 'kill' };
-  return resolveEnd(state);
+  const deaths = state.tanks.filter((T) => T.hp <= 0).map((T) => ({ who: T.i, cause: T.lastCause || null }));
+  if (alive.length === 1) return { winner: alive[0].i, reason: 'kill', deaths };
+  return { ...resolveEnd(state), deaths }; // 同拍双亡：判定链定胜负，但两边的死因都要留下
 }
 
 function runMatch(opts = {}) {
@@ -2074,6 +2090,7 @@ function runMatch(opts = {}) {
       overloadArmed: false,
       pendingShot: null,
       deadAnnounced: false,
+      lastCause: null, // 最后一次受伤来源：bullet | bomb | poison | zone
       lastSeen: { x: m.spawns[1 - i].x, y: m.spawns[1 - i].y },
       goalKey: null,
       rng: mulberry32((seed + 0x9e3779b9 * (i + 1)) >>> 0),
@@ -2173,6 +2190,7 @@ function runMatch(opts = {}) {
       T.poison--;
       const pdmg = T.poisonDmg ?? R.skills.poison.dmg;
       T.hp -= pdmg;
+      T.lastCause = 'poison';
       if (T.poisonFrom != null) state.tanks[T.poisonFrom].dmgDealt += pdmg;
       ev({ t, type: 'poison_tick', target: T.i, dmg: pdmg, hp: T.hp });
     }
@@ -2183,6 +2201,7 @@ function runMatch(opts = {}) {
         for (const T of state.tanks) {
           if (T.hp <= 0 || inZone(state, T.x, T.y)) continue;
           T.hp -= zdmg;
+          T.lastCause = 'zone'; // 毒圈致死必须与子弹致死区分，否则报告只会写「被打死」
           ev({ t, type: 'zone_hit', target: T.i, dmg: zdmg, hp: T.hp });
         }
       }
@@ -2191,12 +2210,13 @@ function runMatch(opts = {}) {
   }
 
   const [a, b] = state.tanks;
-  if (!ended) ended = resolveEnd(state); // 超时：终局判定链，必出胜负
+  if (!ended) ended = { ...resolveEnd(state), deaths: [] }; // 超时：终局判定链，必出胜负；无人阵亡
   ev({
     t: state.t,
     type: 'end',
     winner: ended.winner,
     reason: ended.reason,
+    deaths: ended.deaths || [],
     stars: [a.stars, b.stars],
     hp: [a.hp, b.hp],
   });
@@ -2204,6 +2224,7 @@ function runMatch(opts = {}) {
     events: state.events,
     winner: ended.winner,
     reason: ended.reason,
+    deaths: ended.deaths || [], // [{who,cause}]：谁死了 + 死因（bullet|bomb|poison|zone）
     stars: [a.stars, b.stars],
     skills: [skillA, skillB],
     ticks: state.t + 1,
@@ -2698,6 +2719,30 @@ function detectMoments(map, result, opts = {}) {
   return kept;
 }
 
+// ---------- 我方视角的结论（纯函数：报告文案唯一的真值来源） ----------
+// 为什么必须有它：引擎的 reason 是**全局**胜负原因（kill = 有人被打死），不是「我方败因」。
+// 直接把 reason 贴在我方胜负后面，赢下的局也会印「胜 被打死」——用户 2026-08-20 实测到的正是这句。
+// 输出：win（我方是否胜）/ how（enemy-dead | self-dead | tiebreak）/ cause（死因）/ tiebreak（判定链原因）。
+// 旧战报没有 deaths 字段时不许崩：cause 退化为 null（死因未记录），胜负仍按 winner 判。
+function verdictOf(result, who) {
+  const r = result || {};
+  const me = who ?? 0;
+  const win = r.winner === me;
+  const deaths = Array.isArray(r.deaths) ? r.deaths : null;
+  const causeOf = (i) => {
+    if (!deaths) return null;
+    const d = deaths.find((x) => x && x.who === i);
+    return d && d.cause ? d.cause : null;
+  };
+  // 同拍双亡 / 超时：胜负来自判定链，谁都不算「被打死」
+  if (r.reason !== 'kill') {
+    return { win, how: 'tiebreak', cause: causeOf(me), tiebreak: String(r.reason || '') || null };
+  }
+  return win
+    ? { win: true, how: 'enemy-dead', cause: causeOf(1 - me), tiebreak: null }
+    : { win: false, how: 'self-dead', cause: causeOf(me), tiebreak: null };
+}
+
 // ---------- 单局 JSON（喂 AI 的那份；不含人读文字，老板定的口径） ----------
 function buildBattleReport(o) {
   const map = o.map;
@@ -2725,6 +2770,8 @@ function buildBattleReport(o) {
       win: result.winner === who,
       winner: result.winner,
       reason: result.reason,
+      // 我方视角：AI 复盘拿到的必须是「对手被毒圈拖死」这种能直接用的结论，而不是全局 reason
+      verdict: verdictOf(result, who),
       ticks: result.ticks,
       stars: Array.isArray(result.stars) ? result.stars.slice() : [0, 0],
     },
@@ -2742,10 +2789,14 @@ function summarizeGame(o) {
   const result = o.result;
   const who = o.who ?? 0;
   const states = replayStates(map, result);
+  const v = verdictOf(result, who);
   return {
     seed: String(o.seed ?? result.seed ?? ''),
-    win: result.winner === who,
-    reason: result.reason,
+    win: v.win,
+    reason: result.reason, // 全局胜负原因（保留兼容；文案一律用下面三个我方视角字段）
+    how: v.how,            // enemy-dead | self-dead | tiebreak
+    cause: v.cause,        // bullet | bomb | poison | zone | null（旧战报无记录）
+    tiebreak: v.tiebreak,
     ticks: result.ticks,
     metrics: buildMetrics(map, result, who),
     moments: detectMoments(map, result, { who, strategy: o.strategy || '', states, max: o.max ?? 6 }),
@@ -2775,8 +2826,14 @@ function aggregateBatch(games) {
     return { games: 0, wins: 0, losses: 0, winRate: null, lossBuckets: {}, avg: {}, topMomentRules: [] };
   }
   const wins = list.filter((g) => g.win).length;
+  // 败因分桶按**我方视角 + 死因**：笼统的 kill 会把「被对手击杀」和「被毒圈拖死」混成一个桶，
+  // 那正是这份报告说不出「毒圈」的原因。
   const lossBuckets = {};
-  for (const g of list) if (!g.win) lossBuckets[g.reason] = (lossBuckets[g.reason] || 0) + 1;
+  for (const g of list) {
+    if (g.win) continue;
+    const k = azBucketKey(g);
+    lossBuckets[k] = (lossBuckets[k] || 0) + 1;
+  }
   const keys = ['accuracy', 'dmgDealt', 'dmgTaken', 'zoneDmg', 'skillCasts', 'skillHits', 'shotsBlocked'];
   const avg = {};
   for (const k of keys) {
@@ -2802,7 +2859,54 @@ function aggregateBatch(games) {
 }
 
 // ---------- 人读批量报告（界面直接展示的那份；下载文字版与它一字不差） ----------
-const AZ_REASON_CN = { kill: '被打死', stars: '星数少', hp: '血量判定', damage: '输出判定', center: '圈心判定', coin: '种子掷签', zone: '毒圈拖死' };
+// 我方视角的结论文案。绝不出现裸「被打死」——它既不说明谁死了，也不说明怎么死的，
+// 贴在「胜」后面就变成「胜 被打死」（用户 2026-08-20 实测到的自相矛盾那句）。
+const AZ_TIE_CN = { stars: '星数判定', hp: '血量判定', damage: '输出判定', center: '圈心判定', coin: '种子掷签' };
+const AZ_ENEMY_DEAD_CN = { bullet: '击杀对手', bomb: '炸死对手', poison: '毒死对手', zone: '对手被毒圈拖死' };
+const AZ_SELF_DEAD_CN = { bullet: '被对手击杀', bomb: '被炸死', poison: '被毒死', zone: '我被毒圈拖死' };
+// 同拍双亡：谁都没赢，胜负来自判定链。只印「种子掷签胜」会与回放里的毒圈脱节，必须连死因一起说。
+const AZ_BOTH_DEAD_CN = { bullet: '双方互殴阵亡', bomb: '双方被炸死', poison: '双方被毒死', zone: '双方被毒圈拖死' };
+
+// 旧摘要（只有 win/reason，没有 how/cause）也要能读：按 reason 推断我方视角
+function azHowOf(g) {
+  if (g.how) return g.how;
+  if (g.reason && g.reason !== 'kill') return 'tiebreak';
+  return g.win ? 'enemy-dead' : 'self-dead';
+}
+function azBucketKey(g) {
+  const how = azHowOf(g);
+  if (how === 'tiebreak') {
+    const tb = g.tiebreak || g.reason || 'unknown';
+    return g.cause ? `tiebreak:${tb}:${g.cause}` : `tiebreak:${tb}`; // 双亡时把死因也带进桶名
+  }
+  return `${how}:${g.cause || 'unknown'}`;
+}
+// 败因桶 key → 结构化（供界面层用自己的语言字典渲染；analyze 这边的文案是中文报告专用）
+function parseBucketKey(key) {
+  const [how, tail, extra] = String(key || '').split(':');
+  if (how === 'tiebreak') return { how, cause: extra || null, tiebreak: tail || null };
+  if (how === 'enemy-dead' || how === 'self-dead') {
+    return { how, cause: !tail || tail === 'unknown' ? null : tail, tiebreak: null };
+  }
+  return { how: null, cause: null, tiebreak: null }; // 旧数据里的裸 reason（kill/stars…）：界面按原样显示
+}
+function azVerdictLabel(g) {
+  const how = azHowOf(g);
+  if (how === 'tiebreak') {
+    const t = AZ_TIE_CN[g.tiebreak || g.reason] || g.tiebreak || g.reason || '判定';
+    const tail = `${t}${g.win ? '胜' : '负'}`;
+    // 我方也阵亡 = 同拍双亡：先说双方是怎么倒下的，再说胜负怎么判出来的
+    return g.cause ? `${AZ_BOTH_DEAD_CN[g.cause] || `双方阵亡（${g.cause}）`} · ${tail}` : tail;
+  }
+  const dict = how === 'enemy-dead' ? AZ_ENEMY_DEAD_CN : AZ_SELF_DEAD_CN;
+  if (!g.cause) return how === 'enemy-dead' ? '对手阵亡（死因未记录）' : '我阵亡（死因未记录）';
+  return dict[g.cause] || `${how === 'enemy-dead' ? '对手阵亡' : '我阵亡'}（${g.cause}）`;
+}
+function azBucketLabel(key) {
+  const v = parseBucketKey(key);
+  if (!v.how) return key; // 旧下载数据里的裸 reason：原样显示，不假装懂
+  return azVerdictLabel({ win: false, how: v.how, cause: v.cause, tiebreak: v.tiebreak });
+}
 const AZ_SEEDSET_CN = { train: '训练组', holdout: '留出组' };
 const azPct = (x) => `${Math.round(x * 1000) / 10}%`;
 
@@ -2832,7 +2936,7 @@ function renderBatchText(batch) {
   if (!agg.losses) lines.push('  本组全胜。');
   else {
     for (const [reason, count] of Object.entries(agg.lossBuckets).sort((a, b) => b[1] - a[1])) {
-      lines.push(`  ${AZ_REASON_CN[reason] || reason} ${count} 局`);
+      lines.push(`  ${azBucketLabel(reason)} ${count} 局`);
     }
   }
   if (agg.topMomentRules.length) {
@@ -2844,7 +2948,7 @@ function renderBatchText(batch) {
   for (const g of games) {
     const m = g.metrics || {};
     lines.push(
-      `  seed ${g.seed}  ${g.win ? '胜' : '负'}  ${AZ_REASON_CN[g.reason] || g.reason}`
+      `  seed ${g.seed}  ${g.win ? '胜' : '负'}  ${azVerdictLabel(g)}`
       + `  命中 ${azPct(m.accuracy || 0)}  打${m.dmgDealt ?? '—'}/挨${m.dmgTaken ?? '—'}`
       + `  星${(m.stars || [0, 0])[0]}:${(m.stars || [0, 0])[1]}`,
     );
@@ -2989,7 +3093,13 @@ function renderText(result, names = ['甲', '乙']) {
         lines.push(
           e.winner == null
             ? `${t} 平局（星${e.stars[0]}:${e.stars[1]}）` // 兼容旧战报回放
-            : `${t} ${nm(e.winner)} 获胜（${REASON_CN[e.reason] ?? e.reason}，星${e.stars[0]}:${e.stars[1]}）`,
+            // 胜者视角：kill 要说清对手是被打死还是被毒圈拖死（旧战报没有 deaths，回退到全局 reason）
+            : `${t} ${nm(e.winner)} 获胜（${((() => {
+              const d = Array.isArray(e.deaths) ? e.deaths.find((x) => x && x.who !== e.winner) : null;
+              const CAUSE = { bullet: '击杀', bomb: '炸死', poison: '毒死', zone: '毒圈拖死' };
+              if (e.reason === 'kill' && d && d.cause) return CAUSE[d.cause] || d.cause;
+              return REASON_CN[e.reason] ?? e.reason;
+            })())}，星${e.stars[0]}:${e.stars[1]}）`,
         );
         break;
       }
@@ -3153,6 +3263,18 @@ const LOCALES = {
       kill: '击杀', stars: '星数', hp: '血量判定',
       damage: '输出判定', center: '圈心判定', coin: '种子掷签',
     },
+    // 致死来源（替代笼统的「击杀」；毒圈拖死与子弹击杀必须能分开）。
+    // 三套是**方向性**的：说对手怎么没的 / 说我怎么倒下的 / 同拍双亡。
+    // 「输在哪」用中性词会让玩家误读成自己击杀了对手 —— 所以负局一律走 causeSelf。
+    cause: {
+      bullet: '击杀', bomb: '炸死', poison: '毒死', zone: '毒圈拖死',
+    },
+    causeSelf: {
+      bullet: '被击杀', bomb: '被炸死', poison: '被毒死', zone: '被毒圈拖死',
+    },
+    causeBoth: {
+      bullet: '双方互殴阵亡', bomb: '双方被炸死', poison: '双方被毒死', zone: '双方被毒圈拖死',
+    },
     maps: {
       crossFort: { name: '十字要塞', desc: '中央十字工事，四条突破口' },
       openPlains: { name: '开阔平原', desc: '稀疏掩体，远距离对狙' },
@@ -3255,6 +3377,37 @@ const LOCALES = {
       itRestoreOtherTank: '这份快照属于「{tank}」，与当前出战的坦克不是同一台 —— 已拒绝回退，避免把别台的代码盖过来',
       itRestoreConfirm: '当前编辑器里的内容与迭代前那版不同，回退会覆盖它。继续？',
       itSnapshotFail: '原版快照存不下（{msg}）：中途崩溃将无法一键回退 —— 本次迭代会照旧写草稿兜底',
+      // 防「误认卡死」：进度行每秒都有变化（已用秒 / 预计剩余），慢了给解释，快超时给预告
+      itElapsed: '已用 {s}s',
+      itEta: '约剩 {t}',
+      itSlowHint: '模型还在想（通常 10~30 秒）',
+      itNearTimeout: '再等 {s}s 仍无回应就跳过本轮',
+      itEvalAt: '第 {i}/{n} 局',
+      // 每轮汇总日志
+      itLogTitle: '迭代日志',
+      itLogEmpty: '开跑后这里会逐条记录每轮的复盘、生成、评分结果',
+      itLogStart: '开始迭代 · {n} 轮 · 模型 {model} · 基线 {b}',
+      itLogReview: '#{r} 复盘 {s}s · {d}',
+      itLogGen: '#{r} 生成 {s}s · {d}',
+      itLogEval: '#{r} 评分 {m} 局 {s}s · 训练组 {p}（基线 {b}，{delta}）',
+      itLogBest: '★ 新最优',
+      itLogFail: '#{r} {step} 失败 {s}s · {why}',
+      itLogEnd: '完成：已应用第 {r} 轮（训练组 {p}）',
+      itLogEndBaseline: '完成：{n} 轮都没超过原版，已保留原战术',
+      itLogDelta: '{sign}{pt} 个百分点',
+      itLogDeltaFlat: '与基线持平',
+      itLogNoDiag: '（模型没给诊断标题）',
+      itLogNoChange: '（模型没说改了什么）',
+      // 失败原因说人话（原始串折叠在日志文件里，界面这行给玩家看得懂的因果）
+      itFailTimeout: '模型迟迟不回，已按超时跳过本轮',
+      itFailUnparsable: '模型回的不是能用的复盘格式，本轮作废',
+      itFailAborted: '你点了停止，本轮中断',
+      itFailReview: '复盘调用出错，本轮作废',
+      itFailSameCode: '生成出来的代码与上一版一字不差，本轮不计',
+      itFailGen: '代码生成没过关，本轮作废',
+      itFailEval: '这一版跑 12 局时出错，成绩不算',
+      itFailSetup: '对局设置被改了，这一轮不入池',
+      itFailOther: '本轮出了未归类的问题',
       rvNoFlag: '本局没标出可疑操作',
       rvTitleSingle: '复盘这一局',
       rvTitleBatch: '战术复盘',
@@ -3286,6 +3439,7 @@ const LOCALES = {
       rvCost: '本次消耗 1 次 AI 调用 · 报告摘要 {kb}KB',
       rvWin: '胜',
       rvLoss: '负',
+      bkUnknown: '死因未记录',
       codeBox: '查看/编辑脚本（高级）',
       myTank: '我的坦克',
       opponent: '对手',
@@ -3555,6 +3709,17 @@ function decide(api) {
       kill: 'kill', stars: 'stars', hp: 'HP tiebreak',
       damage: 'damage tiebreak', center: 'center tiebreak', coin: 'seeded coin toss',
     },
+    // Cause of death, in three directions: what happened to the rival / to me / to both.
+    // A neutral word in the "where you lost" panel reads as if you got the kill — losses always use causeSelf.
+    cause: {
+      bullet: 'kill', bomb: 'bomb kill', poison: 'poison kill', zone: 'zone kill',
+    },
+    causeSelf: {
+      bullet: 'shot down', bomb: 'bombed', poison: 'poisoned', zone: 'dragged down by the zone',
+    },
+    causeBoth: {
+      bullet: 'both shot down', bomb: 'both bombed', poison: 'both poisoned', zone: 'both taken by the zone',
+    },
     maps: {
       crossFort: { name: 'Cross Fort', desc: 'central cross works, four breaches' },
       openPlains: { name: 'Open Plains', desc: 'sparse cover, long-range duels' },
@@ -3656,6 +3821,37 @@ function decide(api) {
       itRestoreOtherTank: 'That snapshot belongs to "{tank}", not the tank currently deployed — restore refused so another tank\'s code cannot overwrite this one',
       itRestoreConfirm: 'The editor content differs from the pre-iteration version; restoring will overwrite it. Continue?',
       itSnapshotFail: 'Could not store the pre-iteration snapshot ({msg}): a crash mid-run could not be rolled back — this run will keep writing drafts as a fallback',
+      // Anti "looks frozen": the progress line changes every second (elapsed / eta), explains slowness, previews the timeout
+      itElapsed: '{s}s elapsed',
+      itEta: '~{t} left',
+      itSlowHint: 'model still thinking (usually 10-30s)',
+      itNearTimeout: 'skipping this round if silent for another {s}s',
+      itEvalAt: 'battle {i}/{n}',
+      // Per-round summary log
+      itLogTitle: 'Iteration log',
+      itLogEmpty: 'Once running, each round logs its review, codegen and score here',
+      itLogStart: 'Iteration started · {n} rounds · model {model} · baseline {b}',
+      itLogReview: '#{r} review {s}s · {d}',
+      itLogGen: '#{r} codegen {s}s · {d}',
+      itLogEval: '#{r} score {m} battles {s}s · train {p} (baseline {b}, {delta})',
+      itLogBest: '★ new best',
+      itLogFail: '#{r} {step} failed {s}s · {why}',
+      itLogEnd: 'Done: applied round {r} (train {p})',
+      itLogEndBaseline: 'Done: none of the {n} rounds beat the original — kept your tactics',
+      itLogDelta: '{sign}{pt} points',
+      itLogDeltaFlat: 'level with the baseline',
+      itLogNoDiag: '(model gave no diagnosis title)',
+      itLogNoChange: '(model did not say what changed)',
+      // Failure reasons in plain words (the raw string stays in the downloadable log)
+      itFailTimeout: 'model never answered — round skipped on timeout',
+      itFailUnparsable: 'model did not reply in a usable review format — round void',
+      itFailAborted: 'you hit stop — round interrupted',
+      itFailReview: 'the review call errored — round void',
+      itFailSameCode: 'generated code is identical to the previous version — round not counted',
+      itFailGen: 'code generation did not pass the gate — round void',
+      itFailEval: 'this version errored while playing 12 battles — score discarded',
+      itFailSetup: 'match setup changed — this round stays out of the pool',
+      itFailOther: 'unclassified problem in this round',
       rvNoFlag: 'no suspicious moves flagged',
       rvTitleSingle: 'Review this battle',
       rvTitleBatch: 'Tactics review',
@@ -3687,6 +3883,7 @@ function decide(api) {
       rvCost: '1 AI call this round · report digest {kb}KB',
       rvWin: 'win',
       rvLoss: 'loss',
+      bkUnknown: 'cause not recorded',
       codeBox: 'View/edit script (advanced)',
       myTank: 'My Tank',
       opponent: 'Opponent',
@@ -4165,6 +4362,109 @@ function nextRoundBase(candidates) {
   return pickBest(candidates);
 }
 
+// ---------- 防「误认卡死」：超时口径 / 心跳 / 剩余时间 / 每轮汇总日志（纯函数） ----------
+// 为什么必须有这一组：迭代要跑几分钟，界面上原先只有一行不动的字，且 AI 调用零超时 ——
+// 模型挂住时那行字永远不变，用户与自动化都分不出「在跑」和「死了」。
+// 三条硬线：① 每步都有硬超时（超时 = 本轮无效，如实落档，不是无限等）；
+// ② 每秒有可见变化（已用秒 / 剩余估算）；③ 每轮结果当场汇总成一行人话日志。
+const ITER_TIMEOUTS = {
+  reviewMs: 90000,    // 一次复盘调用的硬上限（真实模型 10~30s，90s 已是异常）
+  genMs: 120000,      // 生成要带一次不合格重试，给两倍余量
+  evalMs: 120000,     // 线上整批 12 局丢进 Worker 的上限（收到逐局进度会续期）
+  slowHintMs: 20000,  // 超过它就提示「模型还在想」，让静止的等待有解释
+};
+const ITER_STEPS = 3; // 每轮三步：复盘 → 生成 → 评分（进度条的分母）
+
+// 日志追加：返回新数组（渲染层靠引用变化判断要不要重画），并只保留最近 cap 条
+function pushIterLog(list, ev, cap = 200) {
+  const base = Array.isArray(list) ? list : [];
+  const e = ev || {};
+  const row = {
+    at: e.at || new Date().toISOString(),
+    kind: String(e.kind || 'info'),          // start | review | gen | eval | round | end
+    round: Number.isFinite(e.round) ? e.round : null,
+    ok: e.ok !== false,
+    ms: Number.isFinite(e.ms) ? e.ms : null,
+    detail: e.detail == null ? '' : String(e.detail),
+    winRate: typeof e.winRate === 'number' ? e.winRate : null,
+    baseWinRate: typeof e.baseWinRate === 'number' ? e.baseWinRate : null,
+    best: e.best === true,
+    matches: Number.isFinite(e.matches) ? e.matches : null,
+    failRaw: e.failRaw ? String(e.failRaw) : '',
+  };
+  const out = base.concat([row]);
+  return out.length > cap ? out.slice(out.length - cap) : out;
+}
+
+// 胜率涨跌（百分点）：任一侧缺数据就 null —— 没有基线时绝不印成「0 提升」
+function winDelta(cur, base) {
+  if (typeof cur !== 'number' || !Number.isFinite(cur)) return null;
+  if (typeof base !== 'number' || !Number.isFinite(base)) return null;
+  const pt = Math.round((cur - base) * 100);
+  return { pt, dir: pt > 0 ? 'up' : (pt < 0 ? 'down' : 'flat') };
+}
+
+// 内部失败串 → 人话文案键（原始串一并回传：界面折叠展示、下载日志按它定位）
+// 教训（仓库既有纪律）：降级/失败分支不能只留一个事件名，异常本体必须落地可查。
+function explainIterFail(raw) {
+  const s = String(raw == null ? '' : raw);
+  const key = (() => {
+    if (/timeout/i.test(s)) return 'ui.itFailTimeout';
+    if (/^review unparsable/.test(s)) return 'ui.itFailUnparsable';
+    if (/AbortError|aborted/i.test(s)) return 'ui.itFailAborted';
+    if (/produced identical code/.test(s)) return 'ui.itFailSameCode';
+    if (/^review /.test(s)) return 'ui.itFailReview';
+    if (/^gen /.test(s)) return 'ui.itFailGen';
+    if (/^eval failed/.test(s)) return 'ui.itFailEval';
+    if (/setup changed/.test(s)) return 'ui.itFailSetup';
+    return 'ui.itFailOther';
+  })();
+  return { key, raw: s };
+}
+
+// 剩余时间：已跑完的轮有实测就按均值推（比理论值准得多），一轮都没跑完才退回理论估算
+function iterEta(o) {
+  const i = o || {};
+  const rounds = Math.max(1, Number(i.rounds) || 1);
+  const done = Math.min(rounds, Math.max(0, Number(i.round) || 0));
+  const left = Math.max(0, rounds - done);
+  if (!left) return 0;
+  const cur = Math.max(0, Number(i.curElapsedMs) || 0); // 当前这轮已经跑掉的部分
+  const samples = (Array.isArray(i.roundMs) ? i.roundMs : []).filter((x) => Number.isFinite(x) && x > 0);
+  if (samples.length) {
+    const avg = samples.reduce((a, b) => a + b, 0) / samples.length;
+    return Math.max(0, Math.round(avg * left - cur));
+  }
+  const m = Math.max(1, Number(i.matchesPerRound) || 12);
+  return Math.max(0, Math.round(left * (2 * ITER_LIMITS.msPerAiCall + m * ITER_LIMITS.msPerMatch) - cur));
+}
+
+// mm:ss（语言中立，中英共用一份格式）
+function fmtClock(ms) {
+  const t = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+}
+
+// 总进度 0..1：轮内每推进一步都涨，绝不在一轮里静止（静止的条 = 看起来卡死）
+function iterProgress(o) {
+  const i = o || {};
+  const rounds = Math.max(1, Number(i.rounds) || 1);
+  const round = Math.max(1, Number(i.round) || 1);
+  const step = Math.min(ITER_STEPS, Math.max(0, Number(i.stepIndex) || 0));
+  const frac = ((round - 1) * ITER_STEPS + step) / (rounds * ITER_STEPS);
+  return Math.min(1, Math.max(0, frac));
+}
+
+// 当前这一步跑多久了 → 正常 / 偏慢（该给解释）/ 接近超时（该预告会跳过本轮）
+function stepPace(elapsedMs, timeoutMs, slowMs) {
+  const e = Math.max(0, Number(elapsedMs) || 0);
+  const to = Math.max(1, Number(timeoutMs) || ITER_TIMEOUTS.reviewMs);
+  const slow = Math.max(1, Number(slowMs) || ITER_TIMEOUTS.slowHintMs);
+  if (e >= to * 0.8) return 'near-timeout';
+  if (e >= slow) return 'slow';
+  return 'normal';
+}
+
 // 成本预估：每轮 2 次 AI 调用（复盘 + 生成）+ 每轮 N 局本地对局
 function iterationCost(rounds, matchesPerRound) {
   const r = Math.min(ITER_LIMITS.maxRounds, Math.max(ITER_LIMITS.minRounds, Math.round(Number(rounds) || 0)));
@@ -4210,6 +4510,17 @@ function buildIterationLog(o) {
     stopped: String(i.stopped || 'done'), // done | aborted | setup-changed | no-sdk | error
     fakeLlm: i.fakeLlm === true, // true = 用调试假 AI 跑的，结果不代表真实模型（产物自证来源）
     baseSnapshotErr: i.baseSnapshotErr ? redactSecrets(String(i.baseSnapshotErr)) : '', // 原版快照写失败的原因（空=正常）
+    // 界面上那条「每轮汇总」日志原样落档：事后能还原每步耗时与失败原因，而不是只看到最终结论
+    events: (Array.isArray(i.events) ? i.events : []).map((e) => ({
+      at: String((e && e.at) || ''),
+      kind: String((e && e.kind) || ''),
+      round: e && Number.isFinite(e.round) ? e.round : null,
+      ok: !(e && e.ok === false),
+      ms: e && Number.isFinite(e.ms) ? e.ms : null,
+      detail: redactSecrets(String((e && e.detail) || '')),
+      winRate: e && typeof e.winRate === 'number' ? e.winRate : null,
+      failRaw: e && e.failRaw ? redactSecrets(String(e.failRaw)) : '',
+    })),
     stats: { validRounds: valid, failedRounds: cands.length - valid },
   };
 }
@@ -4632,6 +4943,20 @@ function skillCodeMismatch(code, equipped) {
   return [...hits];
 }
 
+// ---------- 对局设置的真值/投影（纯函数可测） ----------
+// 真值 = 下拉框 value（引擎按它取装备/地图/对手）；chip 文案只是它的投影。
+// 这两个函数是投影的唯一算法来源：UI 里任何显示都由它们算，避免「chip 显示传送、真值已是眩晕」那类各算一套。
+function resolveSelValue(optionValues, cur, wanted) {
+  const opts = [...(optionValues || [])];
+  if (wanted != null && opts.includes(wanted)) return wanted;
+  if (opts.includes(cur)) return cur; // 想选的选项不存在：保持现真值（不静默改装备）
+  return opts.length ? opts[0] : ''; // 现真值也没了（工坊条目被删/换包）：对齐浏览器回退到首项
+}
+function chipShortLabel(text, value) {
+  // 只切圆括号里的说明（「传送（8 选 1）」→「传送」）；阶段徽标「[官方] …」是名字的一部分，不能切
+  return String(text || value || '').split(/[（(]/)[0].trim() || String(value || '');
+}
+
 // ---------- Workshop 云端存取（纯函数可测）：工坊条目 ↔ 实体行 ----------
 function buildWorkshopPayload(entry) {
   return {
@@ -5017,6 +5342,9 @@ self.onmessage = function (e) {
           map: bj.map, result: br, who: bj.who || 0,
           seed: bj.seedStr || bj.seed, strategy: m.strategy || '',
         }));
+        // 逐局进度上报：整批 12 局在 Worker 里要跑好几秒，主线程若一条消息都收不到，
+        // 界面就只能显示一个不动的「打 12 局评分」——与「卡死」无法区分（progress 消息不带 ok，主线程据此不收尾）。
+        self.postMessage({ id: m.id, progress: bi + 1, total: m.jobs.length });
       }
       self.postMessage({ id: m.id, ok: true, games: games, errCount: box.count, errLast: box.last });
       return;
@@ -5126,6 +5454,23 @@ const BASE_TPS = 20; // 1x = 每秒 20 tick，用时口径 = ticks/20 秒
 // 技能/判定链/道具文案全部走当前语言字典（键位对齐由 tests/i18n.test.js 锁死）
 const SKILL_CN = L.skill;
 const REASON_CN = L.reason;
+const CAUSE_CN = L.cause;          // 对手怎么没的（我方胜 / 中性叙述）
+const CAUSE_SELF_CN = L.causeSelf; // 我怎么倒下的（我方负 —— 这里用中性词会被误读成我击杀了对手）
+const CAUSE_BOTH_CN = L.causeBoth; // 同拍双亡
+// 胜负结论一律走这里：引擎的 reason 是全局口径，直接印在我方胜负后面会出现「胜 · 被打死」这种自相矛盾。
+// v = {how, cause, tiebreak}（verdictOf / parseBucketKey 的产物）。
+function verdictWord(v) {
+  if (!v) return '';
+  if (v.how === 'tiebreak') {
+    const tie = REASON_CN[v.tiebreak] ?? v.tiebreak ?? '';
+    // 我方也阵亡 = 同拍双亡：先说双方怎么倒下的，再说胜负是怎么判出来的
+    return v.cause ? `${CAUSE_BOTH_CN[v.cause] ?? v.cause} · ${tie}` : tie;
+  }
+  if (!v.how) return ''; // 旧数据里的裸 reason：调用方自行回退
+  if (!v.cause) return T('ui.bkUnknown');
+  const dict = v.how === 'self-dead' ? CAUSE_SELF_CN : CAUSE_CN;
+  return dict[v.cause] ?? v.cause;
+}
 const ITEM_CN = L.item;
 const skillSel = $id('skillSel');
 const userSkill = () => (skillSel ? skillSel.value : 'teleport');
@@ -5218,6 +5563,23 @@ const skillLabel = (id) => SKILL_CN[id] ?? packName('skill', id) ?? id;
 const itemLabel = (id) => ITEM_CN[id] ?? packName('item', id) ?? id;
 const stageTag = (e) => T(`ui.stage_${e.stage || 'private'}`);
 
+// 装备/对手/地图的唯一权威 = 下拉框的 value（引擎按它取装备）；chip 与技能不符提示都只是它的投影。
+// 任何「程序化」改选择的路径都必须走这里：只靠 change 事件同步投影必然漏（用户手改才有 change），
+// 那正是「chip 还写着传送、实际装备已是眩晕、提示如实报眩晕」的三方不一致来源。
+function setSelValue(sel, value) {
+  if (!sel) return false;
+  const next = resolveSelValue([...sel.options].map((o) => o.value), sel.value, value);
+  const changed = next !== sel.value;
+  sel.value = next; // 想选的不存在时 resolveSelValue 会保持现真值，不会静默改装备
+  syncProjections();
+  return changed;
+}
+// 投影统一重算（chip 文案 + 技能不符提示）：真值变了就重算，不依赖是谁改的
+function syncProjections() {
+  syncSetupChips();
+  refreshSkillHint();
+}
+
 // 三来源下拉合并：内置 + 官方收录 + 我的/导入（带阶段徽标；重建时先清旧注入项、保住当前选择）
 function injectPackOptions() {
   const refill = (sel, type, mk) => {
@@ -5230,11 +5592,14 @@ function injectPackOptions() {
       o.dataset.pack = '1';
       sel.appendChild(o);
     }
-    if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+    // 旧选择还在就还原；不在了（工坊条目被删/内容包换掉）则回退首项 ——
+    // 那是真值发生了变化，必须让投影跟上，不能留个显示旧装备的 chip
+    sel.value = resolveSelValue([...sel.options].map((o) => o.value), cur, cur);
   };
   refill(mapSel, 'map', (d) => ({ value: `pack:${d.id}`, textContent: `${stageTag(d)} ${d.name}（${d.desc || d.id}）` }));
   refill(skillSel, 'skill', (d) => ({ value: d.id, textContent: `${stageTag(d)} ${d.name}` }));
   refill(oppSelect, 'bot', (d) => ({ value: `pack:${d.id}`, textContent: `${stageTag(d)} ${d.name}` }));
+  syncProjections(); // 选项重建也可能改变真值（旧选择消失→回退首项）与选项文案，投影一律重算
 }
 
 // 工坊 UI：模板/校验保存/列表/分享/导入/分享本局
@@ -5260,9 +5625,9 @@ let wsConnectCloud = null; // 登录后由 play.js 调用：注入云端 CRUD、
   const refresh = () => { PACK = buildPack(); injectPackOptions(); renderWsList(); scheduleLadder(); };
   let wsFilter = 'all'; // 浏览筛选：全部 / map / skill / item / bot
   const equipEntry = (e) => { // 「装备」= 工坊页一键接回对战页下拉（订阅即用）
-    if (e.type === 'map' && mapSel) mapSel.value = `pack:${e.id}`;
-    else if (e.type === 'skill' && skillSel) { skillSel.value = e.id; refreshSkillHint(); }
-    else if (e.type === 'bot' && oppSelect) oppSelect.value = `pack:${e.id}`;
+    if (e.type === 'map' && mapSel) setSelValue(mapSel, `pack:${e.id}`);
+    else if (e.type === 'skill' && skillSel) setSelValue(skillSel, e.id);
+    else if (e.type === 'bot' && oppSelect) setSelValue(oppSelect, `pack:${e.id}`);
     else { showWs(T('ui.wsEquipNa'), false); return; } // item：随对局物资刷新出现，无需装备
     scheduleLadder();
     showWs(T('ui.wsEquipped', { name: e.name }), false);
@@ -5496,9 +5861,20 @@ function sandboxRun(job, opts) {
       url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
       w = new Worker(url);
     } catch (e) { cleanup(); reject(e); return; }
-    timer = setTimeout(() => { cleanup(); reject(new Error(`sandbox timeout ${o.timeoutMs || 30000}ms`)); }, o.timeoutMs || 30000);
+    const arm = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { cleanup(); reject(new Error(`sandbox timeout ${o.timeoutMs || 30000}ms`)); }, o.timeoutMs || 30000);
+    };
+    arm();
     w.onmessage = (ev) => {
       const d = ev.data || {};
+      // 逐局进度（不带 ok/error）：转给调用方刷界面，并给超时续期 ——
+      // 有进度就说明 Worker 还活着，硬超时不该按「整批总时长」把一台慢机器判死。
+      if (typeof d.progress === 'number' && d.ok !== true && !d.error) {
+        if (typeof o.onProgress === 'function') { try { o.onProgress(d.progress, d.total); } catch { /* 渲染失败不影响跑批 */ } }
+        arm();
+        return;
+      }
       cleanup();
       if (d.ok) resolve(d);
       else reject(new Error(d.error || 'sandbox error'));
@@ -5580,8 +5956,8 @@ function applyTankToUi(t) { // 切台/入座：代码进编辑器、策略文本
   });
   editorEl.value = st.code;
   if (strategyEl) strategyEl.value = st.strategy;
-  if (t && t.skill && skillSel && [...skillSel.options].some((o) => o.value === t.skill)) skillSel.value = t.skill;
-  refreshSkillHint();
+  if (t && t.skill) setSelValue(skillSel, t.skill); // 无该选项时保持现装备；chip/提示随真值一起更新
+  syncProjections(); // 代码换了也要重算不符提示（即使装备没变）
 }
 function loadStore() {
   const s = readLocalStore();
@@ -5862,7 +6238,7 @@ function syncSetupChips() { // chip 只显示选项主名（括号里的说明�
   const short = (sel) => {
     if (!sel) return '';
     const txt = sel.selectedOptions && sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : '';
-    return String(txt || sel.value).split(/[（(]/)[0].trim();
+    return chipShortLabel(txt, sel.value); // chip 只显示真值对应选项的主名（算法与测试同源）
   };
   const set = (id, sel) => {
     const v = $id(id) && $id(id).querySelector('.v');
@@ -6265,7 +6641,13 @@ function buildLog(result, names, seedStr) {
       case 'end':
         html = e.winner == null
           ? T('log.endDraw', { a: e.stars[0], b: e.stars[1] })
-          : T('log.endWin', { who: nm(e.winner), reason: REASON_CN[e.reason] ?? e.reason, a: e.stars[0], b: e.stars[1] });
+          : T('log.endWin', {
+            who: nm(e.winner),
+            // 胜者视角：kill 时说清对手是被打死还是被毒圈拖死（旧战报无 deaths 时回退到全局 reason）
+            reason: verdictWord(verdictOf({ winner: e.winner, reason: e.reason, deaths: e.deaths }, e.winner))
+              || REASON_CN[e.reason] || e.reason,
+            a: e.stars[0], b: e.stars[1],
+          });
         break;
       default: break;
     }
@@ -6903,7 +7285,7 @@ function updateVerdict(box) {
     verdictMain.textContent = `● ${names[r.winner]} WIN`;
     verdictMain.style.color = r.winner === 0 ? 'var(--p1)' : 'var(--p2)';
   }
-  const how = REASON_CN[r.reason] ?? T('verdict.drawWord');
+  const how = verdictWord(verdictOf(r, r.winner)) || REASON_CN[r.reason] || T('verdict.drawWord');
   verdictSub.textContent = T('verdict.sub', { how, t: r.ticks - 1, a: r.stars[0], b: r.stars[1], sec: (r.ticks / BASE_TPS).toFixed(1) });
   verdictRef.textContent = T('verdict.ref', { id: 10000 + (match.seed % 90000) });
   if (box && box.count > 0) showErr(T('err.runtime', { n: box.count, msg: box.last }));
@@ -7308,13 +7690,18 @@ syncWsPage();
 const skillHintEl = $id('skillHint');
 const skillHintText = $id('skillHintText');
 const skillHintBtn = $id('skillHintBtn');
+// 元素在函数内取：这个提示要能在「装备真值变化的任何时刻」被调用（含模块早期的选项注入），
+// 不能因为顶层 const 尚未初始化（TDZ）而在启动路径上抛错
 function refreshSkillHint() {
-  if (!skillHintEl) return;
+  const el = $id('skillHint');
+  const textEl = $id('skillHintText');
+  const btn = $id('skillHintBtn');
+  if (!el || !editorEl) return;
   const bad = skillCodeMismatch(editorEl.value, userSkill());
-  if (!bad.length) { skillHintEl.classList.remove('show'); return; }
-  skillHintText.textContent = T('ui.skillMismatch', { skill: skillLabel(userSkill()), calls: bad.map(skillLabel).join('/') });
-  skillHintBtn.style.display = '';
-  skillHintEl.classList.add('show');
+  if (!bad.length) { el.classList.remove('show'); return; }
+  if (textEl) textEl.textContent = T('ui.skillMismatch', { skill: skillLabel(userSkill()), calls: bad.map(skillLabel).join('/') });
+  if (btn) btn.style.display = '';
+  el.classList.add('show');
 }
 if (skillHintBtn) {
   skillHintBtn.textContent = T('ui.skillMismatchBtn');
@@ -7382,15 +7769,9 @@ if (qp.get('pack') && wsImportPack) { // ?pack= 分享深链（阶段2）：先�
 if (qp.get('script')) { // 战报重现链接自带对局脚本（不嵌脚本无法逐字节重现）
   try { editorEl.value = b64d(qp.get('script')); } catch { /* 忽略 */ }
 }
-if (qp.get('map') && mapSel && [...mapSel.options].some((o) => o.value === qp.get('map'))) {
-  mapSel.value = qp.get('map'); // ?map=id 直达预置图（可分享/截图复现）
-}
-if (qp.get('skill') && skillSel && [...skillSel.options].some((o) => o.value === qp.get('skill'))) {
-  skillSel.value = qp.get('skill');
-}
-if (qp.get('opp') && oppSelect && [...oppSelect.options].some((o) => o.value === qp.get('opp'))) {
-  oppSelect.value = qp.get('opp');
-}
+if (qp.get('map')) setSelValue(mapSel, qp.get('map')); // ?map=id 直达预置图（可分享/截图复现）
+if (qp.get('skill')) setSelValue(skillSel, qp.get('skill'));
+if (qp.get('opp')) setSelValue(oppSelect, qp.get('opp'));
 footSeed.textContent = pendingSeed ? T('ui.footSeedReplay', { seed: pendingSeed }) : T('ui.footSeedAuto');
 previewMap = makeMap(seedFromString(pendingSeed || genSeed()));
 setupCanvas(previewMap);
@@ -7483,7 +7864,11 @@ function gaugeProgress(i, seedSet) {
     : T('ui.rvRunning', { i, n: BATCH_N });
 }
 
-async function runBatch(seedSet) {
+async function runBatch(seedSet, onProgress) {
+  const tick = (i) => {
+    gaugeProgress(i, seedSet);
+    if (typeof onProgress === 'function') { try { onProgress(i, BATCH_N); } catch { /* 渲染失败不影响跑批 */ } }
+  };
   if (batchBusy) return null;
   batchBusy = true;
   batchFailMsg = '';
@@ -7515,13 +7900,16 @@ async function runBatch(seedSet) {
           botB: j.who === 0 ? opp.fn : guarded,
         });
         games.push(summarizeGame({ map: j.map, result: r, who: j.who, seed: j.seedStr, strategy }));
-        if (i % 3 === 2) { gaugeProgress(i + 1, seedSet); await new Promise((res) => setTimeout(res, 0)); } // 分片，不卡界面
+        if (i % 3 === 2) { tick(i + 1); await new Promise((res) => setTimeout(res, 0)); } // 分片，不卡界面
       }
       errCount = box.count;
       errLast = box.last;
     } else if (SANDBOX_OK) { // 线上（禁 eval）：整批丢进 blob Worker，回「一局一行摘要」
-      gaugeProgress(0, seedSet);
-      const r = await sandboxRun({ type: 'batch', jobs, content: PACK, strategy }, { userCode: editorEl.value, oppCode: opp.code, timeoutMs: 120000 });
+      tick(0);
+      const r = await sandboxRun({ type: 'batch', jobs, content: PACK, strategy }, {
+        userCode: editorEl.value, oppCode: opp.code, timeoutMs: ITER_TIMEOUTS.evalMs,
+        onProgress: (i) => tick(i), // 线上整批在 Worker 里跑：逐局回报，界面才不是一行静止的字
+      });
       games = r.games || [];
       errCount = r.errCount || 0;
       errLast = r.errLast || '';
@@ -7604,7 +7992,8 @@ function renderGauge() {
     const entries = Object.entries(run.agg.lossBuckets).sort((a, b) => b[1] - a[1]);
     const top = entries.length ? entries[0][1] : 1;
     bars.innerHTML = entries.map(([reason, n], i) => {
-      const label = REASON_CN[reason] || reason;
+      // 桶 key 现在是「我方视角:死因」（self-dead:zone…）；旧下载数据里的裸 reason 仍走 REASON_CN
+      const label = verdictWord(parseBucketKey(reason)) || REASON_CN[reason] || reason;
       return `<div class="bar"><span>${esc(label)}</span><i class="${i ? 'w' : ''}" style="width:${Math.round((n / top) * 100)}%"></i><em>${n}</em></div>`;
     }).join('');
   }
@@ -7735,6 +8124,7 @@ function renderReviewSide() {
   side.innerHTML = parts.join('');
   if (reviewMode === 'batch') {
     loadIterModels(); // 模型表懒加载一次；失败会在面板里明示
+    renderIterLog();  // 侧栏刚重建：把已有的每轮汇总日志填回去（否则切页/重渲染会看起来「日志没了」）
     $id('itRunBtn')?.addEventListener('click', runIteration);
     $id('itHoldoutBtn')?.addEventListener('click', verifyIterHoldout);
     $id('itLogBtn')?.addEventListener('click', downloadIterLog);
@@ -7760,7 +8150,8 @@ function renderReview() {
   if (sub) {
     if (reviewMode === 'single' && match) {
       const rep = currentBattleReport();
-      sub.textContent = `seed ${match.seedStr} · ${match.names[0]} · ${match.names[1]} · ${T(rep.result.win ? 'ui.rvWin' : 'ui.rvLoss')}（${rep.result.reason}，t=${rep.result.ticks - 1}）`;
+      const vw = verdictWord(rep.result.verdict) || REASON_CN[rep.result.reason] || rep.result.reason;
+      sub.textContent = `seed ${match.seedStr} · ${match.names[0]} · ${match.names[1]} · ${T(rep.result.win ? 'ui.rvWin' : 'ui.rvLoss')}（${vw}，t=${rep.result.ticks - 1}）`;
     } else if (reviewMode === 'batch' && batchRuns.train) {
       const s = batchRuns.train.setup;
       sub.textContent = `${s.tank} · ${s.opponent} · ${s.skill} · ${s.mapKey}`;
@@ -7959,6 +8350,116 @@ const iterMsg = (t, bad) => { iterMsgText = t || ''; iterMsgBad = !!bad; };
 const iterModel = () => (($id('itModel') || {}).value || '');
 const iterRounds = () => iterRoundsChoice;
 
+// ---------- 防「误认卡死」：心跳秒表 + 每轮汇总日志 + AI 调用硬超时 ----------
+// 原先这里只有一行静态文字（第 r/n 轮 · 步骤名），一轮只变 3 次，而两次 AI 调用各要十几~几十秒，
+// 且 chat 没有任何超时：模型挂住时界面一个字都不动，用户和自动化都分不出「在跑」和「死了」。
+// 三件事同时补齐：① 每秒刷新的已用时/剩余估算（活着就可见）；② 每步硬超时（不回就按无效轮跳过，
+// 并把原因写进日志）；③ 每轮结果当场汇总成一行人话日志（跑到一半也能下载）。
+const STEP_IDX = { review: 0, gen: 1, eval: 2 };
+let iterHeartbeat = null;
+function iterStopHeartbeat() { if (iterHeartbeat != null) { clearInterval(iterHeartbeat); iterHeartbeat = null; } }
+function iterStartHeartbeat() {
+  iterStopHeartbeat();
+  iterHeartbeat = setInterval(() => {
+    if (iterState && iterState.running) iterTick();
+    else iterStopHeartbeat(); // 探针绑定被观测对象：迭代一停，秒表立刻自己收摊
+  }, 1000);
+}
+function iterLog(ev) {
+  if (!iterState) return;
+  iterState.log = pushIterLog(iterState.log, ev);
+  renderIterLog();
+}
+// 进入某一步：记下起点与该步的超时口径，供秒表算「已用 / 还剩多久判超时」
+function iterStep(kind, stepText, timeoutMs) {
+  if (!iterState) return;
+  iterState.stepKind = kind;
+  iterState.stepIndex = STEP_IDX[kind] == null ? 0 : STEP_IDX[kind]; // 进度条分子：轮内第几步
+  iterState.step = stepText;
+  iterState.stepAt = Date.now();
+  iterState.stepTimeoutMs = timeoutMs || 0;
+  iterState.evalAt = 0;
+  iterTick(true);
+}
+// 一次带硬超时的异步调用：超时不只是「不再等」，还要 abort 掉底层请求（否则配额继续烧）。
+// 外层的停止按钮（iterState.ctl）照旧生效：两个信号任一触发都收敛到同一个 abort。
+async function withIterTimeout(kind, ms, run) {
+  const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+  const outer = iterState && iterState.ctl ? iterState.ctl.signal : null;
+  const onAbort = () => { if (ctl) { try { ctl.abort(); } catch { /* 忽略 */ } } };
+  if (outer) { if (outer.aborted) onAbort(); else outer.addEventListener('abort', onAbort); }
+  let timer = null;
+  try {
+    const guard = new Promise((_, rej) => {
+      timer = setTimeout(() => {
+        onAbort();
+        const e = new Error(`${kind} timeout after ${ms}ms`);
+        e.name = 'TimeoutError';
+        rej(e);
+      }, ms);
+    });
+    // 没有 AbortController 的宿主（老 WebView）退回外层信号：至少「停止」按钮仍能中断
+    return await Promise.race([run(ctl ? ctl.signal : (outer || undefined)), guard]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (outer) { try { outer.removeEventListener('abort', onAbort); } catch { /* 忽略 */ } }
+  }
+}
+// 进度行：第几轮 · 哪一步 · 已用多久 · 慢了给解释 · 快超时给预告 · 整体还剩多久
+function iterProgressText() {
+  const st = iterState;
+  if (!st) return '';
+  if (!st.running) return '';
+  const parts = [T('ui.itRunning', { r: st.round, n: st.rounds, step: st.step || '' })];
+  const el = st.stepAt ? Date.now() - st.stepAt : 0;
+  parts.push(T('ui.itElapsed', { s: Math.round(el / 1000) }));
+  if (st.stepKind === 'eval' && st.evalAt) parts.push(T('ui.itEvalAt', { i: st.evalAt, n: BATCH_N }));
+  if (st.stepTimeoutMs) {
+    const pace = stepPace(el, st.stepTimeoutMs, ITER_TIMEOUTS.slowHintMs);
+    if (pace === 'slow') parts.push(T('ui.itSlowHint'));
+    else if (pace === 'near-timeout') parts.push(T('ui.itNearTimeout', { s: Math.max(1, Math.round((st.stepTimeoutMs - el) / 1000)) }));
+  }
+  const eta = iterEta({
+    round: st.roundMs.length, rounds: st.rounds, roundMs: st.roundMs, matchesPerRound: BATCH_N,
+    curElapsedMs: st.roundAt ? Date.now() - st.roundAt : 0, // 轮内也递减，整轮不动的数字看着就像卡死
+  });
+  if (eta > 0) parts.push(T('ui.itEta', { t: fmtClock(eta) }));
+  return parts.join(' · ');
+}
+// 日志一行：结构化事件 → 人话（失败原因走 explainIterFail，原始串挂 title 供排查）
+function iterLogRow(e) {
+  const s = e.ms == null ? '—' : (e.ms / 1000).toFixed(1);
+  if (e.kind === 'review') return { text: T('ui.itLogReview', { r: e.round, s, d: e.detail || T('ui.itLogNoDiag') }) };
+  if (e.kind === 'gen') return { text: T('ui.itLogGen', { r: e.round, s, d: e.detail || T('ui.itLogNoChange') }) };
+  if (e.kind === 'eval') {
+    const d = winDelta(e.winRate, e.baseWinRate);
+    const delta = d == null ? '—'
+      : (d.dir === 'flat' ? T('ui.itLogDeltaFlat') : T('ui.itLogDelta', { sign: d.pt > 0 ? '+' : '−', pt: Math.abs(d.pt) }));
+    const base = T('ui.itLogEval', {
+      r: e.round, m: e.matches == null ? BATCH_N : e.matches, s,
+      p: pctText(e.winRate), b: pctText(e.baseWinRate), delta,
+    });
+    return { text: e.best ? `${base} ${T('ui.itLogBest')}` : base, cls: e.best ? 'win' : '' };
+  }
+  if (e.kind === 'fail') {
+    const why = explainIterFail(e.failRaw);
+    return { text: T('ui.itLogFail', { r: e.round, step: e.detail, s, why: T(why.key) }), cls: 'bad', raw: why.raw };
+  }
+  return { text: e.detail || '' };
+}
+const iterClock = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toTimeString().slice(0, 8); };
+function renderIterLog() {
+  const box = $id('itLog');
+  if (!box) return;
+  const log = (iterState && iterState.log) || [];
+  if (!log.length) { box.innerHTML = `<div class="r">${esc(T('ui.itLogEmpty'))}</div>`; return; }
+  box.innerHTML = log.map((e) => {
+    const r = iterLogRow(e);
+    return `<div class="r ${r.cls || ''}"${r.raw ? ` title="${esc(r.raw)}"` : ''}><b>${esc(iterClock(e.at))}</b><span>${esc(r.text)}</span></div>`;
+  }).join('');
+  box.scrollTop = box.scrollHeight; // 永远看得到最新一条
+}
+
 // 迭代前留一份原版，独立于草稿（草稿会被每轮中间版覆盖）。
 // 快照必须绑定「哪台车 + 哪种登录态」：否则切台或换账号后点回退，会把别台/别人的代码盖过来。
 // 写入不是必然成功（隐私模式/配额满/file:）——静默失败等于 B1 的保护在最需要时不存在，所以要 read-back 并回传原因。
@@ -8063,13 +8564,21 @@ function renderIterPanel() {
   parts.push(`<div class="wrhint">${esc(T('ui.itCost', { min: Math.max(1, Math.round(cost.estMs / 60000)), ai: cost.aiCalls, m: cost.matches }))}</div>`);
   parts.push(`<button class="btn ghost" id="itRunBtn" style="padding:5px 12px;font-size:11px;${running ? '' : 'border-color:var(--accent);color:var(--accent)'}">${
     esc(running ? T('ui.itStop') : T('ui.itStart'))}</button>`);
-  parts.push(`<div class="wrhint" id="itProgress" style="color:var(--accent)">${
-    running ? esc(T('ui.itRunning', { r: iterState.round, n: iterState.rounds, step: iterState.step || '' })) : ''}</div>`);
+  parts.push(`<div class="wrhint" id="itProgress" style="color:var(--accent)">${running ? esc(iterProgressText()) : ''}</div>`);
+  // 进度条：轮内每一步都前进（静止的条与「卡死」无法区分）
+  parts.push(`<div class="itbar"${running ? '' : ' hidden'}><i id="itBar" style="width:${
+    running ? Math.round(iterProgress({ round: iterState.round, rounds: iterState.rounds, stepIndex: iterState.stepIndex || 0 }) * 100) : 0}%"></i></div>`);
   if (iterMsgText) parts.push(`<div class="wrhint" style="color:${iterMsgBad ? 'var(--warn)' : 'var(--ok)'}">${esc(iterMsgText)}</div>`);
   if (iterState && iterState.candidates.length > 1 && !running) {
     parts.push(`<button class="btn ghost" id="itHoldoutBtn" style="padding:5px 12px;font-size:11px">${esc(T('ui.itVerifyHoldout'))}</button>`);
+  }
+  // 下载入口在「跑到一半」时也要在：一轮出了问题，玩家当场就该能把记录拿走（原先只有跑完才出现）
+  if (iterState && ((iterState.log || []).length || iterState.candidates.length > 1)) {
     parts.push(`<button class="btn ghost" id="itLogBtn" style="padding:5px 12px;font-size:11px">${esc(T('ui.itDlLog'))}</button>`);
   }
+  // 每轮汇总日志：复盘/生成/评分逐条落地，失败轮说人话（原始串挂在 title 上）
+  parts.push(`<div class="wrhint" style="margin-top:2px">${esc(T('ui.itLogTitle'))}</div>`);
+  parts.push('<div class="itlog" id="itLog"></div>');
   return parts.join('');
 }
 
@@ -8091,13 +8600,20 @@ function renderIterTable() {
 }
 
 // 运行中不整块重建侧栏：否则「停止」按钮的 DOM 每步被替换，用户（和自动化）经常点不中。
-function iterTick() {
+// full=true 才重建候选表（每秒心跳只动进度行与进度条，避免每秒重建整块报告 HTML）
+function iterTick(full) {
   const prog = $id('itProgress');
   if (!prog || !iterState) { renderReview(); return; }
-  prog.textContent = T('ui.itRunning', { r: iterState.round, n: iterState.rounds, step: iterState.step || '' });
+  prog.textContent = iterProgressText();
+  const bar = $id('itBar');
+  if (bar) {
+    bar.style.width = `${Math.round(iterProgress({
+      round: iterState.round, rounds: iterState.rounds, stepIndex: iterState.stepIndex || 0,
+    }) * 100)}%`;
+  }
   const btn = $id('itRunBtn');
   if (btn) btn.textContent = T('ui.itStop');
-  renderReviewMain(); // 候选表随轮次更新（main 重建不影响侧栏按钮）
+  if (full) renderReviewMain(); // 候选表随轮次更新（main 重建不影响侧栏按钮）
 }
 
 async function runIteration() {
@@ -8131,56 +8647,87 @@ async function runIteration() {
     running: true, rounds, model, round: 0, step: '', candidates: [baseline], baseline,
     abort: false, stopped: 'done', applied: null, at: new Date().toISOString(), lockKey, fake: FAKE_LLM,
     ctl: (typeof AbortController === 'function' ? new AbortController() : null),
+    // 防「误认卡死」用的状态：日志、当前步起点与超时口径、每轮实测耗时（剩余时间靠它推）
+    log: [], stepKind: '', stepIndex: 0, stepAt: 0, stepTimeoutMs: 0, evalAt: 0, roundMs: [],
   };
   iterMsg('');
   renderReview();
+  iterLog({
+    kind: 'start',
+    detail: T('ui.itLogStart', { n: rounds, model: model || T('ui.itModelDefault'), b: pctText(baseline.trainWinRate) }),
+  });
+  iterStartHeartbeat(); // 秒表：每秒刷一次「已用 / 约剩」，让「还活着」可被看见
   try {
     for (let r = 1; r <= rounds; r++) {
       if (iterState.abort) { iterState.stopped = 'aborted'; break; }
       if (setupKey() !== lockKey) { iterState.stopped = 'setup-changed'; break; } // 中途改了设置：立刻停，别拿两套设置比
       iterState.round = r;
+      const roundT0 = Date.now();
+      iterState.roundAt = roundT0;
       const base = nextRoundBase(iterState.candidates) || baseline; // 爬山：从当前最优起跳
       strategyEl.value = base.strategy;
       editorEl.value = base.code;
       const cand = { round: r, model: model || 'default', valid: false };
-      iterState.step = T('ui.itStepReview');
-      iterTick();
+      // 一轮收尾（成败都走这里）：候选入池 + 记本轮实测耗时（剩余时间估算靠它）；
+      // 失败轮把内部原因翻成人话写进日志，原始串挂 title 并随记录下载 —— 不许只留一个事件名。
+      const closeRound = (stepText) => {
+        if (cand.invalidReason) {
+          iterLog({ kind: 'fail', round: r, ok: false, ms: Date.now() - roundT0, detail: stepText, failRaw: cand.invalidReason });
+        }
+        iterState.candidates.push(cand);
+        iterState.roundMs = iterState.roundMs.concat([Date.now() - roundT0]);
+      };
+      iterStep('review', T('ui.itStepReview'), ITER_TIMEOUTS.reviewMs);
       let parsed = null;
+      const revT0 = Date.now();
       try {
         const prompt = buildReviewPrompt({
           mode: 'batch', strategy: base.strategy,
           payload: reviewPayloadFromBatch(base.batch || currentBatch()),
         });
-        const { text } = await llmCtl.chat(prompt, { model: model || undefined, signal: iterState.ctl ? iterState.ctl.signal : undefined });
+        const { text } = await withIterTimeout('review', ITER_TIMEOUTS.reviewMs,
+          (signal) => llmCtl.chat(prompt, { model: model || undefined, signal }));
         parsed = parseReviewReply(text);
         // 「解析不出」必须带载荷，否则日志里判不出是被截断、给了散文、还是缺字段（评审 B6）
         if (!parsed) cand.invalidReason = `review unparsable: chars=${String(text || '').length} head=${String(text || '').slice(0, 200)}`;
       } catch (e) {
         cand.invalidReason = `review ${(e && e.name) || 'Error'}: ${String((e && (e.hint || e.message)) || e)}`;
       }
-      if (!parsed) { iterState.candidates.push(cand); continue; } // 无效轮不打断迭代
+      if (!parsed) { closeRound(T('ui.itStepReview')); continue; } // 无效轮不打断迭代
+      iterLog({
+        kind: 'review', round: r, ms: Date.now() - revT0,
+        detail: (parsed.diagnoses && parsed.diagnoses[0] && parsed.diagnoses[0].title) || '',
+      });
       cand.strategy = parsed.strategy;
       cand.changes = parsed.changes;
-      iterState.step = T('ui.itStepGen');
-      iterTick();
+      iterStep('gen', T('ui.itStepGen'), ITER_TIMEOUTS.genMs);
       strategyEl.value = parsed.strategy;
+      const genT0 = Date.now();
       // noDraft：迭代期间不许把中间版本写进草稿，否则崩溃/关页后玩家原版不可恢复（评审 B1）
-      const gen = await generateScript({ model: model || undefined, signal: iterState.ctl ? iterState.ctl.signal : undefined, noDraft: !iterBaseErr });
+      let gen = null;
+      try {
+        gen = await withIterTimeout('gen', ITER_TIMEOUTS.genMs,
+          (signal) => generateScript({ model: model || undefined, signal, noDraft: !iterBaseErr }));
+      } catch (e) { // 生成侧同样不许无限等：超时按无效轮处理，原因如实落档
+        gen = { ok: false, outcome: (e && e.name) === 'TimeoutError' ? 'timeout' : 'error', reason: String((e && e.message) || e) };
+      }
       if (!gen || !gen.ok) {
         cand.invalidReason = `gen ${(gen && gen.outcome) || 'failed'}: ${(gen && gen.reason) || ''}`.trim();
-        iterState.candidates.push(cand);
+        closeRound(T('ui.itStepGen'));
         continue;
       }
-      if (editorEl.value === base.code) { cand.invalidReason = 'gen produced identical code'; iterState.candidates.push(cand); continue; }
+      if (editorEl.value === base.code) { cand.invalidReason = 'gen produced identical code'; closeRound(T('ui.itStepGen')); continue; }
       cand.code = editorEl.value;
       cand.codeHash = codeHashOf(cand.code);
-      iterState.step = T('ui.itStepEval', { n: BATCH_N });
-      iterTick();
-      const run = await runBatch('train');
-      if (!run) { cand.invalidReason = `eval failed: ${batchFailMsg}`; iterState.candidates.push(cand); continue; }
+      iterLog({ kind: 'gen', round: r, ms: Date.now() - genT0, detail: (parsed.changes || []).slice(0, 2).join('；') });
+      iterStep('eval', T('ui.itStepEval', { n: BATCH_N }), ITER_TIMEOUTS.evalMs);
+      const evalT0 = Date.now();
+      // 逐局回报：本地分片跑与线上 Worker 跑都会喂进来，评分阶段不再是一行静止的字
+      const run = await runBatch('train', (i) => { if (iterState) { iterState.evalAt = i; iterTick(); } });
+      if (!run) { cand.invalidReason = `eval failed: ${batchFailMsg}`; closeRound(T('ui.itStepEval', { n: BATCH_N })); continue; }
       if (run.key !== lockKey) { // 这一轮是在别的设置下打的：不入池，立刻停
         cand.invalidReason = 'setup changed during eval';
-        iterState.candidates.push(cand);
+        closeRound(T('ui.itStepEval', { n: BATCH_N }));
         iterState.stopped = 'setup-changed';
         break;
       }
@@ -8188,7 +8735,14 @@ async function runIteration() {
       cand.valid = true;
       cand.batch = { setup: run.setup, at: run.at, games: run.games };
       cand.batchKey = run.key;
-      iterState.candidates.push(cand);
+      const prevBest = pickBest(iterState.candidates); // 入池前的最优（含基线）——判断这轮是否刷新纪录
+      closeRound(T('ui.itStepEval', { n: BATCH_N }));
+      iterLog({
+        kind: 'eval', round: r, ms: Date.now() - evalT0, matches: BATCH_N,
+        winRate: cand.trainWinRate, baseWinRate: baseline.trainWinRate,
+        best: !prevBest || cand.trainWinRate > prevBest.trainWinRate,
+      });
+      iterTick(true); // 候选表补上这一行
     }
   } catch (e) {
     iterState.stopped = 'error';
@@ -8211,12 +8765,20 @@ async function runIteration() {
   iterState.applied = best;
   iterState.running = false;
   iterState.step = '';
+  iterState.stepIndex = 3;
+  iterStopHeartbeat(); // 秒表绑定被观测对象：迭代结束立刻停，不留后台定时器
   const tried = iterState.candidates.filter((c) => !c.isBaseline);
   const validTried = tried.filter((c) => c.valid).length;
   if (best.isBaseline) iterMsg(validTried ? T('ui.itDoneBaseline', { n: tried.length }) : T('ui.itNoValid', { n: tried.length }), true);
   else if (iterState.stopped === 'setup-changed') iterMsg(T('ui.itSetupChanged'), true);
   else if (iterState.stopped === 'aborted') iterMsg(T('ui.itAborted', { msg: `#${best.round} ${pctText(best.trainWinRate)}` }));
   else iterMsg(T('ui.itDone', { r: best.round, p: pctText(best.trainWinRate) }));
+  iterLog({
+    kind: 'end',
+    detail: best.isBaseline
+      ? T('ui.itLogEndBaseline', { n: tried.length })
+      : T('ui.itLogEnd', { r: best.round, p: pctText(best.trainWinRate) }),
+  });
   lastCompare = null; // 迭代有自己的候选清单，不复用单次采纳的对比卡
   renderGauge();
   renderReview();
@@ -8242,6 +8804,7 @@ function downloadIterLog() {
     applied: iterState.applied,
     stopped: iterState.stopped,
     fakeLlm: !!iterState.fake,
+    events: iterState.log || [], // 界面上那条每轮汇总日志原样落档（含失败轮的原始串）
   });
   downloadText(`agentank-iteration-${Date.now()}.json`, JSON.stringify(log, null, 2), 'application/json');
 }

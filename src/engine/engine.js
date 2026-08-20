@@ -396,6 +396,7 @@ function damageByBullet(state, b, K, ev) {
   }
   const dmg = b.dmg ?? R.damage;
   K.hp -= dmg;
+  K.lastCause = 'bullet'; // 记死因：报告要能说清「被打死」还是「毒圈拖死」
   state.tanks[b.owner].dmgDealt += dmg;
   ev({ t: state.t, type: 'hit', who: b.owner, target: K.i, dmg, hp: K.hp, x: K.x, y: K.y });
 }
@@ -485,6 +486,7 @@ function explodeBomb(state, bomb, ev) {
       continue;
     }
     K.hp -= R.bombDamage;
+    K.lastCause = 'bomb';
     if (K.i !== bomb.owner) state.tanks[bomb.owner].dmgDealt += R.bombDamage; // 自伤不计输出
     hits.push({ who: K.i, dmg: R.bombDamage });
   }
@@ -747,6 +749,8 @@ function randomFreeCell(state) {
 
 // 终局判定链（超时与同拍双亡通用）：星数 → 剩余 HP → 累计输出伤害 → 距圈心近者 → 种子掷签。
 // 链条末端必出胜负——平局被根治，winner 永不为 null。
+// 注意：这里的 reason 是**全局**胜负原因，不是任何一方的「败因」——我方视角的结论由 analyze.js
+// 的 verdictOf 按 who + deaths 换算（曾因混用这两者，赢下的局也印「被打死」）。
 function resolveEnd(state) {
   const [a, b] = state.tanks;
   if (a.stars !== b.stars) return { winner: a.stars > b.stars ? 0 : 1, reason: 'stars' };
@@ -760,7 +764,8 @@ function resolveEnd(state) {
   return { winner: state.rng() < 0.5 ? 0 : 1, reason: 'coin' }; // 完全镜像局：种子掷签，确定性
 }
 
-// 阵亡判定：单亡 = 对方胜；同拍双亡 = 走终局判定链（不再有平局）
+// 阵亡判定：单亡 = 对方胜；同拍双亡 = 走终局判定链（不再有平局）。
+// 一并回传 deaths=[{who,cause}]：谁死了、怎么死的。缺了它，报告永远只能说「被打死」。
 function checkDeath(state, ev) {
   for (const T of state.tanks) {
     if (T.hp <= 0 && !T.deadAnnounced) {
@@ -770,8 +775,9 @@ function checkDeath(state, ev) {
   }
   const alive = state.tanks.filter((T) => T.hp > 0);
   if (alive.length === 2) return null;
-  if (alive.length === 1) return { winner: alive[0].i, reason: 'kill' };
-  return resolveEnd(state);
+  const deaths = state.tanks.filter((T) => T.hp <= 0).map((T) => ({ who: T.i, cause: T.lastCause || null }));
+  if (alive.length === 1) return { winner: alive[0].i, reason: 'kill', deaths };
+  return { ...resolveEnd(state), deaths }; // 同拍双亡：判定链定胜负，但两边的死因都要留下
 }
 
 export function runMatch(opts = {}) {
@@ -854,6 +860,7 @@ export function runMatch(opts = {}) {
       overloadArmed: false,
       pendingShot: null,
       deadAnnounced: false,
+      lastCause: null, // 最后一次受伤来源：bullet | bomb | poison | zone
       lastSeen: { x: m.spawns[1 - i].x, y: m.spawns[1 - i].y },
       goalKey: null,
       rng: mulberry32((seed + 0x9e3779b9 * (i + 1)) >>> 0),
@@ -953,6 +960,7 @@ export function runMatch(opts = {}) {
       T.poison--;
       const pdmg = T.poisonDmg ?? R.skills.poison.dmg;
       T.hp -= pdmg;
+      T.lastCause = 'poison';
       if (T.poisonFrom != null) state.tanks[T.poisonFrom].dmgDealt += pdmg;
       ev({ t, type: 'poison_tick', target: T.i, dmg: pdmg, hp: T.hp });
     }
@@ -963,6 +971,7 @@ export function runMatch(opts = {}) {
         for (const T of state.tanks) {
           if (T.hp <= 0 || inZone(state, T.x, T.y)) continue;
           T.hp -= zdmg;
+          T.lastCause = 'zone'; // 毒圈致死必须与子弹致死区分，否则报告只会写「被打死」
           ev({ t, type: 'zone_hit', target: T.i, dmg: zdmg, hp: T.hp });
         }
       }
@@ -971,12 +980,13 @@ export function runMatch(opts = {}) {
   }
 
   const [a, b] = state.tanks;
-  if (!ended) ended = resolveEnd(state); // 超时：终局判定链，必出胜负
+  if (!ended) ended = { ...resolveEnd(state), deaths: [] }; // 超时：终局判定链，必出胜负；无人阵亡
   ev({
     t: state.t,
     type: 'end',
     winner: ended.winner,
     reason: ended.reason,
+    deaths: ended.deaths || [],
     stars: [a.stars, b.stars],
     hp: [a.hp, b.hp],
   });
@@ -984,6 +994,7 @@ export function runMatch(opts = {}) {
     events: state.events,
     winner: ended.winner,
     reason: ended.reason,
+    deaths: ended.deaths || [], // [{who,cause}]：谁死了 + 死因（bullet|bomb|poison|zone）
     stars: [a.stars, b.stars],
     skills: [skillA, skillB],
     ticks: state.t + 1,

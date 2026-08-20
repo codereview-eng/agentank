@@ -220,6 +220,16 @@ footer .mono{color:var(--muted)}
 .wracts{display:flex; gap:6px}
 .wracts .btn{padding:5px 10px; font-size:11px; letter-spacing:0}
 .wrhint{font-size:11px; color:var(--dim)}
+/* 迭代进度条：轮内每一步都前进，静止的条与「卡死」无法区分，所以宽度必须由 iterProgress 驱动 */
+.itbar{height:4px; background:var(--panel-2); border:1px solid var(--line); border-radius:999px; overflow:hidden}
+.itbar>i{display:block; height:100%; background:var(--accent); width:0; transition:width .35s ease}
+/* 迭代日志：逐条追加的每轮汇总，跑到一半也能看清「第几轮出了什么结果」 */
+.itlog{max-height:190px; overflow:auto; background:var(--panel-2); border:1px solid var(--line); border-radius:7px;
+  padding:6px 8px; font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:10.5px; line-height:1.7; color:var(--muted)}
+.itlog .r{display:flex; gap:6px; white-space:pre-wrap; word-break:break-word}
+.itlog .r>b{color:var(--dim); font-weight:400; flex:none}
+.itlog .bad>span{color:var(--warn)}
+.itlog .win>span{color:var(--ok)}
 .fl{display:inline-flex; gap:4px; align-items:center; border:1px solid #54431C; color:var(--warn); border-radius:999px; padding:0 7px; font-size:10.5px; flex:none; letter-spacing:0; font-weight:400}
 .fl[hidden]{display:none} /* 作者样式的 display 会盖掉 hidden 属性的 UA display:none，必须显式补 */
 #reviewDrawer .dbody{display:grid; grid-template-columns:minmax(0,1fr) 340px}

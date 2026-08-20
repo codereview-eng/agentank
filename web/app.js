@@ -1,9 +1,9 @@
 // AgenTank 网页端 UI：本地跑引擎对战 + canvas 逐 tick 回放 + 实时战报 + 天梯。
 // 开发版经 <script type="module"> 加载；发布版由 scripts/build-web.mjs 去 import/export 内联进单文件。
-import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS, presetMap, validateContent, makePack, serializePack, parsePack, promoteStage, resolvePackMap, compileBot, OFFICIAL_CONTENT, buildBattleReport, summarizeGame, aggregateBatch, renderBatchText, battleReportFilename, batchReportFilename, BATCH_SEEDS } from '../src/engine/index.js';
+import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS, presetMap, validateContent, makePack, serializePack, parsePack, promoteStage, resolvePackMap, compileBot, OFFICIAL_CONTENT, buildBattleReport, summarizeGame, aggregateBatch, renderBatchText, battleReportFilename, batchReportFilename, BATCH_SEEDS, verdictOf, parseBucketKey } from '../src/engine/index.js';
 import { bots } from '../bots/index.js';
 import { LOCALES, LANGS, fmt, resolveLang } from './i18n.js';
-import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError, scriptGate, buildGenLog, genLogFilename, resolveEditorState, draftIsClean, buildReviewPrompt, parseReviewReply, reviewPayloadFromBattle, reviewPayloadFromBatch, compareVerdict, pickBest, nextRoundBase, iterationCost, buildIterationLog } from './play.js';
+import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError, scriptGate, buildGenLog, genLogFilename, resolveEditorState, draftIsClean, buildReviewPrompt, parseReviewReply, reviewPayloadFromBattle, reviewPayloadFromBatch, compareVerdict, pickBest, nextRoundBase, iterationCost, buildIterationLog, ITER_TIMEOUTS, pushIterLog, winDelta, explainIterFail, iterEta, iterProgress, stepPace, fmtClock, resolveSelValue, chipShortLabel } from './play.js';
 import { extractEngineSource, buildWorkerSource } from './sandbox.js';
 
 // 单文件产物里，本脚本自身的源码文本（引擎源从中切出，喂给无 eval 沙箱 Worker）。
@@ -69,6 +69,23 @@ const BASE_TPS = 20; // 1x = 每秒 20 tick，用时口径 = ticks/20 秒
 // 技能/判定链/道具文案全部走当前语言字典（键位对齐由 tests/i18n.test.js 锁死）
 const SKILL_CN = L.skill;
 const REASON_CN = L.reason;
+const CAUSE_CN = L.cause;          // 对手怎么没的（我方胜 / 中性叙述）
+const CAUSE_SELF_CN = L.causeSelf; // 我怎么倒下的（我方负 —— 这里用中性词会被误读成我击杀了对手）
+const CAUSE_BOTH_CN = L.causeBoth; // 同拍双亡
+// 胜负结论一律走这里：引擎的 reason 是全局口径，直接印在我方胜负后面会出现「胜 · 被打死」这种自相矛盾。
+// v = {how, cause, tiebreak}（verdictOf / parseBucketKey 的产物）。
+function verdictWord(v) {
+  if (!v) return '';
+  if (v.how === 'tiebreak') {
+    const tie = REASON_CN[v.tiebreak] ?? v.tiebreak ?? '';
+    // 我方也阵亡 = 同拍双亡：先说双方怎么倒下的，再说胜负是怎么判出来的
+    return v.cause ? `${CAUSE_BOTH_CN[v.cause] ?? v.cause} · ${tie}` : tie;
+  }
+  if (!v.how) return ''; // 旧数据里的裸 reason：调用方自行回退
+  if (!v.cause) return T('ui.bkUnknown');
+  const dict = v.how === 'self-dead' ? CAUSE_SELF_CN : CAUSE_CN;
+  return dict[v.cause] ?? v.cause;
+}
 const ITEM_CN = L.item;
 const skillSel = $id('skillSel');
 const userSkill = () => (skillSel ? skillSel.value : 'teleport');
@@ -161,6 +178,23 @@ const skillLabel = (id) => SKILL_CN[id] ?? packName('skill', id) ?? id;
 const itemLabel = (id) => ITEM_CN[id] ?? packName('item', id) ?? id;
 const stageTag = (e) => T(`ui.stage_${e.stage || 'private'}`);
 
+// 装备/对手/地图的唯一权威 = 下拉框的 value（引擎按它取装备）；chip 与技能不符提示都只是它的投影。
+// 任何「程序化」改选择的路径都必须走这里：只靠 change 事件同步投影必然漏（用户手改才有 change），
+// 那正是「chip 还写着传送、实际装备已是眩晕、提示如实报眩晕」的三方不一致来源。
+function setSelValue(sel, value) {
+  if (!sel) return false;
+  const next = resolveSelValue([...sel.options].map((o) => o.value), sel.value, value);
+  const changed = next !== sel.value;
+  sel.value = next; // 想选的不存在时 resolveSelValue 会保持现真值，不会静默改装备
+  syncProjections();
+  return changed;
+}
+// 投影统一重算（chip 文案 + 技能不符提示）：真值变了就重算，不依赖是谁改的
+function syncProjections() {
+  syncSetupChips();
+  refreshSkillHint();
+}
+
 // 三来源下拉合并：内置 + 官方收录 + 我的/导入（带阶段徽标；重建时先清旧注入项、保住当前选择）
 function injectPackOptions() {
   const refill = (sel, type, mk) => {
@@ -173,11 +207,14 @@ function injectPackOptions() {
       o.dataset.pack = '1';
       sel.appendChild(o);
     }
-    if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+    // 旧选择还在就还原；不在了（工坊条目被删/内容包换掉）则回退首项 ——
+    // 那是真值发生了变化，必须让投影跟上，不能留个显示旧装备的 chip
+    sel.value = resolveSelValue([...sel.options].map((o) => o.value), cur, cur);
   };
   refill(mapSel, 'map', (d) => ({ value: `pack:${d.id}`, textContent: `${stageTag(d)} ${d.name}（${d.desc || d.id}）` }));
   refill(skillSel, 'skill', (d) => ({ value: d.id, textContent: `${stageTag(d)} ${d.name}` }));
   refill(oppSelect, 'bot', (d) => ({ value: `pack:${d.id}`, textContent: `${stageTag(d)} ${d.name}` }));
+  syncProjections(); // 选项重建也可能改变真值（旧选择消失→回退首项）与选项文案，投影一律重算
 }
 
 // 工坊 UI：模板/校验保存/列表/分享/导入/分享本局
@@ -203,9 +240,9 @@ let wsConnectCloud = null; // 登录后由 play.js 调用：注入云端 CRUD、
   const refresh = () => { PACK = buildPack(); injectPackOptions(); renderWsList(); scheduleLadder(); };
   let wsFilter = 'all'; // 浏览筛选：全部 / map / skill / item / bot
   const equipEntry = (e) => { // 「装备」= 工坊页一键接回对战页下拉（订阅即用）
-    if (e.type === 'map' && mapSel) mapSel.value = `pack:${e.id}`;
-    else if (e.type === 'skill' && skillSel) { skillSel.value = e.id; refreshSkillHint(); }
-    else if (e.type === 'bot' && oppSelect) oppSelect.value = `pack:${e.id}`;
+    if (e.type === 'map' && mapSel) setSelValue(mapSel, `pack:${e.id}`);
+    else if (e.type === 'skill' && skillSel) setSelValue(skillSel, e.id);
+    else if (e.type === 'bot' && oppSelect) setSelValue(oppSelect, `pack:${e.id}`);
     else { showWs(T('ui.wsEquipNa'), false); return; } // item：随对局物资刷新出现，无需装备
     scheduleLadder();
     showWs(T('ui.wsEquipped', { name: e.name }), false);
@@ -439,9 +476,20 @@ function sandboxRun(job, opts) {
       url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
       w = new Worker(url);
     } catch (e) { cleanup(); reject(e); return; }
-    timer = setTimeout(() => { cleanup(); reject(new Error(`sandbox timeout ${o.timeoutMs || 30000}ms`)); }, o.timeoutMs || 30000);
+    const arm = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { cleanup(); reject(new Error(`sandbox timeout ${o.timeoutMs || 30000}ms`)); }, o.timeoutMs || 30000);
+    };
+    arm();
     w.onmessage = (ev) => {
       const d = ev.data || {};
+      // 逐局进度（不带 ok/error）：转给调用方刷界面，并给超时续期 ——
+      // 有进度就说明 Worker 还活着，硬超时不该按「整批总时长」把一台慢机器判死。
+      if (typeof d.progress === 'number' && d.ok !== true && !d.error) {
+        if (typeof o.onProgress === 'function') { try { o.onProgress(d.progress, d.total); } catch { /* 渲染失败不影响跑批 */ } }
+        arm();
+        return;
+      }
       cleanup();
       if (d.ok) resolve(d);
       else reject(new Error(d.error || 'sandbox error'));
@@ -523,8 +571,8 @@ function applyTankToUi(t) { // 切台/入座：代码进编辑器、策略文本
   });
   editorEl.value = st.code;
   if (strategyEl) strategyEl.value = st.strategy;
-  if (t && t.skill && skillSel && [...skillSel.options].some((o) => o.value === t.skill)) skillSel.value = t.skill;
-  refreshSkillHint();
+  if (t && t.skill) setSelValue(skillSel, t.skill); // 无该选项时保持现装备；chip/提示随真值一起更新
+  syncProjections(); // 代码换了也要重算不符提示（即使装备没变）
 }
 function loadStore() {
   const s = readLocalStore();
@@ -805,7 +853,7 @@ function syncSetupChips() { // chip 只显示选项主名（括号里的说明�
   const short = (sel) => {
     if (!sel) return '';
     const txt = sel.selectedOptions && sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : '';
-    return String(txt || sel.value).split(/[（(]/)[0].trim();
+    return chipShortLabel(txt, sel.value); // chip 只显示真值对应选项的主名（算法与测试同源）
   };
   const set = (id, sel) => {
     const v = $id(id) && $id(id).querySelector('.v');
@@ -1208,7 +1256,13 @@ function buildLog(result, names, seedStr) {
       case 'end':
         html = e.winner == null
           ? T('log.endDraw', { a: e.stars[0], b: e.stars[1] })
-          : T('log.endWin', { who: nm(e.winner), reason: REASON_CN[e.reason] ?? e.reason, a: e.stars[0], b: e.stars[1] });
+          : T('log.endWin', {
+            who: nm(e.winner),
+            // 胜者视角：kill 时说清对手是被打死还是被毒圈拖死（旧战报无 deaths 时回退到全局 reason）
+            reason: verdictWord(verdictOf({ winner: e.winner, reason: e.reason, deaths: e.deaths }, e.winner))
+              || REASON_CN[e.reason] || e.reason,
+            a: e.stars[0], b: e.stars[1],
+          });
         break;
       default: break;
     }
@@ -1846,7 +1900,7 @@ function updateVerdict(box) {
     verdictMain.textContent = `● ${names[r.winner]} WIN`;
     verdictMain.style.color = r.winner === 0 ? 'var(--p1)' : 'var(--p2)';
   }
-  const how = REASON_CN[r.reason] ?? T('verdict.drawWord');
+  const how = verdictWord(verdictOf(r, r.winner)) || REASON_CN[r.reason] || T('verdict.drawWord');
   verdictSub.textContent = T('verdict.sub', { how, t: r.ticks - 1, a: r.stars[0], b: r.stars[1], sec: (r.ticks / BASE_TPS).toFixed(1) });
   verdictRef.textContent = T('verdict.ref', { id: 10000 + (match.seed % 90000) });
   if (box && box.count > 0) showErr(T('err.runtime', { n: box.count, msg: box.last }));
@@ -2251,13 +2305,18 @@ syncWsPage();
 const skillHintEl = $id('skillHint');
 const skillHintText = $id('skillHintText');
 const skillHintBtn = $id('skillHintBtn');
+// 元素在函数内取：这个提示要能在「装备真值变化的任何时刻」被调用（含模块早期的选项注入），
+// 不能因为顶层 const 尚未初始化（TDZ）而在启动路径上抛错
 function refreshSkillHint() {
-  if (!skillHintEl) return;
+  const el = $id('skillHint');
+  const textEl = $id('skillHintText');
+  const btn = $id('skillHintBtn');
+  if (!el || !editorEl) return;
   const bad = skillCodeMismatch(editorEl.value, userSkill());
-  if (!bad.length) { skillHintEl.classList.remove('show'); return; }
-  skillHintText.textContent = T('ui.skillMismatch', { skill: skillLabel(userSkill()), calls: bad.map(skillLabel).join('/') });
-  skillHintBtn.style.display = '';
-  skillHintEl.classList.add('show');
+  if (!bad.length) { el.classList.remove('show'); return; }
+  if (textEl) textEl.textContent = T('ui.skillMismatch', { skill: skillLabel(userSkill()), calls: bad.map(skillLabel).join('/') });
+  if (btn) btn.style.display = '';
+  el.classList.add('show');
 }
 if (skillHintBtn) {
   skillHintBtn.textContent = T('ui.skillMismatchBtn');
@@ -2325,15 +2384,9 @@ if (qp.get('pack') && wsImportPack) { // ?pack= 分享深链（阶段2）：先�
 if (qp.get('script')) { // 战报重现链接自带对局脚本（不嵌脚本无法逐字节重现）
   try { editorEl.value = b64d(qp.get('script')); } catch { /* 忽略 */ }
 }
-if (qp.get('map') && mapSel && [...mapSel.options].some((o) => o.value === qp.get('map'))) {
-  mapSel.value = qp.get('map'); // ?map=id 直达预置图（可分享/截图复现）
-}
-if (qp.get('skill') && skillSel && [...skillSel.options].some((o) => o.value === qp.get('skill'))) {
-  skillSel.value = qp.get('skill');
-}
-if (qp.get('opp') && oppSelect && [...oppSelect.options].some((o) => o.value === qp.get('opp'))) {
-  oppSelect.value = qp.get('opp');
-}
+if (qp.get('map')) setSelValue(mapSel, qp.get('map')); // ?map=id 直达预置图（可分享/截图复现）
+if (qp.get('skill')) setSelValue(skillSel, qp.get('skill'));
+if (qp.get('opp')) setSelValue(oppSelect, qp.get('opp'));
 footSeed.textContent = pendingSeed ? T('ui.footSeedReplay', { seed: pendingSeed }) : T('ui.footSeedAuto');
 previewMap = makeMap(seedFromString(pendingSeed || genSeed()));
 setupCanvas(previewMap);
@@ -2426,7 +2479,11 @@ function gaugeProgress(i, seedSet) {
     : T('ui.rvRunning', { i, n: BATCH_N });
 }
 
-async function runBatch(seedSet) {
+async function runBatch(seedSet, onProgress) {
+  const tick = (i) => {
+    gaugeProgress(i, seedSet);
+    if (typeof onProgress === 'function') { try { onProgress(i, BATCH_N); } catch { /* 渲染失败不影响跑批 */ } }
+  };
   if (batchBusy) return null;
   batchBusy = true;
   batchFailMsg = '';
@@ -2458,13 +2515,16 @@ async function runBatch(seedSet) {
           botB: j.who === 0 ? opp.fn : guarded,
         });
         games.push(summarizeGame({ map: j.map, result: r, who: j.who, seed: j.seedStr, strategy }));
-        if (i % 3 === 2) { gaugeProgress(i + 1, seedSet); await new Promise((res) => setTimeout(res, 0)); } // 分片，不卡界面
+        if (i % 3 === 2) { tick(i + 1); await new Promise((res) => setTimeout(res, 0)); } // 分片，不卡界面
       }
       errCount = box.count;
       errLast = box.last;
     } else if (SANDBOX_OK) { // 线上（禁 eval）：整批丢进 blob Worker，回「一局一行摘要」
-      gaugeProgress(0, seedSet);
-      const r = await sandboxRun({ type: 'batch', jobs, content: PACK, strategy }, { userCode: editorEl.value, oppCode: opp.code, timeoutMs: 120000 });
+      tick(0);
+      const r = await sandboxRun({ type: 'batch', jobs, content: PACK, strategy }, {
+        userCode: editorEl.value, oppCode: opp.code, timeoutMs: ITER_TIMEOUTS.evalMs,
+        onProgress: (i) => tick(i), // 线上整批在 Worker 里跑：逐局回报，界面才不是一行静止的字
+      });
       games = r.games || [];
       errCount = r.errCount || 0;
       errLast = r.errLast || '';
@@ -2547,7 +2607,8 @@ function renderGauge() {
     const entries = Object.entries(run.agg.lossBuckets).sort((a, b) => b[1] - a[1]);
     const top = entries.length ? entries[0][1] : 1;
     bars.innerHTML = entries.map(([reason, n], i) => {
-      const label = REASON_CN[reason] || reason;
+      // 桶 key 现在是「我方视角:死因」（self-dead:zone…）；旧下载数据里的裸 reason 仍走 REASON_CN
+      const label = verdictWord(parseBucketKey(reason)) || REASON_CN[reason] || reason;
       return `<div class="bar"><span>${esc(label)}</span><i class="${i ? 'w' : ''}" style="width:${Math.round((n / top) * 100)}%"></i><em>${n}</em></div>`;
     }).join('');
   }
@@ -2678,6 +2739,7 @@ function renderReviewSide() {
   side.innerHTML = parts.join('');
   if (reviewMode === 'batch') {
     loadIterModels(); // 模型表懒加载一次；失败会在面板里明示
+    renderIterLog();  // 侧栏刚重建：把已有的每轮汇总日志填回去（否则切页/重渲染会看起来「日志没了」）
     $id('itRunBtn')?.addEventListener('click', runIteration);
     $id('itHoldoutBtn')?.addEventListener('click', verifyIterHoldout);
     $id('itLogBtn')?.addEventListener('click', downloadIterLog);
@@ -2703,7 +2765,8 @@ function renderReview() {
   if (sub) {
     if (reviewMode === 'single' && match) {
       const rep = currentBattleReport();
-      sub.textContent = `seed ${match.seedStr} · ${match.names[0]} · ${match.names[1]} · ${T(rep.result.win ? 'ui.rvWin' : 'ui.rvLoss')}（${rep.result.reason}，t=${rep.result.ticks - 1}）`;
+      const vw = verdictWord(rep.result.verdict) || REASON_CN[rep.result.reason] || rep.result.reason;
+      sub.textContent = `seed ${match.seedStr} · ${match.names[0]} · ${match.names[1]} · ${T(rep.result.win ? 'ui.rvWin' : 'ui.rvLoss')}（${vw}，t=${rep.result.ticks - 1}）`;
     } else if (reviewMode === 'batch' && batchRuns.train) {
       const s = batchRuns.train.setup;
       sub.textContent = `${s.tank} · ${s.opponent} · ${s.skill} · ${s.mapKey}`;
@@ -2902,6 +2965,116 @@ const iterMsg = (t, bad) => { iterMsgText = t || ''; iterMsgBad = !!bad; };
 const iterModel = () => (($id('itModel') || {}).value || '');
 const iterRounds = () => iterRoundsChoice;
 
+// ---------- 防「误认卡死」：心跳秒表 + 每轮汇总日志 + AI 调用硬超时 ----------
+// 原先这里只有一行静态文字（第 r/n 轮 · 步骤名），一轮只变 3 次，而两次 AI 调用各要十几~几十秒，
+// 且 chat 没有任何超时：模型挂住时界面一个字都不动，用户和自动化都分不出「在跑」和「死了」。
+// 三件事同时补齐：① 每秒刷新的已用时/剩余估算（活着就可见）；② 每步硬超时（不回就按无效轮跳过，
+// 并把原因写进日志）；③ 每轮结果当场汇总成一行人话日志（跑到一半也能下载）。
+const STEP_IDX = { review: 0, gen: 1, eval: 2 };
+let iterHeartbeat = null;
+function iterStopHeartbeat() { if (iterHeartbeat != null) { clearInterval(iterHeartbeat); iterHeartbeat = null; } }
+function iterStartHeartbeat() {
+  iterStopHeartbeat();
+  iterHeartbeat = setInterval(() => {
+    if (iterState && iterState.running) iterTick();
+    else iterStopHeartbeat(); // 探针绑定被观测对象：迭代一停，秒表立刻自己收摊
+  }, 1000);
+}
+function iterLog(ev) {
+  if (!iterState) return;
+  iterState.log = pushIterLog(iterState.log, ev);
+  renderIterLog();
+}
+// 进入某一步：记下起点与该步的超时口径，供秒表算「已用 / 还剩多久判超时」
+function iterStep(kind, stepText, timeoutMs) {
+  if (!iterState) return;
+  iterState.stepKind = kind;
+  iterState.stepIndex = STEP_IDX[kind] == null ? 0 : STEP_IDX[kind]; // 进度条分子：轮内第几步
+  iterState.step = stepText;
+  iterState.stepAt = Date.now();
+  iterState.stepTimeoutMs = timeoutMs || 0;
+  iterState.evalAt = 0;
+  iterTick(true);
+}
+// 一次带硬超时的异步调用：超时不只是「不再等」，还要 abort 掉底层请求（否则配额继续烧）。
+// 外层的停止按钮（iterState.ctl）照旧生效：两个信号任一触发都收敛到同一个 abort。
+async function withIterTimeout(kind, ms, run) {
+  const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+  const outer = iterState && iterState.ctl ? iterState.ctl.signal : null;
+  const onAbort = () => { if (ctl) { try { ctl.abort(); } catch { /* 忽略 */ } } };
+  if (outer) { if (outer.aborted) onAbort(); else outer.addEventListener('abort', onAbort); }
+  let timer = null;
+  try {
+    const guard = new Promise((_, rej) => {
+      timer = setTimeout(() => {
+        onAbort();
+        const e = new Error(`${kind} timeout after ${ms}ms`);
+        e.name = 'TimeoutError';
+        rej(e);
+      }, ms);
+    });
+    // 没有 AbortController 的宿主（老 WebView）退回外层信号：至少「停止」按钮仍能中断
+    return await Promise.race([run(ctl ? ctl.signal : (outer || undefined)), guard]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (outer) { try { outer.removeEventListener('abort', onAbort); } catch { /* 忽略 */ } }
+  }
+}
+// 进度行：第几轮 · 哪一步 · 已用多久 · 慢了给解释 · 快超时给预告 · 整体还剩多久
+function iterProgressText() {
+  const st = iterState;
+  if (!st) return '';
+  if (!st.running) return '';
+  const parts = [T('ui.itRunning', { r: st.round, n: st.rounds, step: st.step || '' })];
+  const el = st.stepAt ? Date.now() - st.stepAt : 0;
+  parts.push(T('ui.itElapsed', { s: Math.round(el / 1000) }));
+  if (st.stepKind === 'eval' && st.evalAt) parts.push(T('ui.itEvalAt', { i: st.evalAt, n: BATCH_N }));
+  if (st.stepTimeoutMs) {
+    const pace = stepPace(el, st.stepTimeoutMs, ITER_TIMEOUTS.slowHintMs);
+    if (pace === 'slow') parts.push(T('ui.itSlowHint'));
+    else if (pace === 'near-timeout') parts.push(T('ui.itNearTimeout', { s: Math.max(1, Math.round((st.stepTimeoutMs - el) / 1000)) }));
+  }
+  const eta = iterEta({
+    round: st.roundMs.length, rounds: st.rounds, roundMs: st.roundMs, matchesPerRound: BATCH_N,
+    curElapsedMs: st.roundAt ? Date.now() - st.roundAt : 0, // 轮内也递减，整轮不动的数字看着就像卡死
+  });
+  if (eta > 0) parts.push(T('ui.itEta', { t: fmtClock(eta) }));
+  return parts.join(' · ');
+}
+// 日志一行：结构化事件 → 人话（失败原因走 explainIterFail，原始串挂 title 供排查）
+function iterLogRow(e) {
+  const s = e.ms == null ? '—' : (e.ms / 1000).toFixed(1);
+  if (e.kind === 'review') return { text: T('ui.itLogReview', { r: e.round, s, d: e.detail || T('ui.itLogNoDiag') }) };
+  if (e.kind === 'gen') return { text: T('ui.itLogGen', { r: e.round, s, d: e.detail || T('ui.itLogNoChange') }) };
+  if (e.kind === 'eval') {
+    const d = winDelta(e.winRate, e.baseWinRate);
+    const delta = d == null ? '—'
+      : (d.dir === 'flat' ? T('ui.itLogDeltaFlat') : T('ui.itLogDelta', { sign: d.pt > 0 ? '+' : '−', pt: Math.abs(d.pt) }));
+    const base = T('ui.itLogEval', {
+      r: e.round, m: e.matches == null ? BATCH_N : e.matches, s,
+      p: pctText(e.winRate), b: pctText(e.baseWinRate), delta,
+    });
+    return { text: e.best ? `${base} ${T('ui.itLogBest')}` : base, cls: e.best ? 'win' : '' };
+  }
+  if (e.kind === 'fail') {
+    const why = explainIterFail(e.failRaw);
+    return { text: T('ui.itLogFail', { r: e.round, step: e.detail, s, why: T(why.key) }), cls: 'bad', raw: why.raw };
+  }
+  return { text: e.detail || '' };
+}
+const iterClock = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toTimeString().slice(0, 8); };
+function renderIterLog() {
+  const box = $id('itLog');
+  if (!box) return;
+  const log = (iterState && iterState.log) || [];
+  if (!log.length) { box.innerHTML = `<div class="r">${esc(T('ui.itLogEmpty'))}</div>`; return; }
+  box.innerHTML = log.map((e) => {
+    const r = iterLogRow(e);
+    return `<div class="r ${r.cls || ''}"${r.raw ? ` title="${esc(r.raw)}"` : ''}><b>${esc(iterClock(e.at))}</b><span>${esc(r.text)}</span></div>`;
+  }).join('');
+  box.scrollTop = box.scrollHeight; // 永远看得到最新一条
+}
+
 // 迭代前留一份原版，独立于草稿（草稿会被每轮中间版覆盖）。
 // 快照必须绑定「哪台车 + 哪种登录态」：否则切台或换账号后点回退，会把别台/别人的代码盖过来。
 // 写入不是必然成功（隐私模式/配额满/file:）——静默失败等于 B1 的保护在最需要时不存在，所以要 read-back 并回传原因。
@@ -3006,13 +3179,21 @@ function renderIterPanel() {
   parts.push(`<div class="wrhint">${esc(T('ui.itCost', { min: Math.max(1, Math.round(cost.estMs / 60000)), ai: cost.aiCalls, m: cost.matches }))}</div>`);
   parts.push(`<button class="btn ghost" id="itRunBtn" style="padding:5px 12px;font-size:11px;${running ? '' : 'border-color:var(--accent);color:var(--accent)'}">${
     esc(running ? T('ui.itStop') : T('ui.itStart'))}</button>`);
-  parts.push(`<div class="wrhint" id="itProgress" style="color:var(--accent)">${
-    running ? esc(T('ui.itRunning', { r: iterState.round, n: iterState.rounds, step: iterState.step || '' })) : ''}</div>`);
+  parts.push(`<div class="wrhint" id="itProgress" style="color:var(--accent)">${running ? esc(iterProgressText()) : ''}</div>`);
+  // 进度条：轮内每一步都前进（静止的条与「卡死」无法区分）
+  parts.push(`<div class="itbar"${running ? '' : ' hidden'}><i id="itBar" style="width:${
+    running ? Math.round(iterProgress({ round: iterState.round, rounds: iterState.rounds, stepIndex: iterState.stepIndex || 0 }) * 100) : 0}%"></i></div>`);
   if (iterMsgText) parts.push(`<div class="wrhint" style="color:${iterMsgBad ? 'var(--warn)' : 'var(--ok)'}">${esc(iterMsgText)}</div>`);
   if (iterState && iterState.candidates.length > 1 && !running) {
     parts.push(`<button class="btn ghost" id="itHoldoutBtn" style="padding:5px 12px;font-size:11px">${esc(T('ui.itVerifyHoldout'))}</button>`);
+  }
+  // 下载入口在「跑到一半」时也要在：一轮出了问题，玩家当场就该能把记录拿走（原先只有跑完才出现）
+  if (iterState && ((iterState.log || []).length || iterState.candidates.length > 1)) {
     parts.push(`<button class="btn ghost" id="itLogBtn" style="padding:5px 12px;font-size:11px">${esc(T('ui.itDlLog'))}</button>`);
   }
+  // 每轮汇总日志：复盘/生成/评分逐条落地，失败轮说人话（原始串挂在 title 上）
+  parts.push(`<div class="wrhint" style="margin-top:2px">${esc(T('ui.itLogTitle'))}</div>`);
+  parts.push('<div class="itlog" id="itLog"></div>');
   return parts.join('');
 }
 
@@ -3034,13 +3215,20 @@ function renderIterTable() {
 }
 
 // 运行中不整块重建侧栏：否则「停止」按钮的 DOM 每步被替换，用户（和自动化）经常点不中。
-function iterTick() {
+// full=true 才重建候选表（每秒心跳只动进度行与进度条，避免每秒重建整块报告 HTML）
+function iterTick(full) {
   const prog = $id('itProgress');
   if (!prog || !iterState) { renderReview(); return; }
-  prog.textContent = T('ui.itRunning', { r: iterState.round, n: iterState.rounds, step: iterState.step || '' });
+  prog.textContent = iterProgressText();
+  const bar = $id('itBar');
+  if (bar) {
+    bar.style.width = `${Math.round(iterProgress({
+      round: iterState.round, rounds: iterState.rounds, stepIndex: iterState.stepIndex || 0,
+    }) * 100)}%`;
+  }
   const btn = $id('itRunBtn');
   if (btn) btn.textContent = T('ui.itStop');
-  renderReviewMain(); // 候选表随轮次更新（main 重建不影响侧栏按钮）
+  if (full) renderReviewMain(); // 候选表随轮次更新（main 重建不影响侧栏按钮）
 }
 
 async function runIteration() {
@@ -3074,56 +3262,87 @@ async function runIteration() {
     running: true, rounds, model, round: 0, step: '', candidates: [baseline], baseline,
     abort: false, stopped: 'done', applied: null, at: new Date().toISOString(), lockKey, fake: FAKE_LLM,
     ctl: (typeof AbortController === 'function' ? new AbortController() : null),
+    // 防「误认卡死」用的状态：日志、当前步起点与超时口径、每轮实测耗时（剩余时间靠它推）
+    log: [], stepKind: '', stepIndex: 0, stepAt: 0, stepTimeoutMs: 0, evalAt: 0, roundMs: [],
   };
   iterMsg('');
   renderReview();
+  iterLog({
+    kind: 'start',
+    detail: T('ui.itLogStart', { n: rounds, model: model || T('ui.itModelDefault'), b: pctText(baseline.trainWinRate) }),
+  });
+  iterStartHeartbeat(); // 秒表：每秒刷一次「已用 / 约剩」，让「还活着」可被看见
   try {
     for (let r = 1; r <= rounds; r++) {
       if (iterState.abort) { iterState.stopped = 'aborted'; break; }
       if (setupKey() !== lockKey) { iterState.stopped = 'setup-changed'; break; } // 中途改了设置：立刻停，别拿两套设置比
       iterState.round = r;
+      const roundT0 = Date.now();
+      iterState.roundAt = roundT0;
       const base = nextRoundBase(iterState.candidates) || baseline; // 爬山：从当前最优起跳
       strategyEl.value = base.strategy;
       editorEl.value = base.code;
       const cand = { round: r, model: model || 'default', valid: false };
-      iterState.step = T('ui.itStepReview');
-      iterTick();
+      // 一轮收尾（成败都走这里）：候选入池 + 记本轮实测耗时（剩余时间估算靠它）；
+      // 失败轮把内部原因翻成人话写进日志，原始串挂 title 并随记录下载 —— 不许只留一个事件名。
+      const closeRound = (stepText) => {
+        if (cand.invalidReason) {
+          iterLog({ kind: 'fail', round: r, ok: false, ms: Date.now() - roundT0, detail: stepText, failRaw: cand.invalidReason });
+        }
+        iterState.candidates.push(cand);
+        iterState.roundMs = iterState.roundMs.concat([Date.now() - roundT0]);
+      };
+      iterStep('review', T('ui.itStepReview'), ITER_TIMEOUTS.reviewMs);
       let parsed = null;
+      const revT0 = Date.now();
       try {
         const prompt = buildReviewPrompt({
           mode: 'batch', strategy: base.strategy,
           payload: reviewPayloadFromBatch(base.batch || currentBatch()),
         });
-        const { text } = await llmCtl.chat(prompt, { model: model || undefined, signal: iterState.ctl ? iterState.ctl.signal : undefined });
+        const { text } = await withIterTimeout('review', ITER_TIMEOUTS.reviewMs,
+          (signal) => llmCtl.chat(prompt, { model: model || undefined, signal }));
         parsed = parseReviewReply(text);
         // 「解析不出」必须带载荷，否则日志里判不出是被截断、给了散文、还是缺字段（评审 B6）
         if (!parsed) cand.invalidReason = `review unparsable: chars=${String(text || '').length} head=${String(text || '').slice(0, 200)}`;
       } catch (e) {
         cand.invalidReason = `review ${(e && e.name) || 'Error'}: ${String((e && (e.hint || e.message)) || e)}`;
       }
-      if (!parsed) { iterState.candidates.push(cand); continue; } // 无效轮不打断迭代
+      if (!parsed) { closeRound(T('ui.itStepReview')); continue; } // 无效轮不打断迭代
+      iterLog({
+        kind: 'review', round: r, ms: Date.now() - revT0,
+        detail: (parsed.diagnoses && parsed.diagnoses[0] && parsed.diagnoses[0].title) || '',
+      });
       cand.strategy = parsed.strategy;
       cand.changes = parsed.changes;
-      iterState.step = T('ui.itStepGen');
-      iterTick();
+      iterStep('gen', T('ui.itStepGen'), ITER_TIMEOUTS.genMs);
       strategyEl.value = parsed.strategy;
+      const genT0 = Date.now();
       // noDraft：迭代期间不许把中间版本写进草稿，否则崩溃/关页后玩家原版不可恢复（评审 B1）
-      const gen = await generateScript({ model: model || undefined, signal: iterState.ctl ? iterState.ctl.signal : undefined, noDraft: !iterBaseErr });
+      let gen = null;
+      try {
+        gen = await withIterTimeout('gen', ITER_TIMEOUTS.genMs,
+          (signal) => generateScript({ model: model || undefined, signal, noDraft: !iterBaseErr }));
+      } catch (e) { // 生成侧同样不许无限等：超时按无效轮处理，原因如实落档
+        gen = { ok: false, outcome: (e && e.name) === 'TimeoutError' ? 'timeout' : 'error', reason: String((e && e.message) || e) };
+      }
       if (!gen || !gen.ok) {
         cand.invalidReason = `gen ${(gen && gen.outcome) || 'failed'}: ${(gen && gen.reason) || ''}`.trim();
-        iterState.candidates.push(cand);
+        closeRound(T('ui.itStepGen'));
         continue;
       }
-      if (editorEl.value === base.code) { cand.invalidReason = 'gen produced identical code'; iterState.candidates.push(cand); continue; }
+      if (editorEl.value === base.code) { cand.invalidReason = 'gen produced identical code'; closeRound(T('ui.itStepGen')); continue; }
       cand.code = editorEl.value;
       cand.codeHash = codeHashOf(cand.code);
-      iterState.step = T('ui.itStepEval', { n: BATCH_N });
-      iterTick();
-      const run = await runBatch('train');
-      if (!run) { cand.invalidReason = `eval failed: ${batchFailMsg}`; iterState.candidates.push(cand); continue; }
+      iterLog({ kind: 'gen', round: r, ms: Date.now() - genT0, detail: (parsed.changes || []).slice(0, 2).join('；') });
+      iterStep('eval', T('ui.itStepEval', { n: BATCH_N }), ITER_TIMEOUTS.evalMs);
+      const evalT0 = Date.now();
+      // 逐局回报：本地分片跑与线上 Worker 跑都会喂进来，评分阶段不再是一行静止的字
+      const run = await runBatch('train', (i) => { if (iterState) { iterState.evalAt = i; iterTick(); } });
+      if (!run) { cand.invalidReason = `eval failed: ${batchFailMsg}`; closeRound(T('ui.itStepEval', { n: BATCH_N })); continue; }
       if (run.key !== lockKey) { // 这一轮是在别的设置下打的：不入池，立刻停
         cand.invalidReason = 'setup changed during eval';
-        iterState.candidates.push(cand);
+        closeRound(T('ui.itStepEval', { n: BATCH_N }));
         iterState.stopped = 'setup-changed';
         break;
       }
@@ -3131,7 +3350,14 @@ async function runIteration() {
       cand.valid = true;
       cand.batch = { setup: run.setup, at: run.at, games: run.games };
       cand.batchKey = run.key;
-      iterState.candidates.push(cand);
+      const prevBest = pickBest(iterState.candidates); // 入池前的最优（含基线）——判断这轮是否刷新纪录
+      closeRound(T('ui.itStepEval', { n: BATCH_N }));
+      iterLog({
+        kind: 'eval', round: r, ms: Date.now() - evalT0, matches: BATCH_N,
+        winRate: cand.trainWinRate, baseWinRate: baseline.trainWinRate,
+        best: !prevBest || cand.trainWinRate > prevBest.trainWinRate,
+      });
+      iterTick(true); // 候选表补上这一行
     }
   } catch (e) {
     iterState.stopped = 'error';
@@ -3154,12 +3380,20 @@ async function runIteration() {
   iterState.applied = best;
   iterState.running = false;
   iterState.step = '';
+  iterState.stepIndex = 3;
+  iterStopHeartbeat(); // 秒表绑定被观测对象：迭代结束立刻停，不留后台定时器
   const tried = iterState.candidates.filter((c) => !c.isBaseline);
   const validTried = tried.filter((c) => c.valid).length;
   if (best.isBaseline) iterMsg(validTried ? T('ui.itDoneBaseline', { n: tried.length }) : T('ui.itNoValid', { n: tried.length }), true);
   else if (iterState.stopped === 'setup-changed') iterMsg(T('ui.itSetupChanged'), true);
   else if (iterState.stopped === 'aborted') iterMsg(T('ui.itAborted', { msg: `#${best.round} ${pctText(best.trainWinRate)}` }));
   else iterMsg(T('ui.itDone', { r: best.round, p: pctText(best.trainWinRate) }));
+  iterLog({
+    kind: 'end',
+    detail: best.isBaseline
+      ? T('ui.itLogEndBaseline', { n: tried.length })
+      : T('ui.itLogEnd', { r: best.round, p: pctText(best.trainWinRate) }),
+  });
   lastCompare = null; // 迭代有自己的候选清单，不复用单次采纳的对比卡
   renderGauge();
   renderReview();
@@ -3185,6 +3419,7 @@ function downloadIterLog() {
     applied: iterState.applied,
     stopped: iterState.stopped,
     fakeLlm: !!iterState.fake,
+    events: iterState.log || [], // 界面上那条每轮汇总日志原样落档（含失败轮的原始串）
   });
   downloadText(`agentank-iteration-${Date.now()}.json`, JSON.stringify(log, null, 2), 'application/json');
 }

@@ -32,6 +32,18 @@ export const LOCALES = {
       kill: '击杀', stars: '星数', hp: '血量判定',
       damage: '输出判定', center: '圈心判定', coin: '种子掷签',
     },
+    // 致死来源（替代笼统的「击杀」；毒圈拖死与子弹击杀必须能分开）。
+    // 三套是**方向性**的：说对手怎么没的 / 说我怎么倒下的 / 同拍双亡。
+    // 「输在哪」用中性词会让玩家误读成自己击杀了对手 —— 所以负局一律走 causeSelf。
+    cause: {
+      bullet: '击杀', bomb: '炸死', poison: '毒死', zone: '毒圈拖死',
+    },
+    causeSelf: {
+      bullet: '被击杀', bomb: '被炸死', poison: '被毒死', zone: '被毒圈拖死',
+    },
+    causeBoth: {
+      bullet: '双方互殴阵亡', bomb: '双方被炸死', poison: '双方被毒死', zone: '双方被毒圈拖死',
+    },
     maps: {
       crossFort: { name: '十字要塞', desc: '中央十字工事，四条突破口' },
       openPlains: { name: '开阔平原', desc: '稀疏掩体，远距离对狙' },
@@ -134,6 +146,37 @@ export const LOCALES = {
       itRestoreOtherTank: '这份快照属于「{tank}」，与当前出战的坦克不是同一台 —— 已拒绝回退，避免把别台的代码盖过来',
       itRestoreConfirm: '当前编辑器里的内容与迭代前那版不同，回退会覆盖它。继续？',
       itSnapshotFail: '原版快照存不下（{msg}）：中途崩溃将无法一键回退 —— 本次迭代会照旧写草稿兜底',
+      // 防「误认卡死」：进度行每秒都有变化（已用秒 / 预计剩余），慢了给解释，快超时给预告
+      itElapsed: '已用 {s}s',
+      itEta: '约剩 {t}',
+      itSlowHint: '模型还在想（通常 10~30 秒）',
+      itNearTimeout: '再等 {s}s 仍无回应就跳过本轮',
+      itEvalAt: '第 {i}/{n} 局',
+      // 每轮汇总日志
+      itLogTitle: '迭代日志',
+      itLogEmpty: '开跑后这里会逐条记录每轮的复盘、生成、评分结果',
+      itLogStart: '开始迭代 · {n} 轮 · 模型 {model} · 基线 {b}',
+      itLogReview: '#{r} 复盘 {s}s · {d}',
+      itLogGen: '#{r} 生成 {s}s · {d}',
+      itLogEval: '#{r} 评分 {m} 局 {s}s · 训练组 {p}（基线 {b}，{delta}）',
+      itLogBest: '★ 新最优',
+      itLogFail: '#{r} {step} 失败 {s}s · {why}',
+      itLogEnd: '完成：已应用第 {r} 轮（训练组 {p}）',
+      itLogEndBaseline: '完成：{n} 轮都没超过原版，已保留原战术',
+      itLogDelta: '{sign}{pt} 个百分点',
+      itLogDeltaFlat: '与基线持平',
+      itLogNoDiag: '（模型没给诊断标题）',
+      itLogNoChange: '（模型没说改了什么）',
+      // 失败原因说人话（原始串折叠在日志文件里，界面这行给玩家看得懂的因果）
+      itFailTimeout: '模型迟迟不回，已按超时跳过本轮',
+      itFailUnparsable: '模型回的不是能用的复盘格式，本轮作废',
+      itFailAborted: '你点了停止，本轮中断',
+      itFailReview: '复盘调用出错，本轮作废',
+      itFailSameCode: '生成出来的代码与上一版一字不差，本轮不计',
+      itFailGen: '代码生成没过关，本轮作废',
+      itFailEval: '这一版跑 12 局时出错，成绩不算',
+      itFailSetup: '对局设置被改了，这一轮不入池',
+      itFailOther: '本轮出了未归类的问题',
       rvNoFlag: '本局没标出可疑操作',
       rvTitleSingle: '复盘这一局',
       rvTitleBatch: '战术复盘',
@@ -165,6 +208,7 @@ export const LOCALES = {
       rvCost: '本次消耗 1 次 AI 调用 · 报告摘要 {kb}KB',
       rvWin: '胜',
       rvLoss: '负',
+      bkUnknown: '死因未记录',
       codeBox: '查看/编辑脚本（高级）',
       myTank: '我的坦克',
       opponent: '对手',
@@ -434,6 +478,17 @@ export default function decide(api) {
       kill: 'kill', stars: 'stars', hp: 'HP tiebreak',
       damage: 'damage tiebreak', center: 'center tiebreak', coin: 'seeded coin toss',
     },
+    // Cause of death, in three directions: what happened to the rival / to me / to both.
+    // A neutral word in the "where you lost" panel reads as if you got the kill — losses always use causeSelf.
+    cause: {
+      bullet: 'kill', bomb: 'bomb kill', poison: 'poison kill', zone: 'zone kill',
+    },
+    causeSelf: {
+      bullet: 'shot down', bomb: 'bombed', poison: 'poisoned', zone: 'dragged down by the zone',
+    },
+    causeBoth: {
+      bullet: 'both shot down', bomb: 'both bombed', poison: 'both poisoned', zone: 'both taken by the zone',
+    },
     maps: {
       crossFort: { name: 'Cross Fort', desc: 'central cross works, four breaches' },
       openPlains: { name: 'Open Plains', desc: 'sparse cover, long-range duels' },
@@ -535,6 +590,37 @@ export default function decide(api) {
       itRestoreOtherTank: 'That snapshot belongs to "{tank}", not the tank currently deployed — restore refused so another tank\'s code cannot overwrite this one',
       itRestoreConfirm: 'The editor content differs from the pre-iteration version; restoring will overwrite it. Continue?',
       itSnapshotFail: 'Could not store the pre-iteration snapshot ({msg}): a crash mid-run could not be rolled back — this run will keep writing drafts as a fallback',
+      // Anti "looks frozen": the progress line changes every second (elapsed / eta), explains slowness, previews the timeout
+      itElapsed: '{s}s elapsed',
+      itEta: '~{t} left',
+      itSlowHint: 'model still thinking (usually 10-30s)',
+      itNearTimeout: 'skipping this round if silent for another {s}s',
+      itEvalAt: 'battle {i}/{n}',
+      // Per-round summary log
+      itLogTitle: 'Iteration log',
+      itLogEmpty: 'Once running, each round logs its review, codegen and score here',
+      itLogStart: 'Iteration started · {n} rounds · model {model} · baseline {b}',
+      itLogReview: '#{r} review {s}s · {d}',
+      itLogGen: '#{r} codegen {s}s · {d}',
+      itLogEval: '#{r} score {m} battles {s}s · train {p} (baseline {b}, {delta})',
+      itLogBest: '★ new best',
+      itLogFail: '#{r} {step} failed {s}s · {why}',
+      itLogEnd: 'Done: applied round {r} (train {p})',
+      itLogEndBaseline: 'Done: none of the {n} rounds beat the original — kept your tactics',
+      itLogDelta: '{sign}{pt} points',
+      itLogDeltaFlat: 'level with the baseline',
+      itLogNoDiag: '(model gave no diagnosis title)',
+      itLogNoChange: '(model did not say what changed)',
+      // Failure reasons in plain words (the raw string stays in the downloadable log)
+      itFailTimeout: 'model never answered — round skipped on timeout',
+      itFailUnparsable: 'model did not reply in a usable review format — round void',
+      itFailAborted: 'you hit stop — round interrupted',
+      itFailReview: 'the review call errored — round void',
+      itFailSameCode: 'generated code is identical to the previous version — round not counted',
+      itFailGen: 'code generation did not pass the gate — round void',
+      itFailEval: 'this version errored while playing 12 battles — score discarded',
+      itFailSetup: 'match setup changed — this round stays out of the pool',
+      itFailOther: 'unclassified problem in this round',
       rvNoFlag: 'no suspicious moves flagged',
       rvTitleSingle: 'Review this battle',
       rvTitleBatch: 'Tactics review',
@@ -566,6 +652,7 @@ export default function decide(api) {
       rvCost: '1 AI call this round · report digest {kb}KB',
       rvWin: 'win',
       rvLoss: 'loss',
+      bkUnknown: 'cause not recorded',
       codeBox: 'View/edit script (advanced)',
       myTank: 'My Tank',
       opponent: 'Opponent',

@@ -85,6 +85,9 @@ self.onmessage = function (e) {
           map: bj.map, result: br, who: bj.who || 0,
           seed: bj.seedStr || bj.seed, strategy: m.strategy || '',
         }));
+        // 逐局进度上报：整批 12 局在 Worker 里要跑好几秒，主线程若一条消息都收不到，
+        // 界面就只能显示一个不动的「打 12 局评分」——与「卡死」无法区分（progress 消息不带 ok，主线程据此不收尾）。
+        self.postMessage({ id: m.id, progress: bi + 1, total: m.jobs.length });
       }
       self.postMessage({ id: m.id, ok: true, games: games, errCount: box.count, errLast: box.last });
       return;
