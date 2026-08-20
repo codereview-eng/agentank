@@ -3,7 +3,7 @@
 import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS, presetMap, validateContent, makePack, serializePack, parsePack, promoteStage, resolvePackMap, compileBot, OFFICIAL_CONTENT, buildBattleReport, summarizeGame, aggregateBatch, renderBatchText, battleReportFilename, batchReportFilename, BATCH_SEEDS } from '../src/engine/index.js';
 import { bots } from '../bots/index.js';
 import { LOCALES, LANGS, fmt, resolveLang } from './i18n.js';
-import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError, scriptGate, buildGenLog, genLogFilename, resolveEditorState, draftIsClean, buildReviewPrompt, parseReviewReply, reviewPayloadFromBattle, reviewPayloadFromBatch, compareVerdict } from './play.js';
+import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError, scriptGate, buildGenLog, genLogFilename, resolveEditorState, draftIsClean, buildReviewPrompt, parseReviewReply, reviewPayloadFromBattle, reviewPayloadFromBatch, compareVerdict, pickBest, nextRoundBase, iterationCost, buildIterationLog } from './play.js';
 import { extractEngineSource, buildWorkerSource } from './sandbox.js';
 
 // 单文件产物里，本脚本自身的源码文本（引擎源从中切出，喂给无 eval 沙箱 Worker）。
@@ -2119,8 +2119,9 @@ function generationGate(code) {
   return scriptGate(code, { evalOk: EVAL_OK, compile: compileScript });
 }
 
-async function generateScript() {
-  if (!genBtn) return;
+async function generateScript(genOpts) {
+  const gOpt = genOpts || {};
+  if (!genBtn) return { ok: false, outcome: 'no-button', reason: 'gen button missing' };
   if (llmCtl && llmCtl.needLogin) { llmCtl.login(); return { ok: false, outcome: 'need-login', reason: 'not logged in' }; } // 未登录：按钮即登录入口
   const strategy = (strategyEl ? strategyEl.value : '').trim();
   const skill = userSkill();
@@ -2144,7 +2145,7 @@ async function generateScript() {
       const prompt = buildLlmPrompt({ strategy, skill, feedback });
       const rec = { n: attempt, promptChars: prompt.length };
       attempts.push(rec);
-      const { text } = await llmCtl.chat(prompt);
+      const { text } = await llmCtl.chat(prompt, { model: gOpt.model || undefined, signal: gOpt.signal });
       rec.replyChars = String(text || '').length;
       rec.replyHead = String(text || '').slice(0, 500);
       const code = extractLlmCode(text);
@@ -2594,7 +2595,7 @@ function renderReviewMain() {
     main.innerHTML = `${cmp}<div class="rpt">${esc(why)}</div>`;
     return;
   }
-  main.innerHTML = `${cmp}<pre class="rpt">${esc(renderBatchText(batch).join('\n'))}</pre>${renderHistory()}`;
+  main.innerHTML = `${cmp}<pre class="rpt">${esc(renderBatchText(batch).join('\n'))}</pre>${renderIterTable()}${renderHistory()}`;
 }
 
 function renderCompare() {
@@ -2657,7 +2658,15 @@ function renderReviewSide() {
       <button class="btn ghost" id="rvDropBtn" style="padding:5px 12px;font-size:11px">${esc(T('ui.rvDiscard'))}</button>
     </div>`);
   }
+  if (reviewMode === 'batch') parts.push(`<div style="border-top:1px dashed var(--line);margin-top:10px;padding-top:10px">${renderIterPanel()}</div>`);
   side.innerHTML = parts.join('');
+  if (reviewMode === 'batch') {
+    loadIterModels(); // 模型表懒加载一次；失败会在面板里明示
+    $id('itRunBtn')?.addEventListener('click', runIteration);
+    $id('itHoldoutBtn')?.addEventListener('click', verifyIterHoldout);
+    $id('itLogBtn')?.addEventListener('click', downloadIterLog);
+    $id('itRounds')?.addEventListener('change', () => renderReviewSide());
+  }
   const ai = $id('rvAiBtn');
   if (ai) ai.addEventListener('click', runAiReview);
   const adopt = $id('rvAdoptBtn');
@@ -2723,7 +2732,7 @@ async function runAiReview() {
   renderReview();
   const t0 = Date.now();
   try {
-    const { text } = await llmCtl.chat(prompt);
+    const { text } = await llmCtl.chat(prompt, { model: iterModel() || undefined });
     const parsed = parseReviewReply(text);
     if (!parsed) {
       reviewMsg(T('ui.rvBadReply'), true);
@@ -2815,6 +2824,238 @@ async function adoptProposal() {
   renderReview();
 }
 
+
+
+// ---------- 调试用假 AI（仅 ?fakellm=1 生效）----------
+// 为什么需要它：迭代闭环（复盘→生成→评分→择优）在没有登录票的环境里根本跑不到，
+// 只靠纯函数单测就宣称「闭环可用」属于假绿。带这个参数时用固定回复驱动整条链路做端到端验证；
+// 不带参数时这段代码零参与（线上行为不变），且启用时界面会明示「假 AI（调试）」。
+const FAKE_LLM = (() => { try { return new URLSearchParams(location.search).get('fakellm') === '1'; } catch { return false; } })();
+function makeFakeLlm() {
+  let genCall = 0;
+  const VARIANTS = [
+    // 变体 1：只在对齐时开火（稳）
+    'export default function decide(api) {\n  const me = api.me(); const e = api.enemy();\n  if (me.hp < 40) { const k = api.nearestItem("medkit"); if (k) return api.moveTo(k); }\n  const s = api.nearestStar(); if (s && api.distTo(s) <= 4) return api.moveTo(s);\n  if (api.canFire() && api.enemyVisible() && (me.x === e.x || me.y === e.y)) return api.fireAt(e);\n  return api.moveTo(s || e);\n}',
+    // 变体 2：一味追击（弱）
+    'export default function decide(api) {\n  const e = api.enemy();\n  if (api.canFire() && api.enemyVisible()) return api.fireAt(e);\n  return api.moveTo(e);\n}',
+    // 变体 3：躲弹道 + 对齐开火 + 回血（强）
+    'export default function decide(api) {\n  const me = api.me(); const e = api.enemy();\n  if (me.hp < 40) { const k = api.nearestItem("medkit"); if (k) return api.moveTo(k); }\n  const b = api.enemyBullet();\n  if (b && (b.x === me.x || b.y === me.y)) {\n    const alt = (b.x === me.x) ? { x: me.x + 1, y: me.y } : { x: me.x, y: me.y + 1 };\n    if (api.walkable(alt)) return api.moveTo(alt);\n  }\n  const s = api.nearestStar(); if (s && api.distTo(s) <= 4) return api.moveTo(s);\n  if (api.canFire() && api.enemyVisible() && (me.x === e.x || me.y === e.y)) return api.fireAt(e);\n  return api.moveTo(s || e);\n}',
+  ];
+  return {
+    models: async () => ({ models: [{ id: 'fake-model-a' }, { id: 'fake-model-b' }], default_model: 'fake-model-a' }),
+    chat: async (prompt) => {
+      await new Promise((r) => setTimeout(r, 30));
+      if (String(prompt).includes('脚本生成器')) { // 生成代码
+        const code = VARIANTS[genCall++ % VARIANTS.length];
+        return { text: '```js\n' + code + '\n```' };
+      }
+      return { // 复盘
+        text: '```json\n' + JSON.stringify({
+          diagnoses: [{ title: '假 AI 诊断', detail: '仅用于端到端验证', evidence: 't=1' }],
+          strategy: `假 AI 改写第 ${genCall + 1} 版：躲弹道、对齐才开火、血低回血。`,
+          changes: [`第 ${genCall + 1} 版改动`],
+        }) + '\n```',
+      };
+    },
+  };
+}
+
+// ---------- 循环迭代：跑多版、每版真打 12 局评分、择优应用 ----------
+// 用户拍板（2026-08-20）：迭代结束**总是应用训练组最强那版**（不设留出组门槛）；
+// 留出组验证做成事后可选按钮，不占迭代时间。
+// 单轮复盘之所以会让胜率变低，是因为流程里没有任何一步检验 AI 的建议——迭代补的正是择优压力。
+const ITER_ROUND_CHOICES = [3, 5, 10];
+let iterState = null;
+let iterModels = null;   // {models:[{id}], default_model} | {error:'...'}
+let iterMsgText = '';
+let iterMsgBad = false;
+const iterMsg = (t, bad) => { iterMsgText = t || ''; iterMsgBad = !!bad; };
+const iterModel = () => (($id('itModel') || {}).value || '');
+const iterRounds = () => Number(($id('itRounds') || {}).value) || ITER_ROUND_CHOICES[0];
+
+async function loadIterModels() {
+  if (iterModels || !llmCtl || typeof llmCtl.models !== 'function') return;
+  try {
+    const r = await llmCtl.models();
+    iterModels = r && Array.isArray(r.models) ? r : { models: [], default_model: (r && r.default_model) || '' };
+  } catch (e) { // 降级可观测：取不到模型表就明示原因，仍可用平台默认跑
+    iterModels = { models: [], default_model: '', error: `${(e && e.name) || 'Error'}: ${String((e && (e.hint || e.message)) || e)}` };
+  }
+  renderReview();
+}
+
+function renderIterPanel() {
+  const st = sdkState();
+  const running = !!(iterState && iterState.running);
+  const parts = [`<h4>${esc(T('ui.itTitle'))}</h4>`];
+  if (st === 'absent') { parts.push(`<div class="wrhint">${esc(T('ui.rvNoSdk'))}</div>`); return parts.join(''); }
+  if (st === 'need-login') { parts.push(`<div class="wrhint">${esc(T('ui.rvNeedLogin'))}</div>`); return parts.join(''); }
+
+  const models = (iterModels && iterModels.models) || [];
+  const def = (iterModels && iterModels.default_model) || '';
+  const opts = [`<option value="">${esc(T('ui.itModelDefault'))}${def ? ` · ${esc(def)}` : ''}</option>`]
+    .concat(models.map((m) => `<option value="${esc(m.id)}">${esc(m.id)}</option>`)).join('');
+  parts.push(`<label style="width:auto;display:flex;gap:6px;align-items:center;font-size:11px">${esc(T('ui.itModel'))}
+    <select id="itModel" style="flex:1;font-size:11px;padding:3px 6px"${running ? ' disabled' : ''}>${opts}</select></label>`);
+  if (iterModels && iterModels.error) parts.push(`<div class="wrhint" style="color:var(--warn)">${esc(T('ui.itModelsFail', { msg: iterModels.error }))}</div>`);
+  const rounds = iterState ? iterState.rounds : ITER_ROUND_CHOICES[0];
+  parts.push(`<label style="width:auto;display:flex;gap:6px;align-items:center;font-size:11px">${esc(T('ui.itRounds'))}
+    <select id="itRounds" style="flex:1;font-size:11px;padding:3px 6px"${running ? ' disabled' : ''}>${
+    ITER_ROUND_CHOICES.map((n) => `<option value="${n}"${n === rounds ? ' selected' : ''}>${n}</option>`).join('')}</select></label>`);
+  const cost = iterationCost(rounds, BATCH_N);
+  parts.push(`<div class="wrhint">${esc(T('ui.itCost', { min: Math.max(1, Math.round(cost.estMs / 60000)), ai: cost.aiCalls, m: cost.matches }))}</div>`);
+  parts.push(`<button class="btn ghost" id="itRunBtn" style="padding:5px 12px;font-size:11px;${running ? '' : 'border-color:var(--accent);color:var(--accent)'}">${
+    esc(running ? T('ui.itStop') : T('ui.itStart'))}</button>`);
+  if (running) {
+    parts.push(`<div class="wrhint" style="color:var(--accent)">${esc(T('ui.itRunning', { r: iterState.round, n: iterState.rounds, step: iterState.step || '' }))}</div>`);
+  }
+  if (iterMsgText) parts.push(`<div class="wrhint" style="color:${iterMsgBad ? 'var(--warn)' : 'var(--ok)'}">${esc(iterMsgText)}</div>`);
+  if (iterState && iterState.candidates.length > 1 && !running) {
+    parts.push(`<button class="btn ghost" id="itHoldoutBtn" style="padding:5px 12px;font-size:11px">${esc(T('ui.itVerifyHoldout'))}</button>`);
+    parts.push(`<button class="btn ghost" id="itLogBtn" style="padding:5px 12px;font-size:11px">${esc(T('ui.itDlLog'))}</button>`);
+  }
+  return parts.join('');
+}
+
+function renderIterTable() {
+  if (!iterState || iterState.candidates.length <= 1) return '';
+  const best = iterState.applied || pickBest(iterState.candidates);
+  const rows = iterState.candidates.map((c) => {
+    const isBest = best && c === best;
+    const name = c.isBaseline ? T('ui.itBaselineRow') : String(c.round);
+    const score = c.valid ? pctText(c.trainWinRate) : `<span style="color:var(--bad)">${esc(T('ui.itInvalid'))}</span>`;
+    const note = c.valid
+      ? esc((c.changes || []).slice(0, 2).join('；') || (c.isBaseline ? '—' : ''))
+      : `<span style="color:var(--dim)">${esc(c.invalidReason || '')}</span>`;
+    return `<tr${isBest ? ' class="me"' : ''}><td>${esc(name)}${isBest ? ` <span class="chipg" style="padding:0 6px">${esc(T('ui.itBest'))}</span>` : ''}</td>`
+      + `<td>${score}</td><td style="font-size:11px">${note}</td></tr>`;
+  }).join('');
+  return `<h4 style="font-size:12px;color:var(--dim);letter-spacing:1px;margin:16px 0 6px">${esc(T('ui.itTitle'))}</h4>`
+    + `<table><thead><tr><th>${esc(T('ui.itTblRound'))}</th><th>${esc(T('ui.itTblTrain'))}</th><th>${esc(T('ui.itTblNote'))}</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+async function runIteration() {
+  if (iterState && iterState.running) { // 按钮兼作停止
+    iterState.abort = true;
+    if (iterState.ctl) { try { iterState.ctl.abort(); } catch { /* 忽略 */ } }
+    return;
+  }
+  const st = sdkState();
+  if (st === 'need-login') { if (llmCtl && llmCtl.login) llmCtl.login(); return; }
+  if (st !== 'ready') { iterMsg(T('ui.rvNoSdk'), true); renderReview(); return; }
+  if (batchBusy) { iterMsg(T('ui.rvBusy'), true); renderReview(); return; }
+  if (!batchRuns.train || !batchRuns.train.agg.games) { iterMsg(T('ui.itNeedBaseline'), true); renderReview(); return; }
+
+  const rounds = iterRounds();
+  const model = iterModel();
+  const baseline = {
+    round: 0, isBaseline: true, valid: true,
+    strategy: strategyEl.value, code: editorEl.value, codeHash: codeHashOf(editorEl.value),
+    trainWinRate: batchRuns.train.agg.winRate,
+    holdoutWinRate: batchRuns.holdout ? batchRuns.holdout.agg.winRate : null,
+    batch: currentBatch(),
+  };
+  iterState = {
+    running: true, rounds, model, round: 0, step: '', candidates: [baseline], baseline,
+    abort: false, stopped: 'done', applied: null, at: new Date().toISOString(),
+    ctl: (typeof AbortController === 'function' ? new AbortController() : null),
+  };
+  iterMsg('');
+  renderReview();
+  try {
+    for (let r = 1; r <= rounds; r++) {
+      if (iterState.abort) { iterState.stopped = 'aborted'; break; }
+      iterState.round = r;
+      const base = nextRoundBase(iterState.candidates) || baseline; // 爬山：从当前最优起跳
+      strategyEl.value = base.strategy;
+      editorEl.value = base.code;
+      const cand = { round: r, model: model || 'default', valid: false };
+      iterState.step = T('ui.itStepReview');
+      renderReview();
+      let parsed = null;
+      try {
+        const prompt = buildReviewPrompt({
+          mode: 'batch', strategy: base.strategy,
+          payload: reviewPayloadFromBatch(base.batch || currentBatch()),
+        });
+        const { text } = await llmCtl.chat(prompt, { model: model || undefined, signal: iterState.ctl ? iterState.ctl.signal : undefined });
+        parsed = parseReviewReply(text);
+        if (!parsed) cand.invalidReason = 'review reply unparsable';
+      } catch (e) {
+        cand.invalidReason = `review ${(e && e.name) || 'Error'}: ${String((e && (e.hint || e.message)) || e)}`;
+      }
+      if (!parsed) { iterState.candidates.push(cand); continue; } // 无效轮不打断迭代
+      cand.strategy = parsed.strategy;
+      cand.changes = parsed.changes;
+      iterState.step = T('ui.itStepGen');
+      renderReview();
+      strategyEl.value = parsed.strategy;
+      const gen = await generateScript({ model: model || undefined, signal: iterState.ctl ? iterState.ctl.signal : undefined });
+      if (!gen || !gen.ok) {
+        cand.invalidReason = `gen ${(gen && gen.outcome) || 'failed'}: ${(gen && gen.reason) || ''}`.trim();
+        iterState.candidates.push(cand);
+        continue;
+      }
+      if (editorEl.value === base.code) { cand.invalidReason = 'gen produced identical code'; iterState.candidates.push(cand); continue; }
+      cand.code = editorEl.value;
+      cand.codeHash = codeHashOf(cand.code);
+      iterState.step = T('ui.itStepEval', { n: BATCH_N });
+      renderReview();
+      const run = await runBatch('train');
+      if (!run) { cand.invalidReason = `eval failed: ${batchFailMsg}`; iterState.candidates.push(cand); continue; }
+      cand.trainWinRate = run.agg.winRate;
+      cand.valid = true;
+      cand.batch = { setup: run.setup, at: run.at, games: run.games };
+      iterState.candidates.push(cand);
+    }
+  } catch (e) {
+    iterState.stopped = 'error';
+    iterMsg(`${(e && e.name) || 'Error'}: ${String((e && e.message) || e)}`, true);
+  }
+  // 收尾：总是应用训练组最强那版（含基线——迭代没赢过原版时就保留原版）
+  const best = pickBest(iterState.candidates) || baseline;
+  strategyEl.value = best.strategy;
+  editorEl.value = best.code;
+  saveDraft();
+  refreshSkillHint();
+  if (best.batch) { // 胜率区回到「被应用那版」的成绩，不留下别版的数字
+    batchRuns.train = { games: best.batch.games, agg: aggregateBatch(best.batch.games), setup: best.batch.setup, at: best.batch.at, key: setupKey(), ms: 0 };
+  }
+  iterState.applied = best;
+  iterState.running = false;
+  iterState.step = '';
+  const tried = iterState.candidates.filter((c) => !c.isBaseline);
+  const validTried = tried.filter((c) => c.valid).length;
+  if (best.isBaseline) iterMsg(validTried ? T('ui.itDoneBaseline', { n: tried.length }) : T('ui.itNoValid', { n: tried.length }), true);
+  else if (iterState.stopped === 'aborted') iterMsg(T('ui.itAborted', { msg: `#${best.round} ${pctText(best.trainWinRate)}` }));
+  else iterMsg(T('ui.itDone', { r: best.round, p: pctText(best.trainWinRate) }));
+  lastCompare = null; // 迭代有自己的候选清单，不复用单次采纳的对比卡
+  renderGauge();
+  renderReview();
+}
+
+async function verifyIterHoldout() {
+  if (batchBusy) { iterMsg(T('ui.rvBusy'), true); renderReview(); return; }
+  const run = await runBatch('holdout');
+  if (!run) { iterMsg(T('ui.rvFail', { msg: batchFailMsg }), true); renderReview(); return; }
+  const b = iterState && iterState.baseline ? iterState.baseline.holdoutWinRate : null;
+  iterMsg(T('ui.itHoldoutRes', { p: pctText(run.agg.winRate), b: pctText(b) }), b != null && run.agg.winRate <= b);
+  renderReview();
+}
+
+function downloadIterLog() {
+  if (!iterState) return;
+  const log = buildIterationLog({
+    at: iterState.at,
+    setup: { ...(batchRuns.train ? batchRuns.train.setup : {}), model: iterState.model || 'default', rounds: iterState.rounds },
+    baseline: iterState.baseline,
+    candidates: iterState.candidates.filter((c) => !c.isBaseline),
+    applied: iterState.applied,
+    stopped: iterState.stopped,
+  });
+  downloadText(`agentank-iteration-${Date.now()}.json`, JSON.stringify(log, null, 2), 'application/json');
+}
+
 $id('battleJsonBtn')?.addEventListener('click', () => {
   const rep = currentBattleReport();
   if (!rep) { showErr(T('ui.rvNoBattle')); return; }
@@ -2841,6 +3082,11 @@ $id('reviewDlJsonBtn')?.addEventListener('click', () => {
   downloadText(batchReportFilename(new Date(), 'json'), JSON.stringify({ kind: 'agentank-batch', schema: 1, ...batch, agg: aggregateBatch(batch.games) }, null, 2), 'application/json');
 });
 renderGauge();
+
+if (FAKE_LLM) { // 调试：用假 AI 驱动完整迭代闭环（界面明示，避免被当成真实结果）
+  llmConnect(makeFakeLlm());
+  genMsg('假 AI（调试）：?fakellm=1 已启用，结果不代表真实模型');
+}
 
 // ---------- Play 用户支持（仅 play 部署环境激活；file:/匿名/SDK 不可用时零回归） ----------
 initPlay({

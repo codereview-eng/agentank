@@ -192,6 +192,79 @@ export function parseReviewReply(text) {
   return { diagnoses, strategy, changes, truncated };
 }
 
+// ---------- AI 复盘循环迭代：择优 / 爬山 / 成本 / 日志（纯函数） ----------
+// 用户拍板（2026-08-20）：迭代结束**总是应用训练组最强那版**，不设留出组门槛
+//（留出组验证改成事后可选按钮）。所以 pickBest 只看 trainWinRate。
+// 为什么不能用留出组择优：那等于把留出组也变成训练集，最后那四个数字就不再是独立验收。
+export const ITER_LIMITS = { maxRounds: 20, minRounds: 1, msPerAiCall: 12000, msPerMatch: 260 };
+
+const validCandidate = (x) => !!x && x.valid !== false && typeof x.trainWinRate === 'number' && Number.isFinite(x.trainWinRate);
+
+// 训练组胜率最高的有效候选；并列取更早那轮（少改动优先）；一个都没有 → null
+export function pickBest(candidates) {
+  const list = (Array.isArray(candidates) ? candidates : []).filter(validCandidate);
+  if (!list.length) return null;
+  let best = list[0];
+  for (const x of list.slice(1)) {
+    if (x.trainWinRate > best.trainWinRate) best = x;
+    else if (x.trainWinRate === best.trainWinRate && (x.round ?? 0) < (best.round ?? 0)) best = x;
+  }
+  return best;
+}
+
+// 下一轮从「当前最优」继续（爬山），而不是从上一轮结果继续 ——
+// 否则某轮改坏后，后面几轮都在坏版本上打补丁。
+export function nextRoundBase(candidates) {
+  return pickBest(candidates);
+}
+
+// 成本预估：每轮 2 次 AI 调用（复盘 + 生成）+ 每轮 N 局本地对局
+export function iterationCost(rounds, matchesPerRound) {
+  const r = Math.min(ITER_LIMITS.maxRounds, Math.max(ITER_LIMITS.minRounds, Math.round(Number(rounds) || 0)));
+  const m = Math.max(1, Math.round(Number(matchesPerRound) || 12));
+  return {
+    rounds: r,
+    aiCalls: r * 2,
+    matches: r * m,
+    estMs: r * (2 * ITER_LIMITS.msPerAiCall + m * ITER_LIMITS.msPerMatch),
+  };
+}
+
+// 迭代留档（可下载）：每轮候选（含无效轮与原因）+ 最终应用了哪一版
+export function buildIterationLog(o) {
+  const i = o || {};
+  const cands = Array.isArray(i.candidates) ? i.candidates : [];
+  const clean = (c) => ({
+    round: c.round ?? null,
+    valid: c.valid !== false,
+    trainWinRate: typeof c.trainWinRate === 'number' ? c.trainWinRate : null,
+    strategy: redactSecrets(c.strategy || ''),
+    codeHash: String(c.codeHash || ''),
+    changes: Array.isArray(c.changes) ? c.changes.slice(0, 8).map((x) => redactSecrets(String(x))) : [],
+    invalidReason: c.invalidReason ? redactSecrets(String(c.invalidReason)) : '',
+    model: c.model ? String(c.model) : '',
+  });
+  const valid = cands.filter(validCandidate).length;
+  return {
+    kind: 'agentank-iteration',
+    schema: 1,
+    at: i.at || new Date().toISOString(),
+    setup: {
+      opponent: String((i.setup || {}).opponent || ''),
+      skill: String((i.setup || {}).skill || ''),
+      mapKey: String((i.setup || {}).mapKey || ''),
+      tank: String((i.setup || {}).tank || ''),
+      model: String((i.setup || {}).model || ''),
+      rounds: Number((i.setup || {}).rounds) || 0,
+    },
+    baseline: i.baseline ? clean(i.baseline) : null,
+    candidates: cands.map(clean),
+    applied: i.applied ? { round: i.applied.round ?? null, trainWinRate: typeof i.applied.trainWinRate === 'number' ? i.applied.trainWinRate : null } : null,
+    stopped: String(i.stopped || 'done'), // done | aborted | no-sdk | error
+    stats: { validRounds: valid, failedRounds: cands.length - valid },
+  };
+}
+
 // 改前/改后胜率对比的结论判定（纯函数，脱离 DOM 才能被测试钉住）。
 // 五个态一个都不能省：任一侧缺数据、或两侧不是同一套对局设置，都**不许**给出「有没有提升」的定性结论。
 // 教训：第一轮只挡了 before 缺失，after 缺失（脚本报错/沙箱超时被丢弃）照样印「本轮没有提升」——
@@ -689,8 +762,19 @@ async function bootPlay(ctx) {
   // 策略文本优先：登录态把 SDK LLM 递给 app.js 生成按钮（SDK 无 llm 面时按不可用降级）
   if (typeof ctx.llmConnect === 'function') {
     const llm = play.llm;
+    // 指定模型：SDK 契约里 chat(input) 的 input 为对象时**原样作为请求体**，故把 model 拼进 body；
+    // models() 走 GET /api/llm/models（平台按当前玩家 tier 下发可选表）。
     ctx.llmConnect(llm && typeof llm.chat === 'function'
-      ? { chat: (prompt, opts) => llm.chat(prompt, opts) }
+      ? {
+        chat: (prompt, opts) => {
+          const o = opts || {};
+          const body = o.model
+            ? { messages: [{ role: 'user', content: String(prompt) }], model: o.model }
+            : prompt;
+          return llm.chat(body, o);
+        },
+        models: typeof llm.models === 'function' ? () => llm.models() : null,
+      }
       : null);
   }
 
