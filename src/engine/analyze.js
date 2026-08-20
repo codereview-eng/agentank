@@ -483,6 +483,30 @@ export function detectMoments(map, result, opts = {}) {
   return kept;
 }
 
+// ---------- 我方视角的结论（纯函数：报告文案唯一的真值来源） ----------
+// 为什么必须有它：引擎的 reason 是**全局**胜负原因（kill = 有人被打死），不是「我方败因」。
+// 直接把 reason 贴在我方胜负后面，赢下的局也会印「胜 被打死」——用户 2026-08-20 实测到的正是这句。
+// 输出：win（我方是否胜）/ how（enemy-dead | self-dead | tiebreak）/ cause（死因）/ tiebreak（判定链原因）。
+// 旧战报没有 deaths 字段时不许崩：cause 退化为 null（死因未记录），胜负仍按 winner 判。
+export function verdictOf(result, who) {
+  const r = result || {};
+  const me = who ?? 0;
+  const win = r.winner === me;
+  const deaths = Array.isArray(r.deaths) ? r.deaths : null;
+  const causeOf = (i) => {
+    if (!deaths) return null;
+    const d = deaths.find((x) => x && x.who === i);
+    return d && d.cause ? d.cause : null;
+  };
+  // 同拍双亡 / 超时：胜负来自判定链，谁都不算「被打死」
+  if (r.reason !== 'kill') {
+    return { win, how: 'tiebreak', cause: causeOf(me), tiebreak: String(r.reason || '') || null };
+  }
+  return win
+    ? { win: true, how: 'enemy-dead', cause: causeOf(1 - me), tiebreak: null }
+    : { win: false, how: 'self-dead', cause: causeOf(me), tiebreak: null };
+}
+
 // ---------- 单局 JSON（喂 AI 的那份；不含人读文字，老板定的口径） ----------
 export function buildBattleReport(o) {
   const map = o.map;
@@ -510,6 +534,8 @@ export function buildBattleReport(o) {
       win: result.winner === who,
       winner: result.winner,
       reason: result.reason,
+      // 我方视角：AI 复盘拿到的必须是「对手被毒圈拖死」这种能直接用的结论，而不是全局 reason
+      verdict: verdictOf(result, who),
       ticks: result.ticks,
       stars: Array.isArray(result.stars) ? result.stars.slice() : [0, 0],
     },
@@ -527,10 +553,14 @@ export function summarizeGame(o) {
   const result = o.result;
   const who = o.who ?? 0;
   const states = replayStates(map, result);
+  const v = verdictOf(result, who);
   return {
     seed: String(o.seed ?? result.seed ?? ''),
-    win: result.winner === who,
-    reason: result.reason,
+    win: v.win,
+    reason: result.reason, // 全局胜负原因（保留兼容；文案一律用下面三个我方视角字段）
+    how: v.how,            // enemy-dead | self-dead | tiebreak
+    cause: v.cause,        // bullet | bomb | poison | zone | null（旧战报无记录）
+    tiebreak: v.tiebreak,
     ticks: result.ticks,
     metrics: buildMetrics(map, result, who),
     moments: detectMoments(map, result, { who, strategy: o.strategy || '', states, max: o.max ?? 6 }),
@@ -560,8 +590,14 @@ export function aggregateBatch(games) {
     return { games: 0, wins: 0, losses: 0, winRate: null, lossBuckets: {}, avg: {}, topMomentRules: [] };
   }
   const wins = list.filter((g) => g.win).length;
+  // 败因分桶按**我方视角 + 死因**：笼统的 kill 会把「被对手击杀」和「被毒圈拖死」混成一个桶，
+  // 那正是这份报告说不出「毒圈」的原因。
   const lossBuckets = {};
-  for (const g of list) if (!g.win) lossBuckets[g.reason] = (lossBuckets[g.reason] || 0) + 1;
+  for (const g of list) {
+    if (g.win) continue;
+    const k = azBucketKey(g);
+    lossBuckets[k] = (lossBuckets[k] || 0) + 1;
+  }
   const keys = ['accuracy', 'dmgDealt', 'dmgTaken', 'zoneDmg', 'skillCasts', 'skillHits', 'shotsBlocked'];
   const avg = {};
   for (const k of keys) {
@@ -587,7 +623,54 @@ export function aggregateBatch(games) {
 }
 
 // ---------- 人读批量报告（界面直接展示的那份；下载文字版与它一字不差） ----------
-const AZ_REASON_CN = { kill: '被打死', stars: '星数少', hp: '血量判定', damage: '输出判定', center: '圈心判定', coin: '种子掷签', zone: '毒圈拖死' };
+// 我方视角的结论文案。绝不出现裸「被打死」——它既不说明谁死了，也不说明怎么死的，
+// 贴在「胜」后面就变成「胜 被打死」（用户 2026-08-20 实测到的自相矛盾那句）。
+const AZ_TIE_CN = { stars: '星数判定', hp: '血量判定', damage: '输出判定', center: '圈心判定', coin: '种子掷签' };
+const AZ_ENEMY_DEAD_CN = { bullet: '击杀对手', bomb: '炸死对手', poison: '毒死对手', zone: '对手被毒圈拖死' };
+const AZ_SELF_DEAD_CN = { bullet: '被对手击杀', bomb: '被炸死', poison: '被毒死', zone: '我被毒圈拖死' };
+// 同拍双亡：谁都没赢，胜负来自判定链。只印「种子掷签胜」会与回放里的毒圈脱节，必须连死因一起说。
+const AZ_BOTH_DEAD_CN = { bullet: '双方互殴阵亡', bomb: '双方被炸死', poison: '双方被毒死', zone: '双方被毒圈拖死' };
+
+// 旧摘要（只有 win/reason，没有 how/cause）也要能读：按 reason 推断我方视角
+function azHowOf(g) {
+  if (g.how) return g.how;
+  if (g.reason && g.reason !== 'kill') return 'tiebreak';
+  return g.win ? 'enemy-dead' : 'self-dead';
+}
+function azBucketKey(g) {
+  const how = azHowOf(g);
+  if (how === 'tiebreak') {
+    const tb = g.tiebreak || g.reason || 'unknown';
+    return g.cause ? `tiebreak:${tb}:${g.cause}` : `tiebreak:${tb}`; // 双亡时把死因也带进桶名
+  }
+  return `${how}:${g.cause || 'unknown'}`;
+}
+// 败因桶 key → 结构化（供界面层用自己的语言字典渲染；analyze 这边的文案是中文报告专用）
+export function parseBucketKey(key) {
+  const [how, tail, extra] = String(key || '').split(':');
+  if (how === 'tiebreak') return { how, cause: extra || null, tiebreak: tail || null };
+  if (how === 'enemy-dead' || how === 'self-dead') {
+    return { how, cause: !tail || tail === 'unknown' ? null : tail, tiebreak: null };
+  }
+  return { how: null, cause: null, tiebreak: null }; // 旧数据里的裸 reason（kill/stars…）：界面按原样显示
+}
+function azVerdictLabel(g) {
+  const how = azHowOf(g);
+  if (how === 'tiebreak') {
+    const t = AZ_TIE_CN[g.tiebreak || g.reason] || g.tiebreak || g.reason || '判定';
+    const tail = `${t}${g.win ? '胜' : '负'}`;
+    // 我方也阵亡 = 同拍双亡：先说双方是怎么倒下的，再说胜负怎么判出来的
+    return g.cause ? `${AZ_BOTH_DEAD_CN[g.cause] || `双方阵亡（${g.cause}）`} · ${tail}` : tail;
+  }
+  const dict = how === 'enemy-dead' ? AZ_ENEMY_DEAD_CN : AZ_SELF_DEAD_CN;
+  if (!g.cause) return how === 'enemy-dead' ? '对手阵亡（死因未记录）' : '我阵亡（死因未记录）';
+  return dict[g.cause] || `${how === 'enemy-dead' ? '对手阵亡' : '我阵亡'}（${g.cause}）`;
+}
+function azBucketLabel(key) {
+  const v = parseBucketKey(key);
+  if (!v.how) return key; // 旧下载数据里的裸 reason：原样显示，不假装懂
+  return azVerdictLabel({ win: false, how: v.how, cause: v.cause, tiebreak: v.tiebreak });
+}
 const AZ_SEEDSET_CN = { train: '训练组', holdout: '留出组' };
 const azPct = (x) => `${Math.round(x * 1000) / 10}%`;
 
@@ -617,7 +700,7 @@ export function renderBatchText(batch) {
   if (!agg.losses) lines.push('  本组全胜。');
   else {
     for (const [reason, count] of Object.entries(agg.lossBuckets).sort((a, b) => b[1] - a[1])) {
-      lines.push(`  ${AZ_REASON_CN[reason] || reason} ${count} 局`);
+      lines.push(`  ${azBucketLabel(reason)} ${count} 局`);
     }
   }
   if (agg.topMomentRules.length) {
@@ -629,7 +712,7 @@ export function renderBatchText(batch) {
   for (const g of games) {
     const m = g.metrics || {};
     lines.push(
-      `  seed ${g.seed}  ${g.win ? '胜' : '负'}  ${AZ_REASON_CN[g.reason] || g.reason}`
+      `  seed ${g.seed}  ${g.win ? '胜' : '负'}  ${azVerdictLabel(g)}`
       + `  命中 ${azPct(m.accuracy || 0)}  打${m.dmgDealt ?? '—'}/挨${m.dmgTaken ?? '—'}`
       + `  星${(m.stars || [0, 0])[0]}:${(m.stars || [0, 0])[1]}`,
     );

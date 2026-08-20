@@ -32,6 +32,18 @@ export const LOCALES = {
       kill: '击杀', stars: '星数', hp: '血量判定',
       damage: '输出判定', center: '圈心判定', coin: '种子掷签',
     },
+    // 致死来源（替代笼统的「击杀」；毒圈拖死与子弹击杀必须能分开）。
+    // 三套是**方向性**的：说对手怎么没的 / 说我怎么倒下的 / 同拍双亡。
+    // 「输在哪」用中性词会让玩家误读成自己击杀了对手 —— 所以负局一律走 causeSelf。
+    cause: {
+      bullet: '击杀', bomb: '炸死', poison: '毒死', zone: '毒圈拖死',
+    },
+    causeSelf: {
+      bullet: '被击杀', bomb: '被炸死', poison: '被毒死', zone: '被毒圈拖死',
+    },
+    causeBoth: {
+      bullet: '双方互殴阵亡', bomb: '双方被炸死', poison: '双方被毒死', zone: '双方被毒圈拖死',
+    },
     maps: {
       crossFort: { name: '十字要塞', desc: '中央十字工事，四条突破口' },
       openPlains: { name: '开阔平原', desc: '稀疏掩体，远距离对狙' },
@@ -196,6 +208,7 @@ export const LOCALES = {
       rvCost: '本次消耗 1 次 AI 调用 · 报告摘要 {kb}KB',
       rvWin: '胜',
       rvLoss: '负',
+      bkUnknown: '死因未记录',
       codeBox: '查看/编辑脚本（高级）',
       myTank: '我的坦克',
       opponent: '对手',
@@ -465,6 +478,17 @@ export default function decide(api) {
       kill: 'kill', stars: 'stars', hp: 'HP tiebreak',
       damage: 'damage tiebreak', center: 'center tiebreak', coin: 'seeded coin toss',
     },
+    // Cause of death, in three directions: what happened to the rival / to me / to both.
+    // A neutral word in the "where you lost" panel reads as if you got the kill — losses always use causeSelf.
+    cause: {
+      bullet: 'kill', bomb: 'bomb kill', poison: 'poison kill', zone: 'zone kill',
+    },
+    causeSelf: {
+      bullet: 'shot down', bomb: 'bombed', poison: 'poisoned', zone: 'dragged down by the zone',
+    },
+    causeBoth: {
+      bullet: 'both shot down', bomb: 'both bombed', poison: 'both poisoned', zone: 'both taken by the zone',
+    },
     maps: {
       crossFort: { name: 'Cross Fort', desc: 'central cross works, four breaches' },
       openPlains: { name: 'Open Plains', desc: 'sparse cover, long-range duels' },
@@ -628,6 +652,7 @@ export default function decide(api) {
       rvCost: '1 AI call this round · report digest {kb}KB',
       rvWin: 'win',
       rvLoss: 'loss',
+      bkUnknown: 'cause not recorded',
       codeBox: 'View/edit script (advanced)',
       myTank: 'My Tank',
       opponent: 'Opponent',

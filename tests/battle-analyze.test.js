@@ -341,11 +341,15 @@ test('文件名：带种子与时间戳，扩展名 json', () => {
 
 const g = (seed, win, reason, extra = {}) => ({
   seed, win, reason, ticks: 200,
+  ...(extra.verdict || {}), // {how, cause, tiebreak}：新摘要才有，旧数据留空走降级推断
   metrics: { accuracy: 0.3, dmgDealt: 60, dmgTaken: 80, firstStarTick: 40, enemyFirstStarTick: 25, skillCasts: 3, skillHits: 1, zoneDmg: 10, shotsBlocked: 2, fires: 10, hits: 3, stars: [1, 2], deathTick: win ? null : 199, ...extra.metrics },
   moments: extra.moments ?? [],
 });
 
-test('批量聚合：胜率与败因分桶', () => {
+// 分桶口径 2026-08-20 起改为「我方视角:死因」（self-dead:zone…）：
+// 笼统的 kill 会把「被对手击杀」和「被毒圈拖死」混成一个桶，报告因此说不出毒圈。
+// 这条用的是**旧摘要形状**（只有 win/reason），断言旧数据也能分桶且不崩。
+test('批量聚合：胜率与败因分桶（旧摘要按 reason 降级推断，死因未记录）', () => {
   const agg = aggregateBatch([
     g('11', false, 'kill'), g('22', true, 'stars'), g('33', false, 'kill'),
     g('44', true, 'kill'), g('55', false, 'stars'), g('66', false, 'zone'),
@@ -353,10 +357,20 @@ test('批量聚合：胜率与败因分桶', () => {
   assert.equal(agg.games, 6);
   assert.equal(agg.wins, 2);
   assert.equal(agg.winRate, 2 / 6);
-  assert.equal(agg.lossBuckets.kill, 2);
-  assert.equal(agg.lossBuckets.stars, 1);
-  assert.equal(agg.lossBuckets.zone, 1);
+  assert.equal(agg.lossBuckets['self-dead:unknown'], 2, '旧数据的 kill 负局：知道我方阵亡，死因无记录');
+  assert.equal(agg.lossBuckets['tiebreak:stars'], 1);
+  assert.equal(agg.lossBuckets['tiebreak:zone'], 1, '旧数据里编过的 zone reason 也不许让分桶崩');
   assert.ok(Math.abs(agg.avg.accuracy - 0.3) < 1e-9);
+});
+
+test('批量聚合：新摘要按死因分桶，毒圈拖死与被击杀各成一桶', () => {
+  const agg = aggregateBatch([
+    g('11', false, 'kill', { verdict: { how: 'self-dead', cause: 'zone' } }),
+    g('22', false, 'kill', { verdict: { how: 'self-dead', cause: 'zone' } }),
+    g('33', false, 'kill', { verdict: { how: 'self-dead', cause: 'bullet' } }),
+  ]);
+  assert.equal(agg.lossBuckets['self-dead:zone'], 2);
+  assert.equal(agg.lossBuckets['self-dead:bullet'], 1);
 });
 
 test('批量聚合：零局时如实给 null，不编 0%', () => {

@@ -121,7 +121,13 @@ export function renderText(result, names = ['甲', '乙']) {
         lines.push(
           e.winner == null
             ? `${t} 平局（星${e.stars[0]}:${e.stars[1]}）` // 兼容旧战报回放
-            : `${t} ${nm(e.winner)} 获胜（${REASON_CN[e.reason] ?? e.reason}，星${e.stars[0]}:${e.stars[1]}）`,
+            // 胜者视角：kill 要说清对手是被打死还是被毒圈拖死（旧战报没有 deaths，回退到全局 reason）
+            : `${t} ${nm(e.winner)} 获胜（${((() => {
+              const d = Array.isArray(e.deaths) ? e.deaths.find((x) => x && x.who !== e.winner) : null;
+              const CAUSE = { bullet: '击杀', bomb: '炸死', poison: '毒死', zone: '毒圈拖死' };
+              if (e.reason === 'kill' && d && d.cause) return CAUSE[d.cause] || d.cause;
+              return REASON_CN[e.reason] ?? e.reason;
+            })())}，星${e.stars[0]}:${e.stars[1]}）`,
         );
         break;
       }

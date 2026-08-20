@@ -1,6 +1,6 @@
 // AgenTank 网页端 UI：本地跑引擎对战 + canvas 逐 tick 回放 + 实时战报 + 天梯。
 // 开发版经 <script type="module"> 加载；发布版由 scripts/build-web.mjs 去 import/export 内联进单文件。
-import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS, presetMap, validateContent, makePack, serializePack, parsePack, promoteStage, resolvePackMap, compileBot, OFFICIAL_CONTENT, buildBattleReport, summarizeGame, aggregateBatch, renderBatchText, battleReportFilename, batchReportFilename, BATCH_SEEDS } from '../src/engine/index.js';
+import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS, presetMap, validateContent, makePack, serializePack, parsePack, promoteStage, resolvePackMap, compileBot, OFFICIAL_CONTENT, buildBattleReport, summarizeGame, aggregateBatch, renderBatchText, battleReportFilename, batchReportFilename, BATCH_SEEDS, verdictOf, parseBucketKey } from '../src/engine/index.js';
 import { bots } from '../bots/index.js';
 import { LOCALES, LANGS, fmt, resolveLang } from './i18n.js';
 import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError, scriptGate, buildGenLog, genLogFilename, resolveEditorState, draftIsClean, buildReviewPrompt, parseReviewReply, reviewPayloadFromBattle, reviewPayloadFromBatch, compareVerdict, pickBest, nextRoundBase, iterationCost, buildIterationLog, ITER_TIMEOUTS, pushIterLog, winDelta, explainIterFail, iterEta, iterProgress, stepPace, fmtClock, resolveSelValue, chipShortLabel } from './play.js';
@@ -69,6 +69,23 @@ const BASE_TPS = 20; // 1x = 每秒 20 tick，用时口径 = ticks/20 秒
 // 技能/判定链/道具文案全部走当前语言字典（键位对齐由 tests/i18n.test.js 锁死）
 const SKILL_CN = L.skill;
 const REASON_CN = L.reason;
+const CAUSE_CN = L.cause;          // 对手怎么没的（我方胜 / 中性叙述）
+const CAUSE_SELF_CN = L.causeSelf; // 我怎么倒下的（我方负 —— 这里用中性词会被误读成我击杀了对手）
+const CAUSE_BOTH_CN = L.causeBoth; // 同拍双亡
+// 胜负结论一律走这里：引擎的 reason 是全局口径，直接印在我方胜负后面会出现「胜 · 被打死」这种自相矛盾。
+// v = {how, cause, tiebreak}（verdictOf / parseBucketKey 的产物）。
+function verdictWord(v) {
+  if (!v) return '';
+  if (v.how === 'tiebreak') {
+    const tie = REASON_CN[v.tiebreak] ?? v.tiebreak ?? '';
+    // 我方也阵亡 = 同拍双亡：先说双方怎么倒下的，再说胜负是怎么判出来的
+    return v.cause ? `${CAUSE_BOTH_CN[v.cause] ?? v.cause} · ${tie}` : tie;
+  }
+  if (!v.how) return ''; // 旧数据里的裸 reason：调用方自行回退
+  if (!v.cause) return T('ui.bkUnknown');
+  const dict = v.how === 'self-dead' ? CAUSE_SELF_CN : CAUSE_CN;
+  return dict[v.cause] ?? v.cause;
+}
 const ITEM_CN = L.item;
 const skillSel = $id('skillSel');
 const userSkill = () => (skillSel ? skillSel.value : 'teleport');
@@ -1239,7 +1256,13 @@ function buildLog(result, names, seedStr) {
       case 'end':
         html = e.winner == null
           ? T('log.endDraw', { a: e.stars[0], b: e.stars[1] })
-          : T('log.endWin', { who: nm(e.winner), reason: REASON_CN[e.reason] ?? e.reason, a: e.stars[0], b: e.stars[1] });
+          : T('log.endWin', {
+            who: nm(e.winner),
+            // 胜者视角：kill 时说清对手是被打死还是被毒圈拖死（旧战报无 deaths 时回退到全局 reason）
+            reason: verdictWord(verdictOf({ winner: e.winner, reason: e.reason, deaths: e.deaths }, e.winner))
+              || REASON_CN[e.reason] || e.reason,
+            a: e.stars[0], b: e.stars[1],
+          });
         break;
       default: break;
     }
@@ -1877,7 +1900,7 @@ function updateVerdict(box) {
     verdictMain.textContent = `● ${names[r.winner]} WIN`;
     verdictMain.style.color = r.winner === 0 ? 'var(--p1)' : 'var(--p2)';
   }
-  const how = REASON_CN[r.reason] ?? T('verdict.drawWord');
+  const how = verdictWord(verdictOf(r, r.winner)) || REASON_CN[r.reason] || T('verdict.drawWord');
   verdictSub.textContent = T('verdict.sub', { how, t: r.ticks - 1, a: r.stars[0], b: r.stars[1], sec: (r.ticks / BASE_TPS).toFixed(1) });
   verdictRef.textContent = T('verdict.ref', { id: 10000 + (match.seed % 90000) });
   if (box && box.count > 0) showErr(T('err.runtime', { n: box.count, msg: box.last }));
@@ -2584,7 +2607,8 @@ function renderGauge() {
     const entries = Object.entries(run.agg.lossBuckets).sort((a, b) => b[1] - a[1]);
     const top = entries.length ? entries[0][1] : 1;
     bars.innerHTML = entries.map(([reason, n], i) => {
-      const label = REASON_CN[reason] || reason;
+      // 桶 key 现在是「我方视角:死因」（self-dead:zone…）；旧下载数据里的裸 reason 仍走 REASON_CN
+      const label = verdictWord(parseBucketKey(reason)) || REASON_CN[reason] || reason;
       return `<div class="bar"><span>${esc(label)}</span><i class="${i ? 'w' : ''}" style="width:${Math.round((n / top) * 100)}%"></i><em>${n}</em></div>`;
     }).join('');
   }
@@ -2741,7 +2765,8 @@ function renderReview() {
   if (sub) {
     if (reviewMode === 'single' && match) {
       const rep = currentBattleReport();
-      sub.textContent = `seed ${match.seedStr} · ${match.names[0]} · ${match.names[1]} · ${T(rep.result.win ? 'ui.rvWin' : 'ui.rvLoss')}（${rep.result.reason}，t=${rep.result.ticks - 1}）`;
+      const vw = verdictWord(rep.result.verdict) || REASON_CN[rep.result.reason] || rep.result.reason;
+      sub.textContent = `seed ${match.seedStr} · ${match.names[0]} · ${match.names[1]} · ${T(rep.result.win ? 'ui.rvWin' : 'ui.rvLoss')}（${vw}，t=${rep.result.ticks - 1}）`;
     } else if (reviewMode === 'batch' && batchRuns.train) {
       const s = batchRuns.train.setup;
       sub.textContent = `${s.tank} · ${s.opponent} · ${s.skill} · ${s.mapKey}`;
