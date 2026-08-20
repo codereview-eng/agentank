@@ -26,7 +26,10 @@ export function redactSecrets(text) {
     .replace(/\b(Bearer)\s+[A-Za-z0-9._-]+/gi, '$1 «redacted»')
     .replace(/\b(ak1|gt1|sk|pk)_[A-Za-z0-9._-]{6,}/g, '$1_«redacted»')
     .replace(/("?(?:access_)?token"?\s*[:=]\s*")([^"]{6,})(")/gi, '$1«redacted»$3')
-    .replace(/([?&](?:token|key|secret)=)[^&\s]{6,}/gi, '$1«redacted»');
+    .replace(/([?&](?:token|key|secret)=)[^&\s]{6,}/gi, '$1«redacted»')
+    // 自由文本里的裸 token=/secret=/password=（迭代日志会带玩家写的战术原文，这类形态也得挡）
+    // (?!«) 防止把上面几条已打码的结果二次替换掉
+    .replace(/\b(token|secret|password|passwd)\s*=\s*(?!«)([^\s"'&]{6,})/gi, '$1=«redacted»');
 }
 
 // ---------- 批量试跑的两组固定种子（单一定义点：网页端与测量脚本都从这里取） ----------

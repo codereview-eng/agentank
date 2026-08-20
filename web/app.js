@@ -3,7 +3,7 @@
 import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS, presetMap, validateContent, makePack, serializePack, parsePack, promoteStage, resolvePackMap, compileBot, OFFICIAL_CONTENT, buildBattleReport, summarizeGame, aggregateBatch, renderBatchText, battleReportFilename, batchReportFilename, BATCH_SEEDS } from '../src/engine/index.js';
 import { bots } from '../bots/index.js';
 import { LOCALES, LANGS, fmt, resolveLang } from './i18n.js';
-import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError, scriptGate, buildGenLog, genLogFilename, resolveEditorState, draftIsClean, buildReviewPrompt, parseReviewReply, reviewPayloadFromBattle, reviewPayloadFromBatch, compareVerdict } from './play.js';
+import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError, scriptGate, buildGenLog, genLogFilename, resolveEditorState, draftIsClean, buildReviewPrompt, parseReviewReply, reviewPayloadFromBattle, reviewPayloadFromBatch, compareVerdict, pickBest, nextRoundBase, iterationCost, buildIterationLog } from './play.js';
 import { extractEngineSource, buildWorkerSource } from './sandbox.js';
 
 // 单文件产物里，本脚本自身的源码文本（引擎源从中切出，喂给无 eval 沙箱 Worker）。
@@ -617,6 +617,7 @@ async function switchTank(name) {
     writeLocalStore(garage);
   }
   clearDraft(); // 切台是明确换车：先清掉上一台的草稿，再入座，避免旧草稿串到新台
+  clearIterBase(); // 迭代前快照同属「上一台」，一起清，避免一键回退把 A 台代码盖到 B 台
   applyTankToUi(curTank() || t);
   updateVersionUi();
   renderGarage();
@@ -640,6 +641,7 @@ async function newTank() {
   }
   applyTankToUi(curTank());
   clearDraft();
+  clearIterBase(); // 新建=换车：上一台的迭代快照必须一起清（漏挂会让一键回退把 A 台代码盖到 B 台）
   updateVersionUi();
   renderGarage();
   scheduleLadder();
@@ -987,6 +989,7 @@ function resetForLogout() { // 场景 5：登出清空车库与编辑器（未�
   for (const t of s.tanks) archiveCopy(t, 'logout');
   writeLocalStore({ tanks: [], cur: null });
   clearDraft();
+  clearIterBase(); // 登出必须一并清：否则下一个人能一键取回上一个人的战术与代码
   editorEl.value = DEFAULT_SCRIPT;
   if (strategyEl) strategyEl.value = DEFAULT_STRATEGY; // 上一人的策略文本一并清掉，回到默认战术文本
 }
@@ -2067,6 +2070,9 @@ const codeBox = $id('codeBox');
 let llmCtl = null; // null=SDK 不可用；{needLogin,login}=未登录；{chat}=可生成
 const genMsg = (msg, bad) => { if (genMsgEl) { genMsgEl.textContent = msg || ''; genMsgEl.style.color = bad ? 'var(--bad)' : 'var(--dim)'; } };
 function llmConnect(ctl) { // play.js bootPlay 回调：按登录态切换生成按钮语义
+  // 调试假 AI 一旦启用就硬短路真 SDK 注入：否则登录态下 bootPlay 会把假 AI 顶掉，
+  // 页面却还留着「假 AI」横幅 —— 变成「标着假、烧真配额」的误导（评审 B5）。
+  if (FAKE_LLM && llmCtl) return;
   llmCtl = ctl;
   if (genBtn && ctl && ctl.needLogin) genBtn.textContent = T('play.genLoginBtn');
 }
@@ -2119,8 +2125,9 @@ function generationGate(code) {
   return scriptGate(code, { evalOk: EVAL_OK, compile: compileScript });
 }
 
-async function generateScript() {
-  if (!genBtn) return;
+async function generateScript(genOpts) {
+  const gOpt = genOpts || {};
+  if (!genBtn) return { ok: false, outcome: 'no-button', reason: 'gen button missing' };
   if (llmCtl && llmCtl.needLogin) { llmCtl.login(); return { ok: false, outcome: 'need-login', reason: 'not logged in' }; } // 未登录：按钮即登录入口
   const strategy = (strategyEl ? strategyEl.value : '').trim();
   const skill = userSkill();
@@ -2144,7 +2151,7 @@ async function generateScript() {
       const prompt = buildLlmPrompt({ strategy, skill, feedback });
       const rec = { n: attempt, promptChars: prompt.length };
       attempts.push(rec);
-      const { text } = await llmCtl.chat(prompt);
+      const { text } = await llmCtl.chat(prompt, { model: gOpt.model || undefined, signal: gOpt.signal });
       rec.replyChars = String(text || '').length;
       rec.replyHead = String(text || '').slice(0, 500);
       const code = extractLlmCode(text);
@@ -2168,7 +2175,7 @@ async function generateScript() {
       }
       editorEl.value = code; // 只写编辑器，不自动保存/开战：玩家确认后自行「保存」「开战」
       refreshSkillHint();
-      saveDraft();
+      if (!gOpt.noDraft) saveDraft(); // 迭代期间不写草稿：中间版本会盖掉玩家原版（评审 B1）
       if (CUSTOM_SCRIPT_OK) {
         genMsg(T('play.genDone'));
         setGenLog(null);
@@ -2594,7 +2601,7 @@ function renderReviewMain() {
     main.innerHTML = `${cmp}<div class="rpt">${esc(why)}</div>`;
     return;
   }
-  main.innerHTML = `${cmp}<pre class="rpt">${esc(renderBatchText(batch).join('\n'))}</pre>${renderHistory()}`;
+  main.innerHTML = `${cmp}<pre class="rpt">${esc(renderBatchText(batch).join('\n'))}</pre>${renderIterTable()}${renderHistory()}`;
 }
 
 function renderCompare() {
@@ -2657,7 +2664,19 @@ function renderReviewSide() {
       <button class="btn ghost" id="rvDropBtn" style="padding:5px 12px;font-size:11px">${esc(T('ui.rvDiscard'))}</button>
     </div>`);
   }
+  if (reviewMode === 'batch') parts.push(`<div style="border-top:1px dashed var(--line);margin-top:10px;padding-top:10px">${renderIterPanel()}</div>`);
   side.innerHTML = parts.join('');
+  if (reviewMode === 'batch') {
+    loadIterModels(); // 模型表懒加载一次；失败会在面板里明示
+    $id('itRunBtn')?.addEventListener('click', runIteration);
+    $id('itHoldoutBtn')?.addEventListener('click', verifyIterHoldout);
+    $id('itLogBtn')?.addEventListener('click', downloadIterLog);
+    $id('itRestoreBtn')?.addEventListener('click', restoreIterBase);
+    $id('itRounds')?.addEventListener('change', (ev) => { // 先落模块级状态再重渲染，否则选择会被打回默认
+      iterRoundsChoice = Number(ev.target.value) || ITER_ROUND_CHOICES[0];
+      renderReviewSide();
+    });
+  }
   const ai = $id('rvAiBtn');
   if (ai) ai.addEventListener('click', runAiReview);
   const adopt = $id('rvAdoptBtn');
@@ -2723,7 +2742,7 @@ async function runAiReview() {
   renderReview();
   const t0 = Date.now();
   try {
-    const { text } = await llmCtl.chat(prompt);
+    const { text } = await llmCtl.chat(prompt, { model: iterModel() || undefined });
     const parsed = parseReviewReply(text);
     if (!parsed) {
       reviewMsg(T('ui.rvBadReply'), true);
@@ -2815,6 +2834,351 @@ async function adoptProposal() {
   renderReview();
 }
 
+
+
+// ---------- 调试用假 AI（仅 ?fakellm=1 生效）----------
+// 为什么需要它：迭代闭环（复盘→生成→评分→择优）在没有登录票的环境里根本跑不到，
+// 只靠纯函数单测就宣称「闭环可用」属于假绿。带这个参数时用固定回复驱动整条链路做端到端验证；
+// 不带参数时这段代码零参与（线上行为不变），且启用时界面会明示「假 AI（调试）」。
+const FAKE_LLM = (() => { try { return new URLSearchParams(location.search).get('fakellm') === '1'; } catch { return false; } })();
+// 假 AI 的单次延时（毫秒，仅调试用）：真实模型一次要十几秒，假 AI 30ms 会让 10 轮在 2~3 秒内跑完，
+// 中断/改设置这类「跑到一半」的断言根本来不及命中。用 ?fakedelay= 把节奏调到接近真实。
+const FAKE_DELAY = (() => {
+  try { return Math.min(3000, Math.max(0, Number(new URLSearchParams(location.search).get('fakedelay')) || 30)); } catch { return 30; }
+})();
+function makeFakeLlm() {
+  let genCall = 0;
+  const VARIANTS = [
+    // 变体 1：只在对齐时开火（稳）
+    'export default function decide(api) {\n  const me = api.me(); const e = api.enemy();\n  if (me.hp < 40) { const k = api.nearestItem("medkit"); if (k) return api.moveTo(k); }\n  const s = api.nearestStar(); if (s && api.distTo(s) <= 4) return api.moveTo(s);\n  if (api.canFire() && api.enemyVisible() && (me.x === e.x || me.y === e.y)) return api.fireAt(e);\n  return api.moveTo(s || e);\n}',
+    // 变体 2：一味追击（弱）
+    'export default function decide(api) {\n  const e = api.enemy();\n  if (api.canFire() && api.enemyVisible()) return api.fireAt(e);\n  return api.moveTo(e);\n}',
+    // 变体 3：躲弹道 + 对齐开火 + 回血（强）
+    'export default function decide(api) {\n  const me = api.me(); const e = api.enemy();\n  if (me.hp < 40) { const k = api.nearestItem("medkit"); if (k) return api.moveTo(k); }\n  const b = api.enemyBullet();\n  if (b && (b.x === me.x || b.y === me.y)) {\n    const alt = (b.x === me.x) ? { x: me.x + 1, y: me.y } : { x: me.x, y: me.y + 1 };\n    if (api.walkable(alt)) return api.moveTo(alt);\n  }\n  const s = api.nearestStar(); if (s && api.distTo(s) <= 4) return api.moveTo(s);\n  if (api.canFire() && api.enemyVisible() && (me.x === e.x || me.y === e.y)) return api.fireAt(e);\n  return api.moveTo(s || e);\n}',
+  ];
+  return {
+    models: async () => ({ models: [{ id: 'fake-model-a' }, { id: 'fake-model-b' }], default_model: 'fake-model-a' }),
+    chat: async (prompt, o) => {
+      await new Promise((r) => setTimeout(r, FAKE_DELAY));
+      if (o && o.signal && o.signal.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
+      if (String(prompt).includes('脚本生成器')) { // 生成代码
+        const code = VARIANTS[genCall++ % VARIANTS.length];
+        return { text: '```js\n' + code + '\n```' };
+      }
+      return { // 复盘
+        text: '```json\n' + JSON.stringify({
+          diagnoses: [{ title: '假 AI 诊断', detail: '仅用于端到端验证', evidence: 't=1' }],
+          strategy: `假 AI 改写第 ${genCall + 1} 版：躲弹道、对齐才开火、血低回血。`,
+          changes: [`第 ${genCall + 1} 版改动`],
+        }) + '\n```',
+      };
+    },
+  };
+}
+
+// ---------- 循环迭代：跑多版、每版真打 12 局评分、择优应用 ----------
+// 用户拍板（2026-08-20）：迭代结束**总是应用训练组最强那版**（不设留出组门槛）；
+// 留出组验证做成事后可选按钮，不占迭代时间。
+// 单轮复盘之所以会让胜率变低，是因为流程里没有任何一步检验 AI 的建议——迭代补的正是择优压力。
+const ITER_ROUND_CHOICES = [3, 5, 10];
+const ITERBASE_KEY = 'agentank.iterbase'; // 迭代前的原版快照（崩溃/关页也能回退，草稿会被中间版覆盖）
+let iterRoundsChoice = ITER_ROUND_CHOICES[0]; // 轮数选择必须有模块级状态：只靠 DOM 会在重渲染时被打回默认
+let iterBaseErr = ''; // 原版快照写失败的原因（非空 = B1 的保护这次不生效，必须明示）
+let iterState = null;
+let iterModels = null;   // {models:[{id}], default_model} | {error:'...'}
+let iterMsgText = '';
+let iterMsgBad = false;
+const iterMsg = (t, bad) => { iterMsgText = t || ''; iterMsgBad = !!bad; };
+const iterModel = () => (($id('itModel') || {}).value || '');
+const iterRounds = () => iterRoundsChoice;
+
+// 迭代前留一份原版，独立于草稿（草稿会被每轮中间版覆盖）。
+// 快照必须绑定「哪台车 + 哪种登录态」：否则切台或换账号后点回退，会把别台/别人的代码盖过来。
+// 写入不是必然成功（隐私模式/配额满/file:）——静默失败等于 B1 的保护在最需要时不存在，所以要 read-back 并回传原因。
+function writeIterBase() {
+  // B11：已有**属于本台**的快照就不覆盖 —— 连跑两次迭代时，第二次的「原版」其实已是 AI 那版，
+  // 覆盖等于把玩家手写的原版从草稿与快照两处同时抹掉（存档没有读取入口，等于丢）。
+  const prev = readIterBase();
+  if (prev && iterBaseOwns(prev)) return { ok: true, err: '', kept: true };
+  const t = curTank();
+  const snap = {
+    strategy: strategyEl ? strategyEl.value : '', code: editorEl.value,
+    tank: myTankLabel(), tankId: (t && t.id) || null, mode: garage.mode, ts: Date.now(),
+  };
+  try {
+    localStorage.setItem(ITERBASE_KEY, JSON.stringify(snap));
+    const back = readIterBase();
+    if (!back || back.code !== snap.code || back.tank !== snap.tank) {
+      return { ok: false, err: 'read-back mismatch after write' };
+    }
+    return { ok: true, err: '' };
+  } catch (e) {
+    return { ok: false, err: `${(e && e.name) || 'Error'}: ${String((e && e.message) || e)}` };
+  }
+}
+function readIterBase() { try { return JSON.parse(localStorage.getItem(ITERBASE_KEY) || 'null'); } catch { return null; } }
+// 这份快照是不是「当前这台车」的：云端坦克 id 全账号唯一，优先按 id 判；
+// 只比显示名挡不住「同为云端、换账号但没点登出」——两个账号的第一台车默认同名概率极高（评审 B12）。
+function iterBaseOwns(b) {
+  if (!b) return false;
+  const t = curTank();
+  const curId = (t && t.id) || null;
+  if (b.tankId) return curId === b.tankId;
+  if (curId) return false; // 快照没 id 而当前有 id：来源不同，按不属于处理
+  return b.tank === myTankLabel() && (!b.mode || !garage.mode || b.mode === garage.mode);
+}
+function clearIterBase() { try { localStorage.removeItem(ITERBASE_KEY); } catch { /* 忽略 */ } }
+function restoreIterBase() {
+  const b = readIterBase();
+  if (!b) return;
+  if (!iterBaseOwns(b)) { // 不是本台/本账号的快照：拒绝，避免把别台别人的代码盖过来
+    iterMsg(T('ui.itRestoreOtherTank', { tank: b.tank || '—' }), true);
+    renderReview();
+    return;
+  }
+  // B10：快照恢复的是「战术文字 + 代码」两样，差异判定也必须看两样 ——
+  // 代码相同、只有战术文字不同是这个功能里的常态（同码轮被判无效、玩家只改策略文本），
+  // 若只比代码，战术文字会被静默覆盖且无处可寻（仓库既有教训：战术文字刷新即丢）。
+  const cur = editorEl.value;
+  const curStrategy = strategyEl ? strategyEl.value : '';
+  const dirty = cur !== String(b.code || '') || curStrategy !== String(b.strategy || '');
+  if (dirty) {
+    archiveCopy({ name: myTankLabel(), code: cur, strategy: curStrategy, skill: userSkill(), v: 0 }, 'iter-restore');
+    if (typeof confirm === 'function' && !confirm(T('ui.itRestoreConfirm'))) return; // eslint-disable-line no-alert
+  }
+  if (strategyEl) strategyEl.value = String(b.strategy || '');
+  editorEl.value = String(b.code || '');
+  saveDraft();
+  refreshSkillHint();
+  clearIterBase();
+  iterMsg(T('ui.itRestored'));
+  renderReview();
+}
+
+async function loadIterModels() {
+  if (iterModels || !llmCtl || typeof llmCtl.models !== 'function') return;
+  try {
+    const r = await llmCtl.models();
+    iterModels = r && Array.isArray(r.models) ? r : { models: [], default_model: (r && r.default_model) || '' };
+  } catch (e) { // 降级可观测：取不到模型表就明示原因，仍可用平台默认跑
+    iterModels = { models: [], default_model: '', error: `${(e && e.name) || 'Error'}: ${String((e && (e.hint || e.message)) || e)}` };
+  }
+  renderReview();
+}
+
+function renderIterPanel() {
+  const st = sdkState();
+  const running = !!(iterState && iterState.running);
+  const parts = [`<h4>${esc(T('ui.itTitle'))}${FAKE_LLM ? ` <span class="fl">${esc(T('ui.itFakeChip'))}</span>` : ''}</h4>`];
+  const snap = readIterBase();
+  if (snap) { // 崩溃/关页后也能回退到迭代前那版；标明属于哪台车，避免串台
+    parts.push(`<div class="wrhint">${esc(T('ui.itRestoreHint'))}${snap.tank ? esc(T('ui.itRestoreOf', { tank: snap.tank })) : ''}</div>`);
+    parts.push(`<button class="btn ghost" id="itRestoreBtn" style="padding:5px 12px;font-size:11px">${esc(T('ui.itRestore'))}</button>`);
+  }
+  if (iterBaseErr) { // 反向告警：保护没生效必须让玩家在开跑前就知道
+    parts.push(`<div class="wrhint" style="color:var(--warn)">${esc(T('ui.itSnapshotFail', { msg: iterBaseErr }))}</div>`);
+  }
+  if (st === 'absent') { parts.push(`<div class="wrhint">${esc(T('ui.rvNoSdk'))}</div>`); return parts.join(''); }
+  if (st === 'need-login') { parts.push(`<div class="wrhint">${esc(T('ui.rvNeedLogin'))}</div>`); return parts.join(''); }
+
+  const models = (iterModels && iterModels.models) || [];
+  const def = (iterModels && iterModels.default_model) || '';
+  const opts = [`<option value="">${esc(T('ui.itModelDefault'))}${def ? ` · ${esc(def)}` : ''}</option>`]
+    .concat(models.map((m) => `<option value="${esc(m.id)}">${esc(m.id)}</option>`)).join('');
+  parts.push(`<label style="width:auto;display:flex;gap:6px;align-items:center;font-size:11px">${esc(T('ui.itModel'))}
+    <select id="itModel" style="flex:1;font-size:11px;padding:3px 6px"${running ? ' disabled' : ''}>${opts}</select></label>`);
+  if (iterModels && iterModels.error) parts.push(`<div class="wrhint" style="color:var(--warn)">${esc(T('ui.itModelsFail', { msg: iterModels.error }))}</div>`);
+  const rounds = iterState && iterState.running ? iterState.rounds : iterRoundsChoice;
+  parts.push(`<label style="width:auto;display:flex;gap:6px;align-items:center;font-size:11px">${esc(T('ui.itRounds'))}
+    <select id="itRounds" style="flex:1;font-size:11px;padding:3px 6px"${running ? ' disabled' : ''}>${
+    ITER_ROUND_CHOICES.map((n) => `<option value="${n}"${n === rounds ? ' selected' : ''}>${n}</option>`).join('')}</select></label>`);
+  const cost = iterationCost(rounds, BATCH_N);
+  parts.push(`<div class="wrhint">${esc(T('ui.itCost', { min: Math.max(1, Math.round(cost.estMs / 60000)), ai: cost.aiCalls, m: cost.matches }))}</div>`);
+  parts.push(`<button class="btn ghost" id="itRunBtn" style="padding:5px 12px;font-size:11px;${running ? '' : 'border-color:var(--accent);color:var(--accent)'}">${
+    esc(running ? T('ui.itStop') : T('ui.itStart'))}</button>`);
+  parts.push(`<div class="wrhint" id="itProgress" style="color:var(--accent)">${
+    running ? esc(T('ui.itRunning', { r: iterState.round, n: iterState.rounds, step: iterState.step || '' })) : ''}</div>`);
+  if (iterMsgText) parts.push(`<div class="wrhint" style="color:${iterMsgBad ? 'var(--warn)' : 'var(--ok)'}">${esc(iterMsgText)}</div>`);
+  if (iterState && iterState.candidates.length > 1 && !running) {
+    parts.push(`<button class="btn ghost" id="itHoldoutBtn" style="padding:5px 12px;font-size:11px">${esc(T('ui.itVerifyHoldout'))}</button>`);
+    parts.push(`<button class="btn ghost" id="itLogBtn" style="padding:5px 12px;font-size:11px">${esc(T('ui.itDlLog'))}</button>`);
+  }
+  return parts.join('');
+}
+
+function renderIterTable() {
+  if (!iterState || iterState.candidates.length <= 1) return '';
+  const best = iterState.applied || pickBest(iterState.candidates);
+  const rows = iterState.candidates.map((c) => {
+    const isBest = best && c === best;
+    const name = c.isBaseline ? T('ui.itBaselineRow') : String(c.round);
+    const score = c.valid ? pctText(c.trainWinRate) : `<span style="color:var(--bad)">${esc(T('ui.itInvalid'))}</span>`;
+    const note = c.valid
+      ? esc((c.changes || []).slice(0, 2).join('；') || (c.isBaseline ? '—' : ''))
+      : `<span style="color:var(--dim)">${esc(c.invalidReason || '')}</span>`;
+    return `<tr${isBest ? ' class="me"' : ''}><td>${esc(name)}${isBest ? ` <span class="chipg" style="padding:0 6px">${esc(T('ui.itBest'))}</span>` : ''}</td>`
+      + `<td>${score}</td><td style="font-size:11px">${note}</td></tr>`;
+  }).join('');
+  return `<h4 style="font-size:12px;color:var(--dim);letter-spacing:1px;margin:16px 0 6px">${esc(T('ui.itTitle'))}</h4>`
+    + `<table><thead><tr><th>${esc(T('ui.itTblRound'))}</th><th>${esc(T('ui.itTblTrain'))}</th><th>${esc(T('ui.itTblNote'))}</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+// 运行中不整块重建侧栏：否则「停止」按钮的 DOM 每步被替换，用户（和自动化）经常点不中。
+function iterTick() {
+  const prog = $id('itProgress');
+  if (!prog || !iterState) { renderReview(); return; }
+  prog.textContent = T('ui.itRunning', { r: iterState.round, n: iterState.rounds, step: iterState.step || '' });
+  const btn = $id('itRunBtn');
+  if (btn) btn.textContent = T('ui.itStop');
+  renderReviewMain(); // 候选表随轮次更新（main 重建不影响侧栏按钮）
+}
+
+async function runIteration() {
+  if (iterState && iterState.running) { // 按钮兼作停止
+    iterState.abort = true;
+    if (iterState.ctl) { try { iterState.ctl.abort(); } catch { /* 忽略 */ } }
+    iterState.step = T('ui.itStopping');
+    iterTick(); // 立刻给反馈，否则用户以为没点上又点一次
+    return;
+  }
+  const st = sdkState();
+  if (st === 'need-login') { if (llmCtl && llmCtl.login) llmCtl.login(); return; }
+  if (st !== 'ready') { iterMsg(T('ui.rvNoSdk'), true); renderReview(); return; }
+  if (batchBusy) { iterMsg(T('ui.rvBusy'), true); renderReview(); return; }
+  if (!batchRuns.train || !batchRuns.train.agg.games) { iterMsg(T('ui.itNeedBaseline'), true); renderReview(); return; }
+
+  const rounds = iterRounds();
+  const model = iterModel();
+  const lockKey = setupKey(); // 迭代要跑几分钟，期间对手/技能/地图可点：跨设置的胜率不能放进同一个候选池比较
+  const snapRes = writeIterBase();
+  iterBaseErr = snapRes.ok ? '' : snapRes.err;
+  const baseline = {
+    round: 0, isBaseline: true, valid: true,
+    strategy: strategyEl.value, code: editorEl.value, codeHash: codeHashOf(editorEl.value),
+    trainWinRate: batchRuns.train.agg.winRate,
+    holdoutWinRate: batchRuns.holdout ? batchRuns.holdout.agg.winRate : null,
+    batch: currentBatch(),
+    batchKey: batchRuns.train.key,
+  };
+  iterState = {
+    running: true, rounds, model, round: 0, step: '', candidates: [baseline], baseline,
+    abort: false, stopped: 'done', applied: null, at: new Date().toISOString(), lockKey, fake: FAKE_LLM,
+    ctl: (typeof AbortController === 'function' ? new AbortController() : null),
+  };
+  iterMsg('');
+  renderReview();
+  try {
+    for (let r = 1; r <= rounds; r++) {
+      if (iterState.abort) { iterState.stopped = 'aborted'; break; }
+      if (setupKey() !== lockKey) { iterState.stopped = 'setup-changed'; break; } // 中途改了设置：立刻停，别拿两套设置比
+      iterState.round = r;
+      const base = nextRoundBase(iterState.candidates) || baseline; // 爬山：从当前最优起跳
+      strategyEl.value = base.strategy;
+      editorEl.value = base.code;
+      const cand = { round: r, model: model || 'default', valid: false };
+      iterState.step = T('ui.itStepReview');
+      iterTick();
+      let parsed = null;
+      try {
+        const prompt = buildReviewPrompt({
+          mode: 'batch', strategy: base.strategy,
+          payload: reviewPayloadFromBatch(base.batch || currentBatch()),
+        });
+        const { text } = await llmCtl.chat(prompt, { model: model || undefined, signal: iterState.ctl ? iterState.ctl.signal : undefined });
+        parsed = parseReviewReply(text);
+        // 「解析不出」必须带载荷，否则日志里判不出是被截断、给了散文、还是缺字段（评审 B6）
+        if (!parsed) cand.invalidReason = `review unparsable: chars=${String(text || '').length} head=${String(text || '').slice(0, 200)}`;
+      } catch (e) {
+        cand.invalidReason = `review ${(e && e.name) || 'Error'}: ${String((e && (e.hint || e.message)) || e)}`;
+      }
+      if (!parsed) { iterState.candidates.push(cand); continue; } // 无效轮不打断迭代
+      cand.strategy = parsed.strategy;
+      cand.changes = parsed.changes;
+      iterState.step = T('ui.itStepGen');
+      iterTick();
+      strategyEl.value = parsed.strategy;
+      // noDraft：迭代期间不许把中间版本写进草稿，否则崩溃/关页后玩家原版不可恢复（评审 B1）
+      const gen = await generateScript({ model: model || undefined, signal: iterState.ctl ? iterState.ctl.signal : undefined, noDraft: !iterBaseErr });
+      if (!gen || !gen.ok) {
+        cand.invalidReason = `gen ${(gen && gen.outcome) || 'failed'}: ${(gen && gen.reason) || ''}`.trim();
+        iterState.candidates.push(cand);
+        continue;
+      }
+      if (editorEl.value === base.code) { cand.invalidReason = 'gen produced identical code'; iterState.candidates.push(cand); continue; }
+      cand.code = editorEl.value;
+      cand.codeHash = codeHashOf(cand.code);
+      iterState.step = T('ui.itStepEval', { n: BATCH_N });
+      iterTick();
+      const run = await runBatch('train');
+      if (!run) { cand.invalidReason = `eval failed: ${batchFailMsg}`; iterState.candidates.push(cand); continue; }
+      if (run.key !== lockKey) { // 这一轮是在别的设置下打的：不入池，立刻停
+        cand.invalidReason = 'setup changed during eval';
+        iterState.candidates.push(cand);
+        iterState.stopped = 'setup-changed';
+        break;
+      }
+      cand.trainWinRate = run.agg.winRate;
+      cand.valid = true;
+      cand.batch = { setup: run.setup, at: run.at, games: run.games };
+      cand.batchKey = run.key;
+      iterState.candidates.push(cand);
+    }
+  } catch (e) {
+    iterState.stopped = 'error';
+    iterMsg(`${(e && e.name) || 'Error'}: ${String((e && e.message) || e)}`, true);
+  }
+  // 收尾：总是应用训练组最强那版（含基线——迭代没赢过原版时就保留原版）
+  const best = pickBest(iterState.candidates) || baseline;
+  strategyEl.value = best.strategy;
+  editorEl.value = best.code;
+  saveDraft();
+  refreshSkillHint();
+  if (best.batch) { // 胜率区回到「被应用那版」的成绩，key 用那批数据自己的（不能盖成当前时刻，会骗过 rvStale）
+    batchRuns.train = {
+      games: best.batch.games, agg: aggregateBatch(best.batch.games),
+      setup: best.batch.setup, at: best.batch.at, key: best.batchKey || lockKey, ms: 0,
+    };
+  }
+  // 留出组那份是**原版代码**的成绩：换了版就必须清掉，否则界面把它当成当前这版的留出组并列展示
+  if (!best.isBaseline) batchRuns.holdout = null;
+  iterState.applied = best;
+  iterState.running = false;
+  iterState.step = '';
+  const tried = iterState.candidates.filter((c) => !c.isBaseline);
+  const validTried = tried.filter((c) => c.valid).length;
+  if (best.isBaseline) iterMsg(validTried ? T('ui.itDoneBaseline', { n: tried.length }) : T('ui.itNoValid', { n: tried.length }), true);
+  else if (iterState.stopped === 'setup-changed') iterMsg(T('ui.itSetupChanged'), true);
+  else if (iterState.stopped === 'aborted') iterMsg(T('ui.itAborted', { msg: `#${best.round} ${pctText(best.trainWinRate)}` }));
+  else iterMsg(T('ui.itDone', { r: best.round, p: pctText(best.trainWinRate) }));
+  lastCompare = null; // 迭代有自己的候选清单，不复用单次采纳的对比卡
+  renderGauge();
+  renderReview();
+}
+
+async function verifyIterHoldout() {
+  if (batchBusy) { iterMsg(T('ui.rvBusy'), true); renderReview(); return; }
+  const run = await runBatch('holdout');
+  if (!run) { iterMsg(T('ui.rvFail', { msg: batchFailMsg }), true); renderReview(); return; }
+  const b = iterState && iterState.baseline ? iterState.baseline.holdoutWinRate : null;
+  iterMsg(T('ui.itHoldoutRes', { p: pctText(run.agg.winRate), b: pctText(b) }), b != null && run.agg.winRate <= b);
+  renderReview();
+}
+
+function downloadIterLog() {
+  if (!iterState) return;
+  const log = buildIterationLog({
+    at: iterState.at,
+    baseSnapshotErr: iterBaseErr,
+    setup: { ...(batchRuns.train ? batchRuns.train.setup : {}), model: iterState.model || 'default', rounds: iterState.rounds },
+    baseline: iterState.baseline,
+    candidates: iterState.candidates.filter((c) => !c.isBaseline),
+    applied: iterState.applied,
+    stopped: iterState.stopped,
+    fakeLlm: !!iterState.fake,
+  });
+  downloadText(`agentank-iteration-${Date.now()}.json`, JSON.stringify(log, null, 2), 'application/json');
+}
+
 $id('battleJsonBtn')?.addEventListener('click', () => {
   const rep = currentBattleReport();
   if (!rep) { showErr(T('ui.rvNoBattle')); return; }
@@ -2841,6 +3205,11 @@ $id('reviewDlJsonBtn')?.addEventListener('click', () => {
   downloadText(batchReportFilename(new Date(), 'json'), JSON.stringify({ kind: 'agentank-batch', schema: 1, ...batch, agg: aggregateBatch(batch.games) }, null, 2), 'application/json');
 });
 renderGauge();
+
+if (FAKE_LLM) { // 调试：用假 AI 驱动完整迭代闭环（界面明示，避免被当成真实结果）
+  llmConnect(makeFakeLlm());
+  genMsg('假 AI（调试）：?fakellm=1 已启用，结果不代表真实模型');
+}
 
 // ---------- Play 用户支持（仅 play 部署环境激活；file:/匿名/SDK 不可用时零回归） ----------
 initPlay({
