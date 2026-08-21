@@ -3,7 +3,30 @@
 // 运行时部分 initPlay(ctx)：仅在 play 部署环境动态注入 SDK 脚本节点（src 指向 __sdk/v1.js），
 // dist 静态产物零外链；SDK 不可用/未登录时所有现有功能零回归（匿名照旧）。
 
-import { redactSecrets, aggregateBatch } from '../src/engine/analyze.js';
+import { redactSecrets, aggregateBatch, normalizeBatchN } from '../src/engine/analyze.js';
+
+// 一套对局设置的指纹：任一维度变了，之前跑出来的胜率就不能再拿来对比。
+// **局数也是一个维度**：12 局的 58% 和 50 局的 58% 不是一回事（前者一局值 8.3 个百分点），
+// 并排展示就是假对比；把它写进 key，换档后旧基线自动标记为需重跑。
+export function setupKeyOf(o) {
+  const p = o || {};
+  return [
+    String(p.opponent ?? ''), String(p.skill ?? ''), String(p.mapKey ?? ''), String(p.tank ?? ''),
+    `n${normalizeBatchN(p.n)}`,
+  ].join('|');
+}
+
+// 跑一次基线（训练组 + 留出组）的预计耗时。
+// 首次只能用保守常量；跑过一次之后改用**本机实测**均值 —— 机器性能差几倍，
+// 常量估出来的「约 26 秒」实测只用 7.6 秒，一个长期不准的数字会让人不再相信任何进度提示。
+export function batchEtaMs(o) {
+  const i = o || {};
+  const n = Math.max(1, Number(i.n) || 1);
+  const games = Number(i.sampleGames) || 0;
+  const ms = Number(i.sampleMs) || 0;
+  const per = games > 0 && ms > 0 ? ms / games : (Number(i.fallbackPerMatchMs) || ITER_LIMITS.msPerMatch);
+  return Math.round(per * n * 2); // ×2：训练组 + 留出组
+}
 
 // 注入决策：file: 一律不注入；?play=1 显式开启直接注入；http(s) 无 flag 先探测 __sdk/v1.js 可用性
 export function sdkInjectDecision(loc) {

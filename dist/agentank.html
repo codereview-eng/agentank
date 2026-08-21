@@ -220,6 +220,10 @@ footer .mono{color:var(--muted)}
 .wracts{display:flex; gap:6px}
 .wracts .btn{padding:5px 10px; font-size:11px; letter-spacing:0}
 .wrhint{font-size:11px; color:var(--dim)}
+/* 每组局数选择器：局数越多胜率越稳，代价是等待时间线性增长，所以交给用户拍板 */
+.wrpick{display:flex; align-items:center; gap:6px; font-size:11px; color:var(--muted); flex:1}
+.wrpick select{flex:none; font-size:11px; padding:3px 6px; background:var(--panel-2); color:var(--fg);
+  border:1px solid var(--line); border-radius:6px}
 /* 迭代进度条：轮内每一步都前进，静止的条与「卡死」无法区分，所以宽度必须由 iterProgress 驱动 */
 .itbar{height:4px; background:var(--panel-2); border:1px solid var(--line); border-radius:999px; overflow:hidden}
 .itbar>i{display:block; height:100%; background:var(--accent); width:0; transition:width .35s ease}
@@ -411,6 +415,9 @@ footer .mono{color:var(--muted)}
       <div class="wrmeta" id="wrMeta"></div>
       <div class="bars" id="wrBars"></div>
       <div class="wrfail" id="wrFail" hidden></div>
+      <div class="wracts">
+        <label class="wrpick"><span data-i18n="ui.rvBatchN">每组局数</span><select id="wrBatchN"></select></label>
+      </div>
       <div class="wracts">
         <button class="btn ghost" id="wrRunBtn" style="flex:1">▶ 跑 12 局建立基线</button>
         <button class="btn ghost" id="wrReviewBtn" data-i18n="ui.rvOpen" style="flex:none">🔍 复盘</button>
@@ -2269,11 +2276,43 @@ function redactSecrets(text) {
 }
 
 // ---------- 批量试跑的两组固定种子（单一定义点：网页端与测量脚本都从这里取） ----------
-// 训练组 = AI 能看到战报的那 12 个；留出组 = AI 从没见过的另 12 个，验收只认它。
+// 训练组 = AI 能看到战报的那批种子；留出组 = AI 从没见过的另一批，验收只认它。
 // 分两组的原因：只看训练组会把「战术调成只赢这几个种子」误判成「变强了」。
+//
+// 局数可选（2026-08-21）：12 局里赢输一局 = 8.3 个百分点，噪声比多数战术改动的真实效果还大，
+// 「提升」经常只是抖动；50 局把一局的权重压到 2 个百分点。全部在浏览器本地算，不上传、不花钱，
+// 代价只是等待时间线性增长 —— 所以做成用户可选，而不是写死。
+const BATCH_SIZES = [12, 30, 50, 100];
+const BATCH_N_DEFAULT = 50;
+
+// 非法/越界一律夹到最近的合法档：绝不让 0 局（除以零的胜率）或天文数字（浏览器卡死）流进跑批
+function normalizeBatchN(n) {
+  if (n == null || n === '') return BATCH_N_DEFAULT; // Number(null)===0 会被夹成最小档，那不是「没选」的本意
+  const v = Number(n);
+  if (!Number.isFinite(v)) return BATCH_N_DEFAULT;
+  let best = BATCH_SIZES[0];
+  for (const s of BATCH_SIZES) {
+    const d = Math.abs(s - v);
+    const db = Math.abs(best - v);
+    if (d < db || (d === db && s > best)) best = s; // 正好卡在两档中间：取样本更多的那档，宁稳勿噪
+  }
+  return best;
+}
+
+// 种子命名 trNN / hoNN：两组前缀不同 = 天然零交集；编号宽度按档位定，
+// 因此 50 档的前 12 个与 12 档逐字一致（老基线还能对照着看）。
+function batchSeeds(set, n) {
+  const k = normalizeBatchN(n);
+  const p = set === 'holdout' ? 'ho' : 'tr';
+  const w = Math.max(2, String(k).length);
+  const out = [];
+  for (let i = 1; i <= k; i++) out.push(p + String(i).padStart(w, '0'));
+  return out;
+}
+
 const BATCH_SEEDS = {
-  train: ['tr01', 'tr02', 'tr03', 'tr04', 'tr05', 'tr06', 'tr07', 'tr08', 'tr09', 'tr10', 'tr11', 'tr12'],
-  holdout: ['ho01', 'ho02', 'ho03', 'ho04', 'ho05', 'ho06', 'ho07', 'ho08', 'ho09', 'ho10', 'ho11', 'ho12'],
+  train: batchSeeds('train', BATCH_N_DEFAULT),
+  holdout: batchSeeds('holdout', BATCH_N_DEFAULT),
 };
 
 // ---------- 可疑时刻规则清单（顺序即 id 顺序，测试锁死） ----------
@@ -3318,7 +3357,8 @@ const LOCALES = {
       rvOpen: '🔍 复盘',
       rvWins: '{w} 胜 / {n} 局',
       rvRunning: '正在跑第 {i}/{n} 局…',
-      rvLocalHint: '{n} 局全部在你的浏览器里算，不上传',
+      rvLocalHint: '每组 {n} 局（两组共 {total} 局，约 {sec} 秒）全部在你的浏览器里算，不上传',
+      rvBatchN: '每组局数',
       rvStale: '对局设置变了，胜率需重跑',
       rvFail: '批量试跑失败：{msg}',
       rvFailNote: '不会拿旧数字冒充本轮结果',
@@ -3762,7 +3802,8 @@ function decide(api) {
       rvOpen: '🔍 Review',
       rvWins: '{w} wins / {n} battles',
       rvRunning: 'running battle {i}/{n}…',
-      rvLocalHint: 'all {n} battles run in your browser, nothing uploaded',
+      rvLocalHint: '{n} per set ({total} battles in total, ~{sec}s) all run in your browser, nothing uploaded',
+      rvBatchN: 'Battles per set',
       rvStale: 'match setup changed — re-run to refresh the win rate',
       rvFail: 'Batch run failed: {msg}',
       rvFailNote: 'old numbers are never passed off as this run',
@@ -4148,6 +4189,29 @@ function decide(api) {
 // dist 静态产物零外链；SDK 不可用/未登录时所有现有功能零回归（匿名照旧）。
 
 
+
+// 一套对局设置的指纹：任一维度变了，之前跑出来的胜率就不能再拿来对比。
+// **局数也是一个维度**：12 局的 58% 和 50 局的 58% 不是一回事（前者一局值 8.3 个百分点），
+// 并排展示就是假对比；把它写进 key，换档后旧基线自动标记为需重跑。
+function setupKeyOf(o) {
+  const p = o || {};
+  return [
+    String(p.opponent ?? ''), String(p.skill ?? ''), String(p.mapKey ?? ''), String(p.tank ?? ''),
+    `n${normalizeBatchN(p.n)}`,
+  ].join('|');
+}
+
+// 跑一次基线（训练组 + 留出组）的预计耗时。
+// 首次只能用保守常量；跑过一次之后改用**本机实测**均值 —— 机器性能差几倍，
+// 常量估出来的「约 26 秒」实测只用 7.6 秒，一个长期不准的数字会让人不再相信任何进度提示。
+function batchEtaMs(o) {
+  const i = o || {};
+  const n = Math.max(1, Number(i.n) || 1);
+  const games = Number(i.sampleGames) || 0;
+  const ms = Number(i.sampleMs) || 0;
+  const per = games > 0 && ms > 0 ? ms / games : (Number(i.fallbackPerMatchMs) || ITER_LIMITS.msPerMatch);
+  return Math.round(per * n * 2); // ×2：训练组 + 留出组
+}
 
 // 注入决策：file: 一律不注入；?play=1 显式开启直接注入；http(s) 无 flag 先探测 __sdk/v1.js 可用性
 function sdkInjectDecision(loc) {
@@ -7793,7 +7857,22 @@ if (qp.get('autoplay') === '1') {
 //   单局复盘 = 你刚看完这局回放 → 引擎把「不合理时刻」标出来 → AI 解释并改写战术（快而具体）；
 //   多局复盘 = 同关卡同对手同技能只换种子跑 12 局 → 出胜率与败因 → AI 找系统性毛病（慢而可信）。
 // 验收只认「留出组」（AI 没见过的另 12 个种子），防止把战术调成只赢训练那几个种子。
-const BATCH_N = BATCH_SEEDS.train.length;
+// 每组局数由用户选（默认 50）：12 局里赢输一局 = 8.3 个百分点，噪声盖过多数战术改动的真实效果。
+// 全在本机浏览器算，不上传、不花钱，唯一代价是等待时间线性增长 —— 所以档位交给用户，并记住他的选择。
+const BATCHN_KEY = 'agentank.batchN';
+let batchNChoice = normalizeBatchN((() => { try { return localStorage.getItem(BATCHN_KEY); } catch { return null; } })());
+const batchN = () => batchNChoice;
+// 跑一次基线 = 训练组 + 留出组两批。预计耗时优先用**本机跑过的实测均值**（机器性能差几倍，
+// 常量估的「约 26 秒」实测只要 7.6 秒；长期不准的数字会让人不再相信任何进度提示）。
+const batchEtaSec = () => {
+  const s = batchRuns.train || batchRuns.holdout;
+  return Math.max(1, Math.round(batchEtaMs({
+    n: batchN(),
+    sampleGames: s && s.games ? s.games.length : 0,
+    sampleMs: s ? s.ms : 0,
+    fallbackPerMatchMs: ITER_LIMITS.msPerMatch,
+  }) / 1000));
+};
 const batchRuns = { train: null, holdout: null };
 let batchBusy = false;
 let batchFailMsg = '';
@@ -7807,7 +7886,10 @@ let lastCompare = null;
 
 const pctText = (x) => (x == null ? '—' : `${Math.round(x * 100)}%`);
 const codeHashOf = (s) => seedFromString(String(s || '')).toString(16);
-const setupKey = () => `${oppSelect.value}|${userSkill()}|${userMapKey()}|${myTankLabel()}`;
+// 局数也是对局设置的一维：换档后旧基线自动标记为需重跑（12 局的 58% 与 50 局的 58% 不可并排比）
+const setupKey = () => setupKeyOf({
+  opponent: oppSelect.value, skill: userSkill(), mapKey: userMapKey(), tank: myTankLabel(), n: batchN(),
+});
 
 function downloadText(name, text, mime) {
   const blob = new Blob([text], { type: mime || 'text/plain;charset=utf-8' });
@@ -7840,7 +7922,7 @@ function mapLabel() {
 }
 
 function batchSetup(seedSet, style) {
-  return { opponent: style, skill: userSkill(), mapKey: mapLabel(), tank: myTankLabel(), seedSet, seeds: BATCH_SEEDS[seedSet].slice() };
+  return { opponent: style, skill: userSkill(), mapKey: mapLabel(), tank: myTankLabel(), seedSet, seeds: batchSeeds(seedSet, batchN()) };
 }
 
 // 降级可观测纪律：批量失败一律记下异常名与内容（不是一句「出错了」），并进诊断日志
@@ -7860,14 +7942,14 @@ function gaugeProgress(i, seedSet) {
   const sub = $id('wrSub');
   if (!sub) return;
   sub.textContent = seedSet
-    ? T('ui.rvRunningSet', { set: T(seedSet === 'holdout' ? 'ui.rvHoldout' : 'ui.rvTrain'), i, n: BATCH_N })
-    : T('ui.rvRunning', { i, n: BATCH_N });
+    ? T('ui.rvRunningSet', { set: T(seedSet === 'holdout' ? 'ui.rvHoldout' : 'ui.rvTrain'), i, n: batchN() })
+    : T('ui.rvRunning', { i, n: batchN() });
 }
 
 async function runBatch(seedSet, onProgress) {
   const tick = (i) => {
     gaugeProgress(i, seedSet);
-    if (typeof onProgress === 'function') { try { onProgress(i, BATCH_N); } catch { /* 渲染失败不影响跑批 */ } }
+    if (typeof onProgress === 'function') { try { onProgress(i, batchN()); } catch { /* 渲染失败不影响跑批 */ } }
   };
   if (batchBusy) return null;
   batchBusy = true;
@@ -7878,7 +7960,7 @@ async function runBatch(seedSet, onProgress) {
   try {
     const opp = resolveOpp();
     const mine = { kind: 'user', skill: userSkill() };
-    const jobs = BATCH_SEEDS[seedSet].map((s, i) => {
+    const jobs = batchSeeds(seedSet, batchN()).map((s, i) => {
       const seed = seedFromString(s);
       const who = i % 2; // 先后手各 6 局，避免出生位偏袒
       return { seed, seedStr: s, map: makeMap(seed), who, a: who === 0 ? mine : opp.spec, b: who === 0 ? opp.spec : mine };
@@ -7959,9 +8041,11 @@ function renderGauge() {
   const run = batchRuns.train;
   const stale = run && run.key !== setupKey();
   if (runBtn) {
-    runBtn.textContent = run ? T('ui.rvRerunBoth', { n: BATCH_N }) : T('ui.rvRunBoth', { n: BATCH_N });
+    runBtn.textContent = run ? T('ui.rvRerunBoth', { n: batchN() }) : T('ui.rvRunBoth', { n: batchN() });
     runBtn.disabled = batchBusy;
   }
+  const pick = $id('wrBatchN');
+  if (pick) pick.disabled = batchBusy; // 跑批中途换档 = 半程换了样本量，直接禁掉
   // 还没跑基线时「复盘」点开也只是空面板：禁用而不隐藏（旁边就是「跑基线」，隐藏会让这行布局跳动）
   const rvBtn = $id('wrReviewBtn');
   if (rvBtn) rvBtn.disabled = batchBusy || !(run && run.agg.games);
@@ -7975,7 +8059,7 @@ function renderGauge() {
     if (!batchBusy) sub.textContent = T('ui.rvNever');
     if (meta) meta.textContent = '';
     if (bars) bars.innerHTML = '';
-    if (hint) hint.textContent = T('ui.rvLocalHint', { n: BATCH_N });
+    if (hint) hint.textContent = T('ui.rvLocalHint', { n: batchN(), total: batchN() * 2, sec: batchEtaSec() });
     if (flag) flag.hidden = true;
     return;
   }
@@ -7997,7 +8081,7 @@ function renderGauge() {
       return `<div class="bar"><span>${esc(label)}</span><i class="${i ? 'w' : ''}" style="width:${Math.round((n / top) * 100)}%"></i><em>${n}</em></div>`;
     }).join('');
   }
-  if (hint) hint.textContent = stale ? T('ui.rvStale') : T('ui.rvLocalHint', { n: BATCH_N });
+  if (hint) hint.textContent = stale ? T('ui.rvStale') : T('ui.rvLocalHint', { n: batchN(), total: batchN() * 2, sec: batchEtaSec() });
   if (flag) {
     const total = run.games.reduce((s, g) => s + (g.moments || []).length, 0);
     flag.hidden = !total;
@@ -8413,14 +8497,14 @@ function iterProgressText() {
   const parts = [T('ui.itRunning', { r: st.round, n: st.rounds, step: st.step || '' })];
   const el = st.stepAt ? Date.now() - st.stepAt : 0;
   parts.push(T('ui.itElapsed', { s: Math.round(el / 1000) }));
-  if (st.stepKind === 'eval' && st.evalAt) parts.push(T('ui.itEvalAt', { i: st.evalAt, n: BATCH_N }));
+  if (st.stepKind === 'eval' && st.evalAt) parts.push(T('ui.itEvalAt', { i: st.evalAt, n: batchN() }));
   if (st.stepTimeoutMs) {
     const pace = stepPace(el, st.stepTimeoutMs, ITER_TIMEOUTS.slowHintMs);
     if (pace === 'slow') parts.push(T('ui.itSlowHint'));
     else if (pace === 'near-timeout') parts.push(T('ui.itNearTimeout', { s: Math.max(1, Math.round((st.stepTimeoutMs - el) / 1000)) }));
   }
   const eta = iterEta({
-    round: st.roundMs.length, rounds: st.rounds, roundMs: st.roundMs, matchesPerRound: BATCH_N,
+    round: st.roundMs.length, rounds: st.rounds, roundMs: st.roundMs, matchesPerRound: batchN(),
     curElapsedMs: st.roundAt ? Date.now() - st.roundAt : 0, // 轮内也递减，整轮不动的数字看着就像卡死
   });
   if (eta > 0) parts.push(T('ui.itEta', { t: fmtClock(eta) }));
@@ -8436,7 +8520,7 @@ function iterLogRow(e) {
     const delta = d == null ? '—'
       : (d.dir === 'flat' ? T('ui.itLogDeltaFlat') : T('ui.itLogDelta', { sign: d.pt > 0 ? '+' : '−', pt: Math.abs(d.pt) }));
     const base = T('ui.itLogEval', {
-      r: e.round, m: e.matches == null ? BATCH_N : e.matches, s,
+      r: e.round, m: e.matches == null ? batchN() : e.matches, s,
       p: pctText(e.winRate), b: pctText(e.baseWinRate), delta,
     });
     return { text: e.best ? `${base} ${T('ui.itLogBest')}` : base, cls: e.best ? 'win' : '' };
@@ -8560,7 +8644,7 @@ function renderIterPanel() {
   parts.push(`<label style="width:auto;display:flex;gap:6px;align-items:center;font-size:11px">${esc(T('ui.itRounds'))}
     <select id="itRounds" style="flex:1;font-size:11px;padding:3px 6px"${running ? ' disabled' : ''}>${
     ITER_ROUND_CHOICES.map((n) => `<option value="${n}"${n === rounds ? ' selected' : ''}>${n}</option>`).join('')}</select></label>`);
-  const cost = iterationCost(rounds, BATCH_N);
+  const cost = iterationCost(rounds, batchN());
   parts.push(`<div class="wrhint">${esc(T('ui.itCost', { min: Math.max(1, Math.round(cost.estMs / 60000)), ai: cost.aiCalls, m: cost.matches }))}</div>`);
   parts.push(`<button class="btn ghost" id="itRunBtn" style="padding:5px 12px;font-size:11px;${running ? '' : 'border-color:var(--accent);color:var(--accent)'}">${
     esc(running ? T('ui.itStop') : T('ui.itStart'))}</button>`);
@@ -8720,14 +8804,14 @@ async function runIteration() {
       cand.code = editorEl.value;
       cand.codeHash = codeHashOf(cand.code);
       iterLog({ kind: 'gen', round: r, ms: Date.now() - genT0, detail: (parsed.changes || []).slice(0, 2).join('；') });
-      iterStep('eval', T('ui.itStepEval', { n: BATCH_N }), ITER_TIMEOUTS.evalMs);
+      iterStep('eval', T('ui.itStepEval', { n: batchN() }), ITER_TIMEOUTS.evalMs);
       const evalT0 = Date.now();
       // 逐局回报：本地分片跑与线上 Worker 跑都会喂进来，评分阶段不再是一行静止的字
       const run = await runBatch('train', (i) => { if (iterState) { iterState.evalAt = i; iterTick(); } });
-      if (!run) { cand.invalidReason = `eval failed: ${batchFailMsg}`; closeRound(T('ui.itStepEval', { n: BATCH_N })); continue; }
+      if (!run) { cand.invalidReason = `eval failed: ${batchFailMsg}`; closeRound(T('ui.itStepEval', { n: batchN() })); continue; }
       if (run.key !== lockKey) { // 这一轮是在别的设置下打的：不入池，立刻停
         cand.invalidReason = 'setup changed during eval';
-        closeRound(T('ui.itStepEval', { n: BATCH_N }));
+        closeRound(T('ui.itStepEval', { n: batchN() }));
         iterState.stopped = 'setup-changed';
         break;
       }
@@ -8736,9 +8820,9 @@ async function runIteration() {
       cand.batch = { setup: run.setup, at: run.at, games: run.games };
       cand.batchKey = run.key;
       const prevBest = pickBest(iterState.candidates); // 入池前的最优（含基线）——判断这轮是否刷新纪录
-      closeRound(T('ui.itStepEval', { n: BATCH_N }));
+      closeRound(T('ui.itStepEval', { n: batchN() }));
       iterLog({
-        kind: 'eval', round: r, ms: Date.now() - evalT0, matches: BATCH_N,
+        kind: 'eval', round: r, ms: Date.now() - evalT0, matches: batchN(),
         winRate: cand.trainWinRate, baseWinRate: baseline.trainWinRate,
         best: !prevBest || cand.trainWinRate > prevBest.trainWinRate,
       });
@@ -8816,6 +8900,18 @@ $id('battleJsonBtn')?.addEventListener('click', () => {
 });
 $id('battleReviewBtn')?.addEventListener('click', () => openReview('single'));
 $id('wrRunBtn')?.addEventListener('click', () => { runBaseline(); });
+// 每组局数：填档位 → 记住选择 → 换档后 setupKey 变化，界面自动提示需重跑（不偷偷拿旧样本量的数字充数）
+(() => {
+  const pick = $id('wrBatchN');
+  if (!pick) return;
+  pick.innerHTML = BATCH_SIZES.map((n) => `<option value="${n}"${n === batchNChoice ? ' selected' : ''}>${n}</option>`).join('');
+  pick.addEventListener('change', () => {
+    batchNChoice = normalizeBatchN(pick.value);
+    try { localStorage.setItem(BATCHN_KEY, String(batchNChoice)); } catch { /* 隐私模式：忽略 */ }
+    renderGauge();
+    if (reviewOpen) renderReview(); // 迭代面板的成本预估要跟着变
+  });
+})();
 $id('wrReviewBtn')?.addEventListener('click', () => openReview('batch'));
 $id('reviewCloseBtn')?.addEventListener('click', closeOverlay);
 $id('reviewDlTextBtn')?.addEventListener('click', () => {

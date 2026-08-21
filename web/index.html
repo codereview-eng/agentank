@@ -220,6 +220,10 @@ footer .mono{color:var(--muted)}
 .wracts{display:flex; gap:6px}
 .wracts .btn{padding:5px 10px; font-size:11px; letter-spacing:0}
 .wrhint{font-size:11px; color:var(--dim)}
+/* 每组局数选择器：局数越多胜率越稳，代价是等待时间线性增长，所以交给用户拍板 */
+.wrpick{display:flex; align-items:center; gap:6px; font-size:11px; color:var(--muted); flex:1}
+.wrpick select{flex:none; font-size:11px; padding:3px 6px; background:var(--panel-2); color:var(--fg);
+  border:1px solid var(--line); border-radius:6px}
 /* 迭代进度条：轮内每一步都前进，静止的条与「卡死」无法区分，所以宽度必须由 iterProgress 驱动 */
 .itbar{height:4px; background:var(--panel-2); border:1px solid var(--line); border-radius:999px; overflow:hidden}
 .itbar>i{display:block; height:100%; background:var(--accent); width:0; transition:width .35s ease}
@@ -411,6 +415,9 @@ footer .mono{color:var(--muted)}
       <div class="wrmeta" id="wrMeta"></div>
       <div class="bars" id="wrBars"></div>
       <div class="wrfail" id="wrFail" hidden></div>
+      <div class="wracts">
+        <label class="wrpick"><span data-i18n="ui.rvBatchN">每组局数</span><select id="wrBatchN"></select></label>
+      </div>
       <div class="wracts">
         <button class="btn ghost" id="wrRunBtn" style="flex:1">▶ 跑 12 局建立基线</button>
         <button class="btn ghost" id="wrReviewBtn" data-i18n="ui.rvOpen" style="flex:none">🔍 复盘</button>
