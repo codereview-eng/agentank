@@ -5,7 +5,11 @@
 这里在同一次真实运行里连采多帧，断言 ① 进度行文本随秒变化；② 日志条数单调增长；
 ③ 收尾出现「完成」行。截图只是这些事实的旁证，不是判据本身。
 
-只借用已在跑的 chrome-cu 实例（本机纪律：不 kill、不 Browser.close、只关自己开的 tab、绝不抢前台）。
+浏览器用**自己 launch 的 headless 实例**，绝不借用长驻的 chrome-cu-1/2/3。
+原因（2026-08-21 实测）：在 headful 的共享 Chrome 上 `context.new_page()` 会新建 tab，
+macOS 上这一步就把整个 Chrome 窗口 activate 到最前（frontmost: Feishu → Google Chrome），
+而且 `page.close()` 之后前台**不会还回去** —— 每跑一次探针就打断用户一次。
+headless 自有实例实测全程不改变 frontmost，且用完即弃、不污染任何长驻实例。
 """
 import json
 import re
@@ -17,7 +21,6 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 from playwright.sync_api import sync_playwright
 
-CDP = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:19301"
 OUT = "/tmp/agentank-iter"
 DIST = "/Users/zkf/work/tankgame/dist"
 
@@ -49,9 +52,8 @@ def snap(page, tag):
 
 
 with sync_playwright() as p:
-    browser = p.chromium.connect_over_cdp(CDP)
-    ctx = browser.contexts[0]
-    page = ctx.new_page()  # 自己开的 tab，收尾只关它
+    browser = p.chromium.launch(headless=True)  # 自有实例：不碰 cu-1/2/3，也不抢前台
+    page = browser.new_page()
     try:
         page.set_viewport_size({"width": 1440, "height": 900})
         page.goto(URL, wait_until="load")
@@ -96,7 +98,7 @@ with sync_playwright() as p:
         for r in s["rows"]:
             print("   ", r)
     finally:
-        page.close()  # 只关自己这个 tab；共享实例保持存活
+        browser.close()  # 自有实例用完即弃
 
 # ---------- 确定性判据 ----------
 run = [s for s in samples if s["tag"] == "running"]
