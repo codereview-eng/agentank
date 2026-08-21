@@ -33,11 +33,43 @@ export function redactSecrets(text) {
 }
 
 // ---------- 批量试跑的两组固定种子（单一定义点：网页端与测量脚本都从这里取） ----------
-// 训练组 = AI 能看到战报的那 12 个；留出组 = AI 从没见过的另 12 个，验收只认它。
+// 训练组 = AI 能看到战报的那批种子；留出组 = AI 从没见过的另一批，验收只认它。
 // 分两组的原因：只看训练组会把「战术调成只赢这几个种子」误判成「变强了」。
+//
+// 局数可选（2026-08-21）：12 局里赢输一局 = 8.3 个百分点，噪声比多数战术改动的真实效果还大，
+// 「提升」经常只是抖动；50 局把一局的权重压到 2 个百分点。全部在浏览器本地算，不上传、不花钱，
+// 代价只是等待时间线性增长 —— 所以做成用户可选，而不是写死。
+export const BATCH_SIZES = [12, 30, 50, 100];
+export const BATCH_N_DEFAULT = 50;
+
+// 非法/越界一律夹到最近的合法档：绝不让 0 局（除以零的胜率）或天文数字（浏览器卡死）流进跑批
+export function normalizeBatchN(n) {
+  if (n == null || n === '') return BATCH_N_DEFAULT; // Number(null)===0 会被夹成最小档，那不是「没选」的本意
+  const v = Number(n);
+  if (!Number.isFinite(v)) return BATCH_N_DEFAULT;
+  let best = BATCH_SIZES[0];
+  for (const s of BATCH_SIZES) {
+    const d = Math.abs(s - v);
+    const db = Math.abs(best - v);
+    if (d < db || (d === db && s > best)) best = s; // 正好卡在两档中间：取样本更多的那档，宁稳勿噪
+  }
+  return best;
+}
+
+// 种子命名 trNN / hoNN：两组前缀不同 = 天然零交集；编号宽度按档位定，
+// 因此 50 档的前 12 个与 12 档逐字一致（老基线还能对照着看）。
+export function batchSeeds(set, n) {
+  const k = normalizeBatchN(n);
+  const p = set === 'holdout' ? 'ho' : 'tr';
+  const w = Math.max(2, String(k).length);
+  const out = [];
+  for (let i = 1; i <= k; i++) out.push(p + String(i).padStart(w, '0'));
+  return out;
+}
+
 export const BATCH_SEEDS = {
-  train: ['tr01', 'tr02', 'tr03', 'tr04', 'tr05', 'tr06', 'tr07', 'tr08', 'tr09', 'tr10', 'tr11', 'tr12'],
-  holdout: ['ho01', 'ho02', 'ho03', 'ho04', 'ho05', 'ho06', 'ho07', 'ho08', 'ho09', 'ho10', 'ho11', 'ho12'],
+  train: batchSeeds('train', BATCH_N_DEFAULT),
+  holdout: batchSeeds('holdout', BATCH_N_DEFAULT),
 };
 
 // ---------- 可疑时刻规则清单（顺序即 id 顺序，测试锁死） ----------

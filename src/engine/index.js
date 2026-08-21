@@ -6,7 +6,7 @@ export {
   replayStates, buildMetrics, detectMoments, buildBattleReport, summarizeGame,
   aggregateBatch, renderBatchText, battleReportFilename, batchReportFilename,
   redactSecrets, healThresholdFrom, MOMENT_RULES, MOMENT_TUNING, BATCH_SEEDS,
-  verdictOf, parseBucketKey,
+  verdictOf, parseBucketKey, BATCH_SIZES, BATCH_N_DEFAULT, batchSeeds, normalizeBatchN,
 } from './analyze.js';
 export {
   STAGES, SKILL_EFFECTS, ITEM_EFFECTS, validateContent, makePack, serializePack,

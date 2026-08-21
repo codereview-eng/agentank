@@ -1,9 +1,9 @@
 // AgenTank 网页端 UI：本地跑引擎对战 + canvas 逐 tick 回放 + 实时战报 + 天梯。
 // 开发版经 <script type="module"> 加载；发布版由 scripts/build-web.mjs 去 import/export 内联进单文件。
-import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS, presetMap, validateContent, makePack, serializePack, parsePack, promoteStage, resolvePackMap, compileBot, OFFICIAL_CONTENT, buildBattleReport, summarizeGame, aggregateBatch, renderBatchText, battleReportFilename, batchReportFilename, BATCH_SEEDS, verdictOf, parseBucketKey } from '../src/engine/index.js';
+import { runMatch, generateMap, mulberry32, renderText, RULES, TILE, PRESET_MAPS, presetMap, validateContent, makePack, serializePack, parsePack, promoteStage, resolvePackMap, compileBot, OFFICIAL_CONTENT, buildBattleReport, summarizeGame, aggregateBatch, renderBatchText, battleReportFilename, batchReportFilename, verdictOf, parseBucketKey, BATCH_SIZES, batchSeeds, normalizeBatchN } from '../src/engine/index.js';
 import { bots } from '../bots/index.js';
 import { LOCALES, LANGS, fmt, resolveLang } from './i18n.js';
-import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError, scriptGate, buildGenLog, genLogFilename, resolveEditorState, draftIsClean, buildReviewPrompt, parseReviewReply, reviewPayloadFromBattle, reviewPayloadFromBatch, compareVerdict, pickBest, nextRoundBase, iterationCost, buildIterationLog, ITER_TIMEOUTS, pushIterLog, winDelta, explainIterFail, iterEta, iterProgress, stepPace, fmtClock, resolveSelValue, chipShortLabel } from './play.js';
+import { initPlay, skillCodeMismatch, buildTankPayload, migrateLocalSave, upsertLocalTank, reconcileLogin, nextTankName, buildLlmPrompt, extractLlmCode, mapLlmError, scriptGate, buildGenLog, genLogFilename, resolveEditorState, draftIsClean, buildReviewPrompt, parseReviewReply, reviewPayloadFromBattle, reviewPayloadFromBatch, compareVerdict, pickBest, nextRoundBase, iterationCost, buildIterationLog, ITER_TIMEOUTS, ITER_LIMITS, pushIterLog, winDelta, explainIterFail, iterEta, iterProgress, stepPace, fmtClock, resolveSelValue, chipShortLabel, setupKeyOf, batchEtaMs } from './play.js';
 import { extractEngineSource, buildWorkerSource } from './sandbox.js';
 
 // 单文件产物里，本脚本自身的源码文本（引擎源从中切出，喂给无 eval 沙箱 Worker）。
@@ -2408,7 +2408,22 @@ if (qp.get('autoplay') === '1') {
 //   单局复盘 = 你刚看完这局回放 → 引擎把「不合理时刻」标出来 → AI 解释并改写战术（快而具体）；
 //   多局复盘 = 同关卡同对手同技能只换种子跑 12 局 → 出胜率与败因 → AI 找系统性毛病（慢而可信）。
 // 验收只认「留出组」（AI 没见过的另 12 个种子），防止把战术调成只赢训练那几个种子。
-const BATCH_N = BATCH_SEEDS.train.length;
+// 每组局数由用户选（默认 50）：12 局里赢输一局 = 8.3 个百分点，噪声盖过多数战术改动的真实效果。
+// 全在本机浏览器算，不上传、不花钱，唯一代价是等待时间线性增长 —— 所以档位交给用户，并记住他的选择。
+const BATCHN_KEY = 'agentank.batchN';
+let batchNChoice = normalizeBatchN((() => { try { return localStorage.getItem(BATCHN_KEY); } catch { return null; } })());
+const batchN = () => batchNChoice;
+// 跑一次基线 = 训练组 + 留出组两批。预计耗时优先用**本机跑过的实测均值**（机器性能差几倍，
+// 常量估的「约 26 秒」实测只要 7.6 秒；长期不准的数字会让人不再相信任何进度提示）。
+const batchEtaSec = () => {
+  const s = batchRuns.train || batchRuns.holdout;
+  return Math.max(1, Math.round(batchEtaMs({
+    n: batchN(),
+    sampleGames: s && s.games ? s.games.length : 0,
+    sampleMs: s ? s.ms : 0,
+    fallbackPerMatchMs: ITER_LIMITS.msPerMatch,
+  }) / 1000));
+};
 const batchRuns = { train: null, holdout: null };
 let batchBusy = false;
 let batchFailMsg = '';
@@ -2422,7 +2437,10 @@ let lastCompare = null;
 
 const pctText = (x) => (x == null ? '—' : `${Math.round(x * 100)}%`);
 const codeHashOf = (s) => seedFromString(String(s || '')).toString(16);
-const setupKey = () => `${oppSelect.value}|${userSkill()}|${userMapKey()}|${myTankLabel()}`;
+// 局数也是对局设置的一维：换档后旧基线自动标记为需重跑（12 局的 58% 与 50 局的 58% 不可并排比）
+const setupKey = () => setupKeyOf({
+  opponent: oppSelect.value, skill: userSkill(), mapKey: userMapKey(), tank: myTankLabel(), n: batchN(),
+});
 
 function downloadText(name, text, mime) {
   const blob = new Blob([text], { type: mime || 'text/plain;charset=utf-8' });
@@ -2455,7 +2473,7 @@ function mapLabel() {
 }
 
 function batchSetup(seedSet, style) {
-  return { opponent: style, skill: userSkill(), mapKey: mapLabel(), tank: myTankLabel(), seedSet, seeds: BATCH_SEEDS[seedSet].slice() };
+  return { opponent: style, skill: userSkill(), mapKey: mapLabel(), tank: myTankLabel(), seedSet, seeds: batchSeeds(seedSet, batchN()) };
 }
 
 // 降级可观测纪律：批量失败一律记下异常名与内容（不是一句「出错了」），并进诊断日志
@@ -2475,14 +2493,14 @@ function gaugeProgress(i, seedSet) {
   const sub = $id('wrSub');
   if (!sub) return;
   sub.textContent = seedSet
-    ? T('ui.rvRunningSet', { set: T(seedSet === 'holdout' ? 'ui.rvHoldout' : 'ui.rvTrain'), i, n: BATCH_N })
-    : T('ui.rvRunning', { i, n: BATCH_N });
+    ? T('ui.rvRunningSet', { set: T(seedSet === 'holdout' ? 'ui.rvHoldout' : 'ui.rvTrain'), i, n: batchN() })
+    : T('ui.rvRunning', { i, n: batchN() });
 }
 
 async function runBatch(seedSet, onProgress) {
   const tick = (i) => {
     gaugeProgress(i, seedSet);
-    if (typeof onProgress === 'function') { try { onProgress(i, BATCH_N); } catch { /* 渲染失败不影响跑批 */ } }
+    if (typeof onProgress === 'function') { try { onProgress(i, batchN()); } catch { /* 渲染失败不影响跑批 */ } }
   };
   if (batchBusy) return null;
   batchBusy = true;
@@ -2493,7 +2511,7 @@ async function runBatch(seedSet, onProgress) {
   try {
     const opp = resolveOpp();
     const mine = { kind: 'user', skill: userSkill() };
-    const jobs = BATCH_SEEDS[seedSet].map((s, i) => {
+    const jobs = batchSeeds(seedSet, batchN()).map((s, i) => {
       const seed = seedFromString(s);
       const who = i % 2; // 先后手各 6 局，避免出生位偏袒
       return { seed, seedStr: s, map: makeMap(seed), who, a: who === 0 ? mine : opp.spec, b: who === 0 ? opp.spec : mine };
@@ -2574,9 +2592,11 @@ function renderGauge() {
   const run = batchRuns.train;
   const stale = run && run.key !== setupKey();
   if (runBtn) {
-    runBtn.textContent = run ? T('ui.rvRerunBoth', { n: BATCH_N }) : T('ui.rvRunBoth', { n: BATCH_N });
+    runBtn.textContent = run ? T('ui.rvRerunBoth', { n: batchN() }) : T('ui.rvRunBoth', { n: batchN() });
     runBtn.disabled = batchBusy;
   }
+  const pick = $id('wrBatchN');
+  if (pick) pick.disabled = batchBusy; // 跑批中途换档 = 半程换了样本量，直接禁掉
   // 还没跑基线时「复盘」点开也只是空面板：禁用而不隐藏（旁边就是「跑基线」，隐藏会让这行布局跳动）
   const rvBtn = $id('wrReviewBtn');
   if (rvBtn) rvBtn.disabled = batchBusy || !(run && run.agg.games);
@@ -2590,7 +2610,7 @@ function renderGauge() {
     if (!batchBusy) sub.textContent = T('ui.rvNever');
     if (meta) meta.textContent = '';
     if (bars) bars.innerHTML = '';
-    if (hint) hint.textContent = T('ui.rvLocalHint', { n: BATCH_N });
+    if (hint) hint.textContent = T('ui.rvLocalHint', { n: batchN(), total: batchN() * 2, sec: batchEtaSec() });
     if (flag) flag.hidden = true;
     return;
   }
@@ -2612,7 +2632,7 @@ function renderGauge() {
       return `<div class="bar"><span>${esc(label)}</span><i class="${i ? 'w' : ''}" style="width:${Math.round((n / top) * 100)}%"></i><em>${n}</em></div>`;
     }).join('');
   }
-  if (hint) hint.textContent = stale ? T('ui.rvStale') : T('ui.rvLocalHint', { n: BATCH_N });
+  if (hint) hint.textContent = stale ? T('ui.rvStale') : T('ui.rvLocalHint', { n: batchN(), total: batchN() * 2, sec: batchEtaSec() });
   if (flag) {
     const total = run.games.reduce((s, g) => s + (g.moments || []).length, 0);
     flag.hidden = !total;
@@ -3028,14 +3048,14 @@ function iterProgressText() {
   const parts = [T('ui.itRunning', { r: st.round, n: st.rounds, step: st.step || '' })];
   const el = st.stepAt ? Date.now() - st.stepAt : 0;
   parts.push(T('ui.itElapsed', { s: Math.round(el / 1000) }));
-  if (st.stepKind === 'eval' && st.evalAt) parts.push(T('ui.itEvalAt', { i: st.evalAt, n: BATCH_N }));
+  if (st.stepKind === 'eval' && st.evalAt) parts.push(T('ui.itEvalAt', { i: st.evalAt, n: batchN() }));
   if (st.stepTimeoutMs) {
     const pace = stepPace(el, st.stepTimeoutMs, ITER_TIMEOUTS.slowHintMs);
     if (pace === 'slow') parts.push(T('ui.itSlowHint'));
     else if (pace === 'near-timeout') parts.push(T('ui.itNearTimeout', { s: Math.max(1, Math.round((st.stepTimeoutMs - el) / 1000)) }));
   }
   const eta = iterEta({
-    round: st.roundMs.length, rounds: st.rounds, roundMs: st.roundMs, matchesPerRound: BATCH_N,
+    round: st.roundMs.length, rounds: st.rounds, roundMs: st.roundMs, matchesPerRound: batchN(),
     curElapsedMs: st.roundAt ? Date.now() - st.roundAt : 0, // 轮内也递减，整轮不动的数字看着就像卡死
   });
   if (eta > 0) parts.push(T('ui.itEta', { t: fmtClock(eta) }));
@@ -3051,7 +3071,7 @@ function iterLogRow(e) {
     const delta = d == null ? '—'
       : (d.dir === 'flat' ? T('ui.itLogDeltaFlat') : T('ui.itLogDelta', { sign: d.pt > 0 ? '+' : '−', pt: Math.abs(d.pt) }));
     const base = T('ui.itLogEval', {
-      r: e.round, m: e.matches == null ? BATCH_N : e.matches, s,
+      r: e.round, m: e.matches == null ? batchN() : e.matches, s,
       p: pctText(e.winRate), b: pctText(e.baseWinRate), delta,
     });
     return { text: e.best ? `${base} ${T('ui.itLogBest')}` : base, cls: e.best ? 'win' : '' };
@@ -3175,7 +3195,7 @@ function renderIterPanel() {
   parts.push(`<label style="width:auto;display:flex;gap:6px;align-items:center;font-size:11px">${esc(T('ui.itRounds'))}
     <select id="itRounds" style="flex:1;font-size:11px;padding:3px 6px"${running ? ' disabled' : ''}>${
     ITER_ROUND_CHOICES.map((n) => `<option value="${n}"${n === rounds ? ' selected' : ''}>${n}</option>`).join('')}</select></label>`);
-  const cost = iterationCost(rounds, BATCH_N);
+  const cost = iterationCost(rounds, batchN());
   parts.push(`<div class="wrhint">${esc(T('ui.itCost', { min: Math.max(1, Math.round(cost.estMs / 60000)), ai: cost.aiCalls, m: cost.matches }))}</div>`);
   parts.push(`<button class="btn ghost" id="itRunBtn" style="padding:5px 12px;font-size:11px;${running ? '' : 'border-color:var(--accent);color:var(--accent)'}">${
     esc(running ? T('ui.itStop') : T('ui.itStart'))}</button>`);
@@ -3335,14 +3355,14 @@ async function runIteration() {
       cand.code = editorEl.value;
       cand.codeHash = codeHashOf(cand.code);
       iterLog({ kind: 'gen', round: r, ms: Date.now() - genT0, detail: (parsed.changes || []).slice(0, 2).join('；') });
-      iterStep('eval', T('ui.itStepEval', { n: BATCH_N }), ITER_TIMEOUTS.evalMs);
+      iterStep('eval', T('ui.itStepEval', { n: batchN() }), ITER_TIMEOUTS.evalMs);
       const evalT0 = Date.now();
       // 逐局回报：本地分片跑与线上 Worker 跑都会喂进来，评分阶段不再是一行静止的字
       const run = await runBatch('train', (i) => { if (iterState) { iterState.evalAt = i; iterTick(); } });
-      if (!run) { cand.invalidReason = `eval failed: ${batchFailMsg}`; closeRound(T('ui.itStepEval', { n: BATCH_N })); continue; }
+      if (!run) { cand.invalidReason = `eval failed: ${batchFailMsg}`; closeRound(T('ui.itStepEval', { n: batchN() })); continue; }
       if (run.key !== lockKey) { // 这一轮是在别的设置下打的：不入池，立刻停
         cand.invalidReason = 'setup changed during eval';
-        closeRound(T('ui.itStepEval', { n: BATCH_N }));
+        closeRound(T('ui.itStepEval', { n: batchN() }));
         iterState.stopped = 'setup-changed';
         break;
       }
@@ -3351,9 +3371,9 @@ async function runIteration() {
       cand.batch = { setup: run.setup, at: run.at, games: run.games };
       cand.batchKey = run.key;
       const prevBest = pickBest(iterState.candidates); // 入池前的最优（含基线）——判断这轮是否刷新纪录
-      closeRound(T('ui.itStepEval', { n: BATCH_N }));
+      closeRound(T('ui.itStepEval', { n: batchN() }));
       iterLog({
-        kind: 'eval', round: r, ms: Date.now() - evalT0, matches: BATCH_N,
+        kind: 'eval', round: r, ms: Date.now() - evalT0, matches: batchN(),
         winRate: cand.trainWinRate, baseWinRate: baseline.trainWinRate,
         best: !prevBest || cand.trainWinRate > prevBest.trainWinRate,
       });
@@ -3431,6 +3451,18 @@ $id('battleJsonBtn')?.addEventListener('click', () => {
 });
 $id('battleReviewBtn')?.addEventListener('click', () => openReview('single'));
 $id('wrRunBtn')?.addEventListener('click', () => { runBaseline(); });
+// 每组局数：填档位 → 记住选择 → 换档后 setupKey 变化，界面自动提示需重跑（不偷偷拿旧样本量的数字充数）
+(() => {
+  const pick = $id('wrBatchN');
+  if (!pick) return;
+  pick.innerHTML = BATCH_SIZES.map((n) => `<option value="${n}"${n === batchNChoice ? ' selected' : ''}>${n}</option>`).join('');
+  pick.addEventListener('change', () => {
+    batchNChoice = normalizeBatchN(pick.value);
+    try { localStorage.setItem(BATCHN_KEY, String(batchNChoice)); } catch { /* 隐私模式：忽略 */ }
+    renderGauge();
+    if (reviewOpen) renderReview(); // 迭代面板的成本预估要跟着变
+  });
+})();
 $id('wrReviewBtn')?.addEventListener('click', () => openReview('batch'));
 $id('reviewCloseBtn')?.addEventListener('click', closeOverlay);
 $id('reviewDlTextBtn')?.addEventListener('click', () => {
